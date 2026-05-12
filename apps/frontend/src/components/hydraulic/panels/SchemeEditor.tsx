@@ -47,6 +47,7 @@ import { renderSymbolFor } from "../scheme/symbols";
 import { resolveLayer, layerKeyFor } from "../scheme/layers";
 import { LayerPanel } from "../scheme/LayerPanel";
 import { Toast } from "../scheme/Toast";
+import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -1913,6 +1914,17 @@ export function SchemeEditor({ readOnly }: Props) {
           </text>
         )}
       </svg>
+
+      {/* Phase 6.5 batch-ops toolbar — rotate / mirror / array. Mounted
+          top-centre, above the existing top toolbar. Buttons disable
+          automatically when multiSelection is empty. */}
+      {!readOnly && (
+        <BatchOpsToolbar
+          onToastMessage={(text) =>
+            setToast({ text, key: Date.now(), tone: "success" })
+          }
+        />
+      )}
 
       {/* Phase 6.5.2 — Ephemeral toast for copy/cut/paste feedback.
           Re-mounts on key change so consecutive identical messages
