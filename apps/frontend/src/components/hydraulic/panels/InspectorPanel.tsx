@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useHydraulicStore } from "../hydraulicStore";
 import { PIPE_DB, PIPE_MATERIALS, CLIMATE, WALL_TYPES, GLAZING } from "shared";
 import { calcHeatLoad } from "../calc/heatLoad";
+import { pipeLengthFromGeometry } from "../calc/haversine";
 import type { BuildingEnvelope, EnvelopeSurface } from "../hydraulicTypes";
 
 export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
@@ -200,6 +201,19 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   if (!pipe) return null;
   const category = settings.primaryMaterialCategory;
   const sortament = PIPE_DB[category];
+
+  // Phase 5B.1c — when BOTH endpoints have geo coords set, the pipe's
+  // length can be derived from the great-circle distance instead of a
+  // manually-typed value. We show the auto-computed value as a lock-
+  // icon hint; the engineer can still override (clears node.geo on
+  // either endpoint so the manual input wins). Phase 5D will wire the
+  // mutation back into the solver — for now this is purely visual +
+  // a click-to-apply shortcut.
+  const fromNode = pipe ? nodes.find((n) => n.id === pipe.fromNodeId) : null;
+  const toNode = pipe ? nodes.find((n) => n.id === pipe.toNodeId) : null;
+  const geoLength = pipeLengthFromGeometry(fromNode, toNode);
+  const lengthMatches =
+    geoLength !== null && Math.abs(geoLength - pipe.length_m) < 0.5;
   return (
     <aside style={sidebarStyle}>
       <h3>Хоолой</h3>
@@ -228,7 +242,7 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             ))}
           </select>
         </Field>
-        <Field label="Урт (м)">
+        <Field label={lengthMatches ? "Урт (м) 🔒 авто" : "Урт (м)"}>
           <input
             type="number"
             step="0.1"
@@ -236,9 +250,35 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             disabled={readOnly}
             onChange={(e) => updatePipe(pipe.id, { length_m: Number(e.target.value) })}
             style={inputStyle}
+            title={
+              lengthMatches
+                ? "Газрын зураг дээрх node байрлалаас Haversine аргаар автоматаар тооцоолсон."
+                : geoLength !== null
+                  ? `Геометрээс тооцоолсон: ${geoLength.toFixed(2)} м.`
+                  : "Гар оруулга. Node-ийн lat/lon-г тогтоосны дараа авто-урт хийгдэнэ."
+            }
           />
         </Field>
       </div>
+      {geoLength !== null && !lengthMatches && !readOnly && (
+        <button
+          type="button"
+          onClick={() => updatePipe(pipe.id, { length_m: Math.round(geoLength * 100) / 100 })}
+          style={{
+            marginTop: -4,
+            marginBottom: 4,
+            padding: "0.25rem 0.6rem",
+            fontSize: 11,
+            background: "var(--bp-blue-soft, #e7f1ff)",
+            color: "var(--bp-blue, #0066cc)",
+            border: "1px solid var(--bp-blue, #0066cc)",
+            borderRadius: 4,
+            cursor: "pointer",
+          }}
+        >
+          📐 Геометрээс {geoLength.toFixed(2)} м оруулах
+        </button>
+      )}
       <Field label="Тэмдэглэл">
         <input
           value={pipe.label ?? ""}
