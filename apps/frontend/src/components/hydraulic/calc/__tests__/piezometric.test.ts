@@ -232,4 +232,65 @@ describe("piezometric — GK-23/02 synthetic-topology fixture", () => {
       expect(profile.points[i]!.returnHeadM).toBeGreaterThanOrEqual(profile.points[i - 1]!.returnHeadM);
     }
   });
+
+  // ───────────────────────────────────────────────────────────────
+  // Phase 5D.3 — supply-temperature overlay on the piezometric profile.
+  // ───────────────────────────────────────────────────────────────
+
+  it("Phase 5D.3: supplyTemp_C is undefined when no temp map is passed", () => {
+    const profile = computePiezometricProfile({
+      nodes: net.nodes,
+      pipes: net.pipes,
+      settings: SETTINGS,
+      pumpHeadM: 30,
+    });
+    for (const pt of profile.points) {
+      expect(pt.supplyTemp_C).toBeUndefined();
+    }
+  });
+
+  it("Phase 5D.3: supplyTemp_C is populated when temp map is passed (object form)", () => {
+    // Mock temp drop along the path: 95 -> 94 -> 93 etc, one degree
+    // per node. The piezometric module just looks them up, doesn't
+    // compute them — caller (PiezometricView) hands them in from
+    // runFullCalc's results.
+    const tempMap: Record<string, number> = {};
+    for (let i = 0; i < net.nodes.length; i += 1) {
+      tempMap[net.nodes[i]!.id] = 95 - i;
+    }
+    const profile = computePiezometricProfile({
+      nodes: net.nodes,
+      pipes: net.pipes,
+      settings: SETTINGS,
+      pumpHeadM: 30,
+      supplyTempByNodeId: tempMap,
+    });
+    // Every walked point should now carry a temp.
+    for (const pt of profile.points) {
+      expect(pt.supplyTemp_C).toBeDefined();
+      expect(pt.supplyTemp_C).toBeLessThanOrEqual(95);
+    }
+    // First point is the source — should be exactly 95.
+    expect(profile.points[0]!.supplyTemp_C).toBe(95);
+    // Last point should be cooler than the source (walked downstream).
+    const last = profile.points[profile.points.length - 1]!;
+    expect(last.supplyTemp_C!).toBeLessThan(95);
+  });
+
+  it("Phase 5D.3: supplyTempByNodeId accepts a Map<string, number> too", () => {
+    const tempMap = new Map<string, number>();
+    for (let i = 0; i < net.nodes.length; i += 1) {
+      tempMap.set(net.nodes[i]!.id, 95 - i * 0.5);
+    }
+    const profile = computePiezometricProfile({
+      nodes: net.nodes,
+      pipes: net.pipes,
+      settings: SETTINGS,
+      pumpHeadM: 30,
+      supplyTempByNodeId: tempMap,
+    });
+    expect(profile.points[0]!.supplyTemp_C).toBe(95);
+    const last = profile.points[profile.points.length - 1]!;
+    expect(last.supplyTemp_C!).toBeLessThan(95);
+  });
 });

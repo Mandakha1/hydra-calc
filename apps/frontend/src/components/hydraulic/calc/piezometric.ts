@@ -61,6 +61,11 @@ export interface PiezometricInputs {
   buildingHeightsM?: Record<string, number>;
   /** Air-gap safety margin above the building height (m). Default 2 m. */
   airGapM?: number;
+  /** Phase 5D.3 — optional per-node supply temperature (°C) populated
+   *  by the heat-loss-enabled solver pass. When present, the profile
+   *  carries a parallel `supplyTemp_C` track per point so the
+   *  piezometric chart can overlay temperature alongside pressure. */
+  supplyTempByNodeId?: Record<string, number> | Map<string, number>;
 }
 
 export interface PiezometricPoint {
@@ -83,6 +88,10 @@ export interface PiezometricPoint {
   minRequiredHeadM: number;
   /** Available pressure difference at this node, supply − return (m H₂O). */
   availableDPM: number;
+  /** Phase 5D.3 — supply temperature at this point (°C). Populated
+   *  only when the caller passes `supplyTempByNodeId`. Undefined when
+   *  heat-loss integration was disabled. */
+  supplyTemp_C?: number;
 }
 
 export interface PiezometricViolation {
@@ -129,7 +138,16 @@ export function computePiezometricProfile(inputs: PiezometricInputs): Piezometri
     consumerElevationsM = {},
     buildingHeightsM = {},
     airGapM = 2,
+    supplyTempByNodeId,
   } = inputs;
+
+  /** Normalise the optional supply-temp map: accept either Map or
+   *  plain object. Empty object → no temp track. */
+  const tempLookup: Map<string, number> | null = supplyTempByNodeId
+    ? supplyTempByNodeId instanceof Map
+      ? supplyTempByNodeId
+      : new Map(Object.entries(supplyTempByNodeId))
+    : null;
 
   // 1. Resolve source. If caller didn't pass one, pick an auto source.
   const source = inputs.sourceId
@@ -195,6 +213,7 @@ export function computePiezometricProfile(inputs: PiezometricInputs): Piezometri
       maxAllowedHeadM: maxAllowed,
       minRequiredHeadM: minRequired,
       availableDPM: availDP,
+      supplyTemp_C: tempLookup?.get(nodeId),
     };
     points.push(point);
 

@@ -361,11 +361,16 @@ function computeHeatLossPerPipe(
 }
 
 /**
- * Phase 5D — walk the supply tree from source to each consumer,
- * accumulating temperature drop along the path. Heat loss in each
- * segment cools the fluid by q'·L / (ṁ·c_p).
+ * Phase 5D — walk the supply tree from source to every reachable
+ * node, accumulating temperature drop along the path. Heat loss in
+ * each segment cools the fluid by q'·L / (ṁ·c_p).
+ *
+ * Records temperature at EVERY node touched (chambers + consumers),
+ * not just consumers — the piezometric chart and downstream UI use
+ * the chamber temps to draw the supply-temperature profile along
+ * the magistral.
  */
-function computeConsumerSupplyTemps(
+function computeNodeSupplyTemps(
   nodes: SchemeNode[],
   pipes: SchemePipe[],
   pipeResults: PipeResult[],
@@ -373,10 +378,10 @@ function computeConsumerSupplyTemps(
   sourceTemp_C: number,
   nodeById: Map<string, SchemeNode>,
 ): Map<string, number> {
-  const consumerT = new Map<string, number>();
+  const nodeT = new Map<string, number>();
   const sourceId =
     nodes.find((n) => n.kind === "source")?.id ?? nodes[0]?.id;
-  if (!sourceId) return consumerT;
+  if (!sourceId) return nodeT;
 
   const supplyPipes = pipes.filter(
     (p) => !p.circuit || p.circuit === "heating_supply",
@@ -391,12 +396,9 @@ function computeConsumerSupplyTemps(
   const walk = (id: string, T_C: number, visited: Set<string>) => {
     if (visited.has(id)) return;
     visited.add(id);
-    const node = nodeById.get(id);
-    if (node?.kind === "consumer") {
-      // First time we reach a consumer wins (tree topology — there's
-      // only one path source → consumer in a directed supply tree).
-      if (!consumerT.has(id)) consumerT.set(id, T_C);
-    }
+    // First time we reach this node wins (tree topology — there's
+    // only one path source → node in a directed supply tree).
+    if (!nodeT.has(id)) nodeT.set(id, T_C);
     for (const p of adj.get(id) ?? []) {
       const q_per_m = heatLossPerPipe.get(p.id) ?? 0;
       const length_m = resolvePipeLength(p, nodeById).length_m;
@@ -407,7 +409,7 @@ function computeConsumerSupplyTemps(
     }
   };
   walk(sourceId, sourceTemp_C, new Set());
-  return consumerT;
+  return nodeT;
 }
 
 export function runFullCalc(
@@ -431,7 +433,7 @@ export function runFullCalc(
 
   // -------- PHASE 5D: heat-loss-aware fixed-point iteration --------
   let heatLossPerPipe = new Map<string, number>();
-  let consumerSupplyT = new Map<string, number>();
+  let nodeSupplyT = new Map<string, number>();
   let totalHeatLoss_W = 0;
   const heatLossEnabled = settings.heatLossEnabled !== false;
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
@@ -442,7 +444,7 @@ export function runFullCalc(
 
     // Step 2 — temperature drop from source to each consumer using
     // baseline pipe mass flows.
-    consumerSupplyT = computeConsumerSupplyTemps(
+    nodeSupplyT = computeNodeSupplyTemps(
       nodes,
       pipes,
       pipeResults,
@@ -459,7 +461,7 @@ export function runFullCalc(
     // automatically.
     const adjustedNodes = nodes.map((n) => {
       if (n.kind !== "consumer" || !n.heatLoad_w) return n;
-      const T_inlet = consumerSupplyT.get(n.id);
+      const T_inlet = nodeSupplyT.get(n.id);
       if (T_inlet === undefined) return n;
       const effectiveDeltaT = T_inlet - returnT;
       // Guard against pathological networks where heat loss exceeds
@@ -479,7 +481,7 @@ export function runFullCalc(
     // local supply T is still close to design), but the per-pipe ṁ
     // is now larger, so the ΔT contribution per pipe is slightly
     // smaller. This is what reaches the UI / norm check.
-    consumerSupplyT = computeConsumerSupplyTemps(
+    nodeSupplyT = computeNodeSupplyTemps(
       nodes, // original nodes — we want the user-visible heatLoad_w
       pipes,
       pipeResults,
@@ -510,7 +512,7 @@ export function runFullCalc(
     settings.sourcePressure_mpa,
   ).map((nr) => ({
     ...nr,
-    supplyTemp_C_at_inlet: consumerSupplyT.get(nr.nodeId),
+    supplyTemp_C_at_inlet: nodeSupplyT.get(nr.nodeId),
   }));
 
   const totalLoad = nodes.reduce((s, n) => s + (n.heatLoad_w ?? 0), 0);
@@ -531,12 +533,21 @@ export function runFullCalc(
 
   let heatLoss: CalculationResults["heatLoss"] | undefined;
   if (heatLossEnabled) {
-    const consumerTemps = Array.from(consumerSupplyT.values());
+    // minConsumerSupplyTemp_C is the worst consumer's inlet — filter
+    // to consumer nodes only so a deep chamber on a long magistral
+    // doesn't undercut the metric for the actual end users.
+    const consumerOnlyTemps: number[] = [];
+    for (const n of nodes) {
+      if (n.kind === "consumer") {
+        const t = nodeSupplyT.get(n.id);
+        if (typeof t === "number") consumerOnlyTemps.push(t);
+      }
+    }
     heatLoss = {
       totalHeatLoss_W,
       fractionOfLoad: totalLoad > 0 ? totalHeatLoss_W / totalLoad : 0,
-      minConsumerSupplyTemp_C: consumerTemps.length
-        ? Math.min(...consumerTemps)
+      minConsumerSupplyTemp_C: consumerOnlyTemps.length
+        ? Math.min(...consumerOnlyTemps)
         : supplyT,
       sourceSupplyTemp_C: supplyT,
     };

@@ -32,6 +32,9 @@ const PALETTE = {
   staticLine: "#5F5E5A",
   pMax: "#E24B4A",
   pMin: "#378ADD",
+  /** Phase 5D.3 — supply-temperature line. Amber-orange to stay
+   *  distinct from supply-pressure red and ground brown. */
+  supplyTemp: "#E6914F",
   axis: "var(--fg-muted)",
   bldg: "rgba(184, 117, 23, 0.35)",
 };
@@ -40,6 +43,7 @@ export function PiezometricView() {
   const nodes = useHydraulicStore((s) => s.nodes);
   const pipes = useHydraulicStore((s) => s.pipes);
   const settings = useHydraulicStore((s) => s.settings);
+  const results = useHydraulicStore((s) => s.results);
 
   // Engineer-tunable inputs. We pre-populate with the defaults the
   // calculator already uses so the panel "just works" on first open.
@@ -47,6 +51,24 @@ export function PiezometricView() {
   const [staticPressureHeadM, setStaticPressureHeadM] = useState<number>(50);
   const [pn, setPn] = useState<10 | 16 | 25>(10);
   const [sourceElevationM, setSourceElevationM] = useState<number>(1269);
+  // Phase 5D.3 — toggle the supply-temperature overlay. Defaults on
+  // whenever results carry a heatLoss summary (engineer probably
+  // cares about it); off for legacy projects that ran without heat
+  // loss.
+  const [showTemp, setShowTemp] = useState<boolean>(true);
+
+  // Phase 5D.3 — supply temp per node, harvested from results.nodes.
+  // When heat-loss is disabled in settings, this map will be empty
+  // and the chart simply doesn't render the temp track.
+  const supplyTempByNodeId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const nr of results?.nodes ?? []) {
+      if (typeof nr.supplyTemp_C_at_inlet === "number") {
+        m.set(nr.nodeId, nr.supplyTemp_C_at_inlet);
+      }
+    }
+    return m;
+  }, [results]);
 
   // Compute the profile. Memoise on inputs so panning the source UI
   // doesn't re-run the solver on every render.
@@ -68,11 +90,12 @@ export function PiezometricView() {
         buildingHeightsM: Object.fromEntries(
           nodes.filter((n) => n.buildingHeight_m != null).map((n) => [n.id, n.buildingHeight_m!]),
         ),
+        supplyTempByNodeId,
       });
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
     }
-  }, [nodes, pipes, settings, pumpHeadM, staticPressureHeadM, pn, sourceElevationM]);
+  }, [nodes, pipes, settings, pumpHeadM, staticPressureHeadM, pn, sourceElevationM, supplyTempByNodeId]);
 
   // SVG dimensions — use ResizeObserver to fill the panel.
   const containerRef = useRef<HTMLDivElement>(null);
@@ -102,6 +125,36 @@ export function PiezometricView() {
         <NumberField label="Статик (м)" value={staticPressureHeadM} onChange={setStaticPressureHeadM} min={0} max={200} />
         <SelectPN value={pn} onChange={setPn} />
         <NumberField label="Эх өндөр (м)" value={sourceElevationM} onChange={setSourceElevationM} min={0} max={5000} />
+        {supplyTempByNodeId.size > 0 && (
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              fontSize: 11,
+              color: "var(--fg-muted)",
+            }}
+          >
+            Темп. шугам
+            <button
+              type="button"
+              onClick={() => setShowTemp((v) => !v)}
+              style={{
+                padding: "0.3rem 0.6rem",
+                fontSize: 12,
+                background: showTemp ? PALETTE.supplyTemp : "var(--bg)",
+                color: showTemp ? "white" : "var(--fg)",
+                border: `1px solid ${PALETTE.supplyTemp}`,
+                borderRadius: 4,
+                cursor: "pointer",
+                fontFamily: "var(--font-sans)",
+                fontWeight: 600,
+              }}
+            >
+              {showTemp ? "🌡 Унтраах" : "🌡 Асаах"}
+            </button>
+          </label>
+        )}
       </div>
 
       {"error" in profile ? (
@@ -115,7 +168,7 @@ export function PiezometricView() {
               ))}
             </section>
           )}
-          <PiezometricSVG result={profile} width={dims.w} height={dims.h} />
+          <PiezometricSVG result={profile} width={dims.w} height={dims.h} showTemp={showTemp} />
           <ProfileSummary result={profile} />
         </>
       )}
@@ -127,11 +180,21 @@ interface PiezometricSVGProps {
   result: PiezometricResult;
   width: number;
   height: number;
+  /** Phase 5D.3 — overlay the supply-temperature track on a secondary
+   *  Y axis (right side, 60-100 °C). When false, the track is hidden
+   *  even if the data is available. */
+  showTemp?: boolean;
 }
 
-function PiezometricSVG({ result, width, height }: PiezometricSVGProps) {
+function PiezometricSVG({ result, width, height, showTemp = true }: PiezometricSVGProps) {
   const { points } = result;
   if (points.length < 2) return <div style={{ color: "var(--fg-muted)" }}>Хангалттай цэггүй</div>;
+
+  // Does any point carry a supply-temperature reading? Only render
+  // the temperature track when YES and the caller hasn't toggled it
+  // off via showTemp.
+  const hasTemp =
+    showTemp && points.some((p) => typeof p.supplyTemp_C === "number");
 
   // Build the unified domain in (x = distance_m, y = head_m).
   const xs = points.map((p) => p.distanceFromSourceM);
@@ -140,11 +203,25 @@ function PiezometricSVG({ result, width, height }: PiezometricSVGProps) {
   const xMax = Math.max(...xs);
   const yMin = Math.floor(Math.min(...allYs) - 5);
   const yMax = Math.ceil(Math.max(...allYs) + 5);
-  const PAD_L = 56, PAD_R = 24, PAD_T = 16, PAD_B = 40;
+  // Phase 5D.3 — secondary Y-axis domain for the temperature line.
+  // Fixed at 60-100 °C: the design-relevant band (БНбД 41-01 §5.4
+  // minimum is 80, schedule supply is 95).
+  const tMin = 60;
+  const tMax = 100;
+  const PAD_L = 56;
+  // Slightly more right padding when the secondary axis is on, to
+  // make room for the °C ticks on the right edge.
+  const PAD_R = hasTemp ? 44 : 24;
+  const PAD_T = 16;
+  const PAD_B = 40;
   const plotW = width - PAD_L - PAD_R;
   const plotH = height - PAD_T - PAD_B;
   const xFor = (x: number) => PAD_L + ((x - xMin) / Math.max(1, xMax - xMin)) * plotW;
   const yFor = (y: number) => PAD_T + (1 - (y - yMin) / Math.max(1, yMax - yMin)) * plotH;
+  /** Map a temperature in °C onto the same vertical plot area, using
+   *  the secondary axis range. */
+  const yForTemp = (t: number) =>
+    PAD_T + (1 - (t - tMin) / Math.max(1, tMax - tMin)) * plotH;
 
   const polyline = (key: keyof typeof points[number]): string =>
     points.map((p, i) => `${i === 0 ? "M" : "L"} ${xFor(p.distanceFromSourceM)},${yFor(p[key] as number)}`).join(" ");
@@ -204,6 +281,71 @@ function PiezometricSVG({ result, width, height }: PiezometricSVGProps) {
       {/* 3 — Return line */}
       <path d={polyline("returnHeadM")} fill="none" stroke={PALETTE.ret} strokeWidth={2.5} />
 
+      {/* 8 — Phase 5D.3: supply-temperature overlay (secondary Y axis) */}
+      {hasTemp && (
+        <>
+          {/* Secondary Y-axis (right edge) + ticks. */}
+          <line
+            x1={width - PAD_R}
+            y1={PAD_T}
+            x2={width - PAD_R}
+            y2={height - PAD_B}
+            stroke={PALETTE.supplyTemp}
+            strokeWidth={1}
+            opacity={0.6}
+          />
+          {[60, 70, 80, 90, 100].map((t) => (
+            <g key={`tt${t}`}>
+              <line
+                x1={width - PAD_R}
+                y1={yForTemp(t)}
+                x2={width - PAD_R + 4}
+                y2={yForTemp(t)}
+                stroke={PALETTE.supplyTemp}
+                strokeWidth={1}
+              />
+              <text
+                x={width - PAD_R + 6}
+                y={yForTemp(t)}
+                fontSize={10}
+                alignmentBaseline="middle"
+                fill={PALETTE.supplyTemp}
+                fontFamily="var(--font-mono)"
+              >
+                {t}°
+              </text>
+            </g>
+          ))}
+          {/* Temp polyline (gaps where supplyTemp_C is undefined). */}
+          <path
+            d={points
+              .map((p, i) => {
+                if (typeof p.supplyTemp_C !== "number") return "";
+                const cmd = i === 0 ? "M" : "L";
+                return `${cmd} ${xFor(p.distanceFromSourceM)},${yForTemp(p.supplyTemp_C)}`;
+              })
+              .filter(Boolean)
+              .join(" ")}
+            fill="none"
+            stroke={PALETTE.supplyTemp}
+            strokeWidth={2}
+            strokeDasharray="6 2"
+          />
+          {/* Point markers on the temp line. */}
+          {points.map((p) =>
+            typeof p.supplyTemp_C === "number" ? (
+              <circle
+                key={`tdot-${p.nodeId}`}
+                cx={xFor(p.distanceFromSourceM)}
+                cy={yForTemp(p.supplyTemp_C)}
+                r={2.5}
+                fill={PALETTE.supplyTemp}
+              />
+            ) : null,
+          )}
+        </>
+      )}
+
       {/* 7 — Building markers at each consumer (vertical bar from ground to ground+building) */}
       {points.map((p) => {
         const bldgH = p.minRequiredHeadM - p.groundHeadM; // includes airGap
@@ -229,12 +371,16 @@ function PiezometricSVG({ result, width, height }: PiezometricSVGProps) {
         </text>
       ))}
 
-      {/* Legend (compact, top-right) */}
+      {/* Legend (compact, top-right of plot area, shifted inward when
+          the temp axis is present) */}
       <g transform={`translate(${width - PAD_R - 110}, ${PAD_T + 22})`}>
         <LegendItem y={0} color={PALETTE.supply} label="Supply" />
         <LegendItem y={12} color={PALETTE.ret} label="Return" />
         <LegendItem y={24} color={PALETTE.ground} label="Газар" />
         <LegendItem y={36} color={PALETTE.staticLine} label="Статик" dashed />
+        {hasTemp && (
+          <LegendItem y={48} color={PALETTE.supplyTemp} label="T° (°C)" dashed />
+        )}
       </g>
     </svg>
   );
