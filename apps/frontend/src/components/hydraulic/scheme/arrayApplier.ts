@@ -33,6 +33,7 @@ import {
   type LinearArrayParams,
   type PolarArrayParams,
 } from "./arrayOps";
+import { pushUndoSnapshot } from "./undoStack";
 
 /**
  * Build a linear array from the current multi-selection, insert
@@ -55,6 +56,13 @@ export function applyLinearArrayToSelection(
   );
   if (!payload) return null;
   const copies = linearArray(payload, params, uid, mapPxPerMeter);
+  // Phase 6.5.5 — snapshot pre-insert so Ctrl+Z removes the whole
+  // generated grid in a single step.
+  const total = copies.reduce(
+    (acc, c) => acc + c.nodes.length + c.pipes.length,
+    0,
+  );
+  pushUndoSnapshot("Шугаман массив", total);
   return insertCopies(copies);
 }
 
@@ -77,6 +85,12 @@ export function applyPolarArrayToSelection(
   );
   if (!payload) return null;
   const copies = polarArray(payload, params, uid, mapPxPerMeter);
+  // Phase 6.5.5 — snapshot pre-insert.
+  const total = copies.reduce(
+    (acc, c) => acc + c.nodes.length + c.pipes.length,
+    0,
+  );
+  pushUndoSnapshot("Радиал массив", total);
   return insertCopies(copies);
 }
 

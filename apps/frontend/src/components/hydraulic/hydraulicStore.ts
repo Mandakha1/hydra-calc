@@ -118,6 +118,9 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         // switching projects don't want a stale paste from the
         // previous session to land in the new one.
         clipboard: null,
+        // Phase 6.5.5 — same blank-slate rule for undo/redo history.
+        undoStack: [],
+        redoStack: [],
       }),
 
     addNode: (node) =>
@@ -287,6 +290,13 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         s.multiSelection.pipeIds,
       );
       if (!payload) return null;
+      // Phase 6.5.5 — snapshot BEFORE cascade-delete so Ctrl+Z
+      // restores the cut nodes + pipes verbatim. Inlined here to
+      // avoid a cyclic import (undoStack.ts imports from this file).
+      _pushUndoSnapshotInline(
+        "Бөгөмөөр зүссэн",
+        payload.nodes.length + payload.pipes.length,
+      );
       // Snapshot ids — removeNode cascades to touched pipes and would
       // mutate multiSelection mid-iteration otherwise.
       const pipeIds = [...s.multiSelection.pipeIds];
@@ -309,6 +319,12 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         s.clipboard,
         uid,
         offset_m,
+      );
+      // Phase 6.5.5 — snapshot pre-insert so Ctrl+Z removes the
+      // pasted cluster in one step.
+      _pushUndoSnapshotInline(
+        "Буулгасан",
+        pastedNodes.length + pastedPipes.length,
       );
       // Insert each — addNode / addPipe push to the arrays atomically
       // per call. set() in a single shot would also work but is less
@@ -350,4 +366,37 @@ let nextId = 0;
 export function uid(prefix = "n"): string {
   nextId += 1;
   return `${prefix}_${Date.now().toString(36)}_${nextId}`;
+}
+
+/** Phase 6.5.5 — internal undo-snapshot push.
+ *
+ *  Inlined here (rather than imported from scheme/undoStack.ts) to
+ *  avoid a cyclic dependency: undoStack.ts imports `useHydraulicStore`
+ *  from this file, and clipboard's cut/paste actions in this file
+ *  need to push a snapshot. We duplicate ~15 lines of snapshot logic
+ *  instead of restructuring — clearer than introducing a third
+ *  shared module for two consumers.
+ *
+ *  Outside callers (transformApplier, arrayApplier, SchemeEditor Del
+ *  handler) all use the proper exported `pushUndoSnapshot` from
+ *  scheme/undoStack.ts. */
+const _MAX_UNDO_DEPTH = 50;
+function _pushUndoSnapshotInline(label: string, affectedCount: number): void {
+  const s = useHydraulicStore.getState();
+  const snap = {
+    label,
+    affectedCount,
+    nodes: JSON.parse(JSON.stringify(s.nodes)) as typeof s.nodes,
+    pipes: JSON.parse(JSON.stringify(s.pipes)) as typeof s.pipes,
+    selection: s.selection ? { ...s.selection } : null,
+    multiSelection: {
+      nodeIds: [...s.multiSelection.nodeIds],
+      pipeIds: [...s.multiSelection.pipeIds],
+    },
+  };
+  const existing = s.undoStack ?? [];
+  const next = [...existing, snap];
+  const capped =
+    next.length > _MAX_UNDO_DEPTH ? next.slice(next.length - _MAX_UNDO_DEPTH) : next;
+  useHydraulicStore.setState({ undoStack: capped, redoStack: [] });
 }

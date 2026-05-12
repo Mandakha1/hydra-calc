@@ -404,6 +404,23 @@ export interface NormViolation {
   unit: string;
 }
 
+/** Phase 6.5.5 — single undo/redo snapshot.
+ *  Captures the minimum state needed to roll back / replay a batch
+ *  operation: nodes + pipes + the two selection surfaces. Settings
+ *  / results are NOT snapshot — they're orthogonal to undoable
+ *  drawing operations. */
+export interface UndoSnapshot {
+  /** Mongolian short label for toast feedback. "Эргүүлэлт",
+   *  "Шугаман массив", "Бөгөмөөр устгасан", etc. */
+  label: string;
+  /** Count of nodes affected — surfaced in the toast next to label. */
+  affectedCount: number;
+  nodes: SchemeNode[];
+  pipes: SchemePipe[];
+  selection: { kind: "node" | "pipe"; id: string } | null;
+  multiSelection: { nodeIds: string[]; pipeIds: string[] };
+}
+
 export type HydraulicState = {
   nodes: SchemeNode[];
   pipes: SchemePipe[];
@@ -411,6 +428,14 @@ export type HydraulicState = {
   results?: CalculationResults;
   violations?: NormViolation[];
   schemaVersion: 5;
+  /** Phase 6.5.5 — last N snapshots (capped at MAX_UNDO_DEPTH=50).
+   *  Each entry is the pre-mutation state of one batch op.
+   *  Optional so legacy serialised projects without these arrays
+   *  still load cleanly. */
+  undoStack?: UndoSnapshot[];
+  /** Redo buffer — populated when the user pops the undo stack.
+   *  Cleared on any new batch operation. */
+  redoStack?: UndoSnapshot[];
 };
 
 /** Default state for a fresh project. */

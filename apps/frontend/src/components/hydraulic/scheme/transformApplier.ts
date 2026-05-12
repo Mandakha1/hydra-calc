@@ -28,6 +28,7 @@ import {
   centroidPx,
   centroidGeo,
 } from "./transforms";
+import { pushUndoSnapshot } from "./undoStack";
 
 /** Rotate the current multi-selection by an arbitrary angle around
  *  the selection's centroid. Toolbar buttons call this with +90,
@@ -37,6 +38,14 @@ export function applyRotateAroundCentroid(angleDeg: number): number {
   const ids = new Set(s.multiSelection.nodeIds);
   if (ids.size === 0) return 0;
   const targets = s.nodes.filter((n) => ids.has(n.id));
+  // Phase 6.5.5 — snapshot pre-mutation so Ctrl+Z restores positions.
+  // Label tailored per angle for engineer-readable toast.
+  const label =
+    angleDeg === 90 ? "Эргүүлэлт ↺ 90°"
+    : angleDeg === -90 ? "Эргүүлэлт ↻ 90°"
+    : angleDeg === 180 ? "Эргүүлэлт 180°"
+    : `Эргүүлэлт ${angleDeg}°`;
+  pushUndoSnapshot(label, targets.length);
   const centerPx = centroidPx(targets);
   const centerGeo = centroidGeo(targets);
   const rotated = rotateNodes(targets, centerPx, angleDeg, centerGeo ?? undefined);
@@ -62,6 +71,7 @@ export function applyMirrorHorizontal(): number {
   const ids = new Set(s.multiSelection.nodeIds);
   if (ids.size === 0) return 0;
   const targets = s.nodes.filter((n) => ids.has(n.id));
+  pushUndoSnapshot("Хэвтээ тусгал", targets.length);
   const cPx = centroidPx(targets);
   const cGeo = centroidGeo(targets);
   const mirrored = mirrorNodes(targets, {
@@ -86,6 +96,7 @@ export function applyMirrorVertical(): number {
   const ids = new Set(s.multiSelection.nodeIds);
   if (ids.size === 0) return 0;
   const targets = s.nodes.filter((n) => ids.has(n.id));
+  pushUndoSnapshot("Босоо тусгал", targets.length);
   const cPx = centroidPx(targets);
   const cGeo = centroidGeo(targets);
   const mirrored = mirrorNodes(targets, {
