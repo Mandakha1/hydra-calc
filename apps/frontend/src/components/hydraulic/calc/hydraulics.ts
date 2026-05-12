@@ -308,7 +308,7 @@ function sizePump(
 
   // 1. Supply leg: cumulative friction from source to each consumer.
   const supplyDpByConsumer = new Map<string, number>();
-  function dfsSupply(id: string, accum: number, visited: Set<string>) {
+  const dfsSupply = (id: string, accum: number, visited: Set<string>): void => {
     if (visited.has(id)) return;
     visited.add(id);
     const node = nodes.find((n) => n.id === id);
@@ -318,7 +318,7 @@ function sizePump(
       if (!r) continue;
       dfsSupply(p.toNodeId, accum + r.totalPressureDrop_pa, new Set(visited));
     }
-  }
+  };
   dfsSupply(sourceId, 0, new Set());
 
   // 2. Return leg: cumulative friction from each consumer back to source.
@@ -328,7 +328,7 @@ function sizePump(
   if (returnPipes.length > 0) {
     for (const [consumerId] of supplyDpByConsumer) {
       let total = 0;
-      function walk(id: string, accum: number, visited: Set<string>) {
+      const walk = (id: string, accum: number, visited: Set<string>): void => {
         if (visited.has(id)) return;
         visited.add(id);
         if (id === sourceId) {
@@ -340,7 +340,7 @@ function sizePump(
           if (!r) continue;
           walk(p.toNodeId, accum + r.totalPressureDrop_pa, new Set(visited));
         }
-      }
+      };
       walk(consumerId, 0, new Set());
       returnDpByConsumer.set(consumerId, total);
     }
