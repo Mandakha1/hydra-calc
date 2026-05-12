@@ -232,6 +232,30 @@ export interface ProjectSettings {
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
   sourcePressure_mpa: number;
 
+  /* ===== Heat loss integration (Phase 5D) ===== */
+  /** Whether the solver integrates pipe insulation heat loss into the
+   *  mass-flow / pump-sizing calculation. Default true. Engineers
+   *  comparing apples-to-apples with a legacy solver can opt out. */
+  heatLossEnabled?: boolean;
+  /** Project-wide default insulation type when a pipe doesn't override
+   *  it. Looked up against INSULATION_TYPES from `heatLosses.ts`. */
+  defaultInsulationKey?: string;
+  /** Project-wide default insulation thickness in mm. Default 50 mm
+   *  (matches ПИ-труба ГОСТ 30732 typical residential connection). */
+  defaultInsulationThickness_mm?: number;
+  /** Project-wide default pipe laying. Used when a pipe doesn't carry
+   *  its own `laying` field. Mongolian residential default is
+   *  "underground_channel" (concrete trench). */
+  defaultLaying?: import("./nodeCatalog").PipeLaying;
+  /** Ambient temp inside a concrete channel trench (°C). Default +10. */
+  channelAmbientTemp_c?: number;
+  /** Soil temperature at 1.5 m depth in design winter (°C). Default +5
+   *  for УБ-region loam. */
+  soilTempWinter_c?: number;
+  /** Minimum supply temperature allowed at consumer inlet (°C, RULE-T01
+   *  per БНбД 41-01-2019 §5.4). Default 80. */
+  minSupplyTemp_c?: number;
+
   /* ===== Map / OSM background (Phase 5B.1) ===== */
   /** Tile-layer provider key (from MAP_PROVIDERS). Persisted so each
    *  project remembers whether the engineer prefers OSM, satellite,
@@ -276,12 +300,25 @@ export interface PipeResult {
   headlossPerMeter_pa: number;
   totalPressureDrop_pa: number;
   iterations: number;
+  /** Phase 5D — heat loss per metre (W/m), populated when the solver
+   *  runs with heat-loss integration enabled. */
+  heatLossPerMeter_W?: number;
+  /** Phase 5B.1c / 5D — provenance of the length value used by the
+   *  solver. "geometry" when Haversine derived it from node geo coords,
+   *  "manual" when the engineer-typed length_m won. UI surfaces the
+   *  source so engineers can spot drift. */
+  lengthSource?: "geometry" | "manual";
 }
 
 export interface NodeResult {
   nodeId: string;
   pressureAtNode_mpa: number;
   heatLoad_w: number;
+  /** Phase 5D — supply temperature at this node's inlet (°C),
+   *  populated for consumers when heat-loss integration is enabled.
+   *  Used by RULE-T01 norm check and by the piezometric temperature
+   *  overlay. */
+  supplyTemp_C_at_inlet?: number;
 }
 
 export interface CalculationResults {
@@ -310,6 +347,19 @@ export interface CalculationResults {
       safetyMargin_m: number;
     };
   };
+  /** Phase 5D — heat loss totals for the network. Populated when
+   *  heat-loss integration is enabled (the default). */
+  heatLoss?: {
+    /** Sum of (q'_i · L_i) over all pipes (W). */
+    totalHeatLoss_W: number;
+    /** Heat loss as a fraction of total consumer load (0..1). */
+    fractionOfLoad: number;
+    /** Minimum supply temp at any consumer inlet (°C). The far-consumer
+     *  number that the engineer sees in the panel. */
+    minConsumerSupplyTemp_C: number;
+    /** Source supply temp (°C) — for context in UI. */
+    sourceSupplyTemp_C: number;
+  };
   /** ISO timestamp when results were computed. */
   computedAt: string;
 }
@@ -322,7 +372,10 @@ export interface NormViolation {
     | "pressure_low"
     | "temperature_mismatch"
     | "material_pressure"
-    | "material_temp";
+    | "material_temp"
+    /** Phase 5D — supply temperature at a consumer dropped below the
+     *  engineering minimum (default 80 °C per БНбД 41-01-2019 §5.4). */
+    | "supply_temp_low";
   severity: "error" | "warning" | "info";
   message: string;
   target: { kind: "pipe" | "node"; id: string };

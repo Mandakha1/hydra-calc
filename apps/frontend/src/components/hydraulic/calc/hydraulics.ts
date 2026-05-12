@@ -28,6 +28,14 @@ import type {
   NodeResult,
   CalculationResults,
 } from "../hydraulicTypes";
+import type { PipeLaying } from "../nodeCatalog";
+import { pipeLengthFromGeometry } from "./haversine";
+import {
+  computePipeHeatLoss,
+  K_PUR_FOAM_FRESH_W_MK,
+  type Installation,
+} from "./pipeHeatLoss";
+import { INSULATION_TYPES } from "./heatLosses";
 
 const GRAVITY = 9.81;
 const C_P = WATER_PROPS.specific_heat_j_kg_k;
@@ -84,7 +92,40 @@ export function colebrookLambda(reynolds: number, relativeRoughness: number): { 
   return { lambda, iterations: 50 };
 }
 
-/** Compute each pipe's flow, velocity, friction factor, and head loss. */
+/**
+ * Resolve a pipe's effective length used by the solver.
+ *
+ * Phase 5B.1c — when both endpoints carry geo coords, the Haversine
+ * great-circle distance is the engineering truth; the stored
+ * length_m is auto-derived from it. When only one endpoint (or
+ * neither) has geo, the manual length_m is used.
+ *
+ * The `lengthSource` flag is surfaced on `PipeResult` so the UI can
+ * indicate which path was taken — engineers see at a glance whether
+ * a length is geometry-locked or manually overridden.
+ */
+function resolvePipeLength(
+  pipe: SchemePipe,
+  nodeById: Map<string, SchemeNode>,
+): { length_m: number; source: "geometry" | "manual" } {
+  const from = nodeById.get(pipe.fromNodeId);
+  const to = nodeById.get(pipe.toNodeId);
+  const geoLength = pipeLengthFromGeometry(from, to);
+  if (geoLength !== null && geoLength > 0) {
+    return { length_m: geoLength, source: "geometry" };
+  }
+  return { length_m: pipe.length_m, source: "manual" };
+}
+
+/** Compute each pipe's flow, velocity, friction factor, and head loss.
+ *
+ * @param nodes Network nodes. Phase 5D — consumer heatLoad_w may be
+ *   pre-scaled by the heat-loss correction factor so the
+ *   downstream-load aggregation produces the correct ṁ at every pipe.
+ * @param pipes Network pipes. Phase 5B.1c — length_m is used as a
+ *   fallback when no geo coords are present.
+ * @param settings Project settings.
+ */
 export function computePipeFlows(
   nodes: SchemeNode[],
   pipes: SchemePipe[],
@@ -98,12 +139,15 @@ export function computePipeFlows(
 
   // 1. Compute mass flow at each pipe by summing downstream heat loads (tree topology).
   const downstreamLoad = computeDownstreamLoads(nodes, pipes);
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
   const results: PipeResult[] = [];
   for (const pipe of pipes) {
     const size = pickPipeSize(settings.primaryMaterialCategory, pipe.dn);
     const d_m = size.id_mm / 1000;
     const area = Math.PI * d_m * d_m * 0.25;
+
+    const { length_m, source: lengthSource } = resolvePipeLength(pipe, nodeById);
 
     const load_w = downstreamLoad.get(pipe.id) ?? 0;
     const G = load_w > 0 ? load_w / (C_P * deltaT) : 0.001; // kg/s
@@ -113,7 +157,7 @@ export function computePipeFlows(
     const { lambda, iterations } = colebrookLambda(Re, k_m / d_m);
     const headlossPerMeter = lambda * (rho * v * v) / (2 * d_m); // Pa/m
     const localFactor = 1 + settings.localLossesFraction;
-    const totalDp = headlossPerMeter * pipe.length_m * localFactor;
+    const totalDp = headlossPerMeter * length_m * localFactor;
 
     results.push({
       pipeId: pipe.id,
@@ -124,6 +168,7 @@ export function computePipeFlows(
       headlossPerMeter_pa: headlossPerMeter,
       totalPressureDrop_pa: totalDp,
       iterations,
+      lengthSource,
     });
   }
   return results;
@@ -221,33 +266,291 @@ function elevationHead(nodes: SchemeNode[], pipe: SchemePipe): number {
   return ((b - a) * 970 * GRAVITY) / 1e6;
 }
 
+/**
+ * Resolve the installation type for a pipe.
+ *
+ * Phase 5D — drives the ambient temperature used by the heat-loss
+ * calculation. The pipe's own `laying` field wins; otherwise falls
+ * back to the project-level `defaultLaying`; otherwise the Mongolian
+ * residential default ("underground_channel" — concrete trench).
+ */
+function pipeInstallation(
+  pipe: SchemePipe,
+  settings: ProjectSettings,
+): Installation {
+  const laying: PipeLaying =
+    pipe.laying ?? settings.defaultLaying ?? "underground_channel";
+  switch (laying) {
+    case "above_ground":
+      return "air";
+    case "underground_channelless":
+      return "buried";
+    case "underground_channel":
+    case "lotok":
+    case "indoor":
+    default:
+      return "channel";
+  }
+}
+
+/** Resolve the ambient temperature for a pipe given its installation. */
+function pipeAmbientTemp(
+  installation: Installation,
+  settings: ProjectSettings,
+): number {
+  switch (installation) {
+    case "air":
+      return settings.designOutdoorTemp_c ?? -39;
+    case "channel":
+      return settings.channelAmbientTemp_c ?? 10;
+    case "buried":
+      return settings.soilTempWinter_c ?? 5;
+  }
+}
+
+/** Resolve insulation conductivity for a pipe. */
+function pipeInsulationK(
+  pipe: SchemePipe,
+  settings: ProjectSettings,
+): number {
+  const key = pipe.insulationKey ?? settings.defaultInsulationKey ?? "pur_pi";
+  const found = INSULATION_TYPES.find((i) => i.key === key);
+  return found?.lambda_w_m_k ?? K_PUR_FOAM_FRESH_W_MK;
+}
+
+/**
+ * Phase 5D — compute per-pipe heat loss (W/m) for the network at a
+ * uniform supply temperature. The result is used in the temperature-
+ * propagation pass to find the consumer inlet temps.
+ */
+function computeHeatLossPerPipe(
+  pipes: SchemePipe[],
+  supplyTemp_C: number,
+  settings: ProjectSettings,
+): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const pipe of pipes) {
+    const size = pickPipeSize(settings.primaryMaterialCategory, pipe.dn);
+    const installation = pipeInstallation(pipe, settings);
+    const ambient = pipeAmbientTemp(installation, settings);
+    const ins_thk =
+      pipe.insulationThickness_mm ??
+      settings.defaultInsulationThickness_mm ??
+      50;
+    const ins_k = pipeInsulationK(pipe, settings);
+    try {
+      const r = computePipeHeatLoss({
+        fluidTemp_C: supplyTemp_C,
+        ambientTemp_C: ambient,
+        pipeOuterDiameter_mm: size.od_mm,
+        pipeWallThickness_mm: size.wall_mm,
+        insulationThickness_mm: ins_thk,
+        insulationConductivity_W_mK: ins_k,
+        installation,
+        burialDepth_m: pipe.burialDepth_m ?? 1.5,
+      });
+      result.set(pipe.id, r.heatLossPerMeter_W);
+    } catch {
+      // If inputs are out of physical bounds (e.g. invalid burial
+      // depth), skip the pipe — it just contributes zero heat loss.
+      // The error is informational only; the solver remains usable.
+      result.set(pipe.id, 0);
+    }
+  }
+  return result;
+}
+
+/**
+ * Phase 5D — walk the supply tree from source to each consumer,
+ * accumulating temperature drop along the path. Heat loss in each
+ * segment cools the fluid by q'·L / (ṁ·c_p).
+ */
+function computeConsumerSupplyTemps(
+  nodes: SchemeNode[],
+  pipes: SchemePipe[],
+  pipeResults: PipeResult[],
+  heatLossPerPipe: Map<string, number>,
+  sourceTemp_C: number,
+  nodeById: Map<string, SchemeNode>,
+): Map<string, number> {
+  const consumerT = new Map<string, number>();
+  const sourceId =
+    nodes.find((n) => n.kind === "source")?.id ?? nodes[0]?.id;
+  if (!sourceId) return consumerT;
+
+  const supplyPipes = pipes.filter(
+    (p) => !p.circuit || p.circuit === "heating_supply",
+  );
+  const adj = new Map<string, SchemePipe[]>();
+  for (const p of supplyPipes) {
+    if (!adj.has(p.fromNodeId)) adj.set(p.fromNodeId, []);
+    adj.get(p.fromNodeId)!.push(p);
+  }
+  const resultByPipe = new Map(pipeResults.map((r) => [r.pipeId, r]));
+
+  const walk = (id: string, T_C: number, visited: Set<string>) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = nodeById.get(id);
+    if (node?.kind === "consumer") {
+      // First time we reach a consumer wins (tree topology — there's
+      // only one path source → consumer in a directed supply tree).
+      if (!consumerT.has(id)) consumerT.set(id, T_C);
+    }
+    for (const p of adj.get(id) ?? []) {
+      const q_per_m = heatLossPerPipe.get(p.id) ?? 0;
+      const length_m = resolvePipeLength(p, nodeById).length_m;
+      const segLoss_W = q_per_m * length_m;
+      const G = resultByPipe.get(p.id)?.G_kg_s ?? 0;
+      const dT = G > 1e-6 ? segLoss_W / (G * C_P) : 0;
+      walk(p.toNodeId, T_C - dT, new Set(visited));
+    }
+  };
+  walk(sourceId, sourceTemp_C, new Set());
+  return consumerT;
+}
+
 export function runFullCalc(
   nodes: SchemeNode[],
   pipes: SchemePipe[],
   settings: ProjectSettings,
 ): CalculationResults {
-  const pipeResults = computePipeFlows(nodes, pipes, settings);
-  const nodeResults = computeNodePressures(nodes, pipes, pipeResults, settings.sourcePressure_mpa);
+  const schedule =
+    TEMP_SCHEDULES.find((t) => t.key === settings.temperatureScheduleKey) ??
+    TEMP_SCHEDULES[0]!;
+  const supplyT = schedule.supply_c;
+  const returnT = schedule.return_c;
+  const designDeltaT = supplyT - returnT;
+
+  // -------- PASS 1: baseline (no heat loss) -----------------------
+  // Compute pipe flows assuming the consumer sees the full design ΔT.
+  // This gives us a first-cut mass flow per pipe — accurate enough to
+  // drive the heat-loss pass, even though the actual ṁ will grow
+  // 5-12% on far consumers after correction.
+  let pipeResults = computePipeFlows(nodes, pipes, settings);
+
+  // -------- PHASE 5D: heat-loss-aware fixed-point iteration --------
+  let heatLossPerPipe = new Map<string, number>();
+  let consumerSupplyT = new Map<string, number>();
+  let totalHeatLoss_W = 0;
+  const heatLossEnabled = settings.heatLossEnabled !== false;
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  if (heatLossEnabled) {
+    // Step 1 — heat loss per pipe at uniform supply T (first pass).
+    heatLossPerPipe = computeHeatLossPerPipe(pipes, supplyT, settings);
+
+    // Step 2 — temperature drop from source to each consumer using
+    // baseline pipe mass flows.
+    consumerSupplyT = computeConsumerSupplyTemps(
+      nodes,
+      pipes,
+      pipeResults,
+      heatLossPerPipe,
+      supplyT,
+      nodeById,
+    );
+
+    // Step 3 — adjust consumer effective ΔT. A consumer that sees
+    // T_inlet = 93 °C instead of 95 °C has 23 °C usable ΔT instead
+    // of 25, so it needs (25/23) × baseline mass flow to deliver the
+    // same heat. We re-scale each consumer's heatLoad_w by that
+    // factor so the downstream-load aggregator produces the right ṁ
+    // automatically.
+    const adjustedNodes = nodes.map((n) => {
+      if (n.kind !== "consumer" || !n.heatLoad_w) return n;
+      const T_inlet = consumerSupplyT.get(n.id);
+      if (T_inlet === undefined) return n;
+      const effectiveDeltaT = T_inlet - returnT;
+      // Guard against pathological networks where heat loss exceeds
+      // the entire ΔT — would otherwise scale to infinity.
+      if (effectiveDeltaT <= 0.1) return n;
+      const scale = designDeltaT / effectiveDeltaT;
+      return { ...n, heatLoad_w: n.heatLoad_w * scale };
+    });
+
+    // Step 4 — re-run pipe flows with adjusted loads. One fixed-point
+    // iteration is enough: heat loss changes by < 0.5 % when the new
+    // (slightly higher) flows are fed back, far below engineering
+    // tolerance.
+    pipeResults = computePipeFlows(adjustedNodes, pipes, settings);
+
+    // Recompute supply temps with the new flows — same pipe q' (the
+    // local supply T is still close to design), but the per-pipe ṁ
+    // is now larger, so the ΔT contribution per pipe is slightly
+    // smaller. This is what reaches the UI / norm check.
+    consumerSupplyT = computeConsumerSupplyTemps(
+      nodes, // original nodes — we want the user-visible heatLoad_w
+      pipes,
+      pipeResults,
+      heatLossPerPipe,
+      supplyT,
+      nodeById,
+    );
+
+    // Total network heat loss = Σ q'_i · L_i.
+    for (const pipe of pipes) {
+      const q_per_m = heatLossPerPipe.get(pipe.id) ?? 0;
+      const length_m = resolvePipeLength(pipe, nodeById).length_m;
+      totalHeatLoss_W += q_per_m * length_m;
+    }
+  }
+
+  // Annotate pipe results with heat-loss per metre for downstream
+  // consumers (UI breakdown, Excel export, piezometric chart).
+  const annotatedPipes: PipeResult[] = pipeResults.map((r) => ({
+    ...r,
+    heatLossPerMeter_W: heatLossPerPipe.get(r.pipeId),
+  }));
+
+  const nodeResults = computeNodePressures(
+    nodes,
+    pipes,
+    annotatedPipes,
+    settings.sourcePressure_mpa,
+  ).map((nr) => ({
+    ...nr,
+    supplyTemp_C_at_inlet: consumerSupplyT.get(nr.nodeId),
+  }));
 
   const totalLoad = nodes.reduce((s, n) => s + (n.heatLoad_w ?? 0), 0);
-  const maxR = pipeResults.reduce((m, p) => Math.max(m, p.headlossPerMeter_pa), 0);
-  const maxV = pipeResults.reduce((m, p) => Math.max(m, p.v_m_s), 0);
+  const maxR = annotatedPipes.reduce(
+    (m, p) => Math.max(m, p.headlossPerMeter_pa),
+    0,
+  );
+  const maxV = annotatedPipes.reduce((m, p) => Math.max(m, p.v_m_s), 0);
 
   const consumerPressures = nodeResults
     .filter((n) => nodes.find((x) => x.id === n.nodeId)?.kind === "consumer")
     .map((n) => n.pressureAtNode_mpa);
-  const minConsumerP = consumerPressures.length ? Math.min(...consumerPressures) : 0;
+  const minConsumerP = consumerPressures.length
+    ? Math.min(...consumerPressures)
+    : 0;
 
-  const pump = sizePump(nodes, pipes, pipeResults, settings);
+  const pump = sizePump(nodes, pipes, annotatedPipes, settings);
+
+  let heatLoss: CalculationResults["heatLoss"] | undefined;
+  if (heatLossEnabled) {
+    const consumerTemps = Array.from(consumerSupplyT.values());
+    heatLoss = {
+      totalHeatLoss_W,
+      fractionOfLoad: totalLoad > 0 ? totalHeatLoss_W / totalLoad : 0,
+      minConsumerSupplyTemp_C: consumerTemps.length
+        ? Math.min(...consumerTemps)
+        : supplyT,
+      sourceSupplyTemp_C: supplyT,
+    };
+  }
 
   return {
-    pipes: pipeResults,
+    pipes: annotatedPipes,
     nodes: nodeResults,
     totalLoad_w: totalLoad,
     maxHeadlossPerMeter_pa: maxR,
     maxVelocity_m_s: maxV,
     minConsumerPressure_mpa: minConsumerP,
     pump,
+    heatLoss,
     computedAt: new Date().toISOString(),
   };
 }

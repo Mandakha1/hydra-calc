@@ -129,6 +129,13 @@ export function loadGKFixtureV2(): LoadedFixture {
     // matches the fixture rather than including a 30 % local-loss bump.
     localLossesFraction: 0,
     sourcePressure_mpa: 0.6,
+    // Phase 5D — the fixture's expected G / v / R values were computed
+    // assuming a uniform 25 °C ΔT across the network (no insulation
+    // heat loss). Disable the heat-loss pass so the solver's math
+    // matches the fixture's math exactly. A separate test
+    // (heatLossIntegration.test.ts) exercises the heat-loss-enabled
+    // path against the same fixture topology.
+    heatLossEnabled: false,
   };
 
   return { nodes, heatingSupplyPipes, heatingReturnPipes, hwPipes, settings };
