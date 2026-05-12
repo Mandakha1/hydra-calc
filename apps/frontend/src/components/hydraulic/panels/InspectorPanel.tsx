@@ -3,13 +3,19 @@ import { useHydraulicStore } from "../hydraulicStore";
 import { PIPE_DB, PIPE_MATERIALS, CLIMATE, WALL_TYPES, GLAZING } from "shared";
 import { calcHeatLoad } from "../calc/heatLoad";
 import { pipeLengthFromGeometry } from "../calc/haversine";
-import type { BuildingEnvelope, EnvelopeSurface } from "../hydraulicTypes";
+import { updateDimension, removeDimension } from "../scheme/dimensionApplier";
+import {
+  resolveDimensionEndpoints,
+  computeDimensionLabel,
+} from "../scheme/dimensions";
+import type { BuildingEnvelope, EnvelopeSurface, SchemeDimension } from "../hydraulicTypes";
 
 export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   const selection = useHydraulicStore((s) => s.selection);
   const nodes = useHydraulicStore((s) => s.nodes);
   const pipes = useHydraulicStore((s) => s.pipes);
   const settings = useHydraulicStore((s) => s.settings);
+  const dimensions = useHydraulicStore((s) => s.dimensions);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
@@ -32,6 +38,86 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
           <br />
           Mouse wheel — томруулах
         </div>
+      </aside>
+    );
+  }
+
+  // Phase 6.6.1 — dimension inspector branch (before node/pipe).
+  if (selection.kind === "dimension") {
+    const dim = (dimensions ?? []).find((d: SchemeDimension) => d.id === selection.id);
+    if (!dim) return null;
+    const resolved = resolveDimensionEndpoints(dim, nodes);
+    const autoLabel = computeDimensionLabel(
+      { ...dim, label: undefined },
+      resolved,
+    );
+    return (
+      <aside style={sidebarStyle}>
+        <h3>Хэмжээс</h3>
+        <Field label="Эх → Төгсгөл">
+          <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            {dim.fromNodeId} → {dim.toNodeId}
+            {resolved.orphan && (
+              <span style={{ color: "var(--danger, #C44)", marginLeft: 8 }}>
+                ⚠ Дутагдалтай зангилаа
+              </span>
+            )}
+          </div>
+        </Field>
+        <Field label={`Зайны утга (autoматаар: ${autoLabel})`}>
+          <input
+            type="text"
+            placeholder={autoLabel}
+            value={dim.label ?? ""}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateDimension(dim.id, { label: e.target.value || undefined })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label={`Шилжилт (${dim.offset_px} px)`}>
+          <input
+            type="range"
+            min={10}
+            max={100}
+            value={dim.offset_px}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateDimension(dim.id, { offset_px: Number(e.target.value) })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Давхрага">
+          <select
+            value={dim.layerKey ?? "D"}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateDimension(dim.id, {
+                layerKey: e.target.value as "D" | "C",
+              })
+            }
+            style={inputStyle}
+          >
+            <option value="D">D — Хэмжээс / Текст</option>
+            <option value="C">C — Туслах шугам</option>
+          </select>
+        </Field>
+        {!readOnly && (
+          <button
+            style={{
+              ...inputStyle,
+              color: "var(--danger)",
+              borderColor: "var(--danger)",
+              marginTop: 8,
+              cursor: "pointer",
+            }}
+            onClick={() => removeDimension(dim.id)}
+          >
+            Хэмжээсийг устгах
+          </button>
+        )}
       </aside>
     );
   }

@@ -22,8 +22,12 @@
 import type { PipeCircuit } from "../nodeCatalog";
 
 /** Layer ID — short name matching engineering drafting convention
- *  (D2 / D3 / U1 are the standard "discipline + index" labels). */
-export type LayerKey = "D2.1" | "D2.2" | "D3" | "D4" | "U1";
+ *  (D2 / D3 / U1 are the standard "discipline + index" labels).
+ *
+ *  Phase 6.6 adds two drafting-aid layers that aren't pipe roles:
+ *    D  — Drafting (dimensions, text annotations — visible in print)
+ *    C  — Construction (alignment aids — hidden by default in print) */
+export type LayerKey = "D2.1" | "D2.2" | "D3" | "D4" | "U1" | "D" | "C";
 
 export interface LayerConfig {
   /** Hidden when false. */
@@ -70,6 +74,19 @@ export const DEFAULT_LAYERS: Record<LayerKey, LayerConfig> = {
     color: "#5A8C3F",
     label: "Хүйтэн ус",
   },
+  // Phase 6.6 — drafting-aid layers (NOT pipe roles).
+  D: {
+    visible: true,
+    locked: false,
+    color: "#222222",
+    label: "Хэмжээс / Текст",
+  },
+  C: {
+    visible: true,
+    locked: false,
+    color: "#999999",
+    label: "Туслах шугам",
+  },
 };
 
 /** Map a PipeCircuit role to its layer key. */
@@ -108,5 +125,23 @@ export function resolveLayer(
 }
 
 /** Return the ordered list of layer keys for UI rendering — keeps
- *  the order stable across re-renders. */
-export const LAYER_ORDER: LayerKey[] = ["D2.1", "D2.2", "D3", "D4", "U1"];
+ *  the order stable across re-renders. Drafting layers (D, C) sit at
+ *  the bottom so the pipe roles (the engineering primary) stay on top. */
+export const LAYER_ORDER: LayerKey[] = ["D2.1", "D2.2", "D3", "D4", "U1", "D", "C"];
+
+/** Resolve a non-pipe layer (drafting aids — dimensions, construction
+ *  lines, annotations) by its key directly. Pipe-role lookup uses
+ *  `resolveLayer(circuit, overrides)` above. */
+export function resolveLayerByKey(
+  key: LayerKey,
+  overrides: Partial<Record<LayerKey, Partial<LayerConfig>>> | undefined,
+): LayerConfig {
+  const base = DEFAULT_LAYERS[key];
+  const override = overrides?.[key];
+  return {
+    visible: override?.visible ?? base.visible,
+    locked: override?.locked ?? base.locked,
+    color: override?.color ?? base.color,
+    label: override?.label ?? base.label,
+  };
+}

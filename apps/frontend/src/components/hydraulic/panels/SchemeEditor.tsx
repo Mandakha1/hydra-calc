@@ -44,15 +44,26 @@ import {
   DEFAULT_SNAP,
 } from "../scheme/snap";
 import { renderSymbolFor } from "../scheme/symbols";
-import { resolveLayer, layerKeyFor } from "../scheme/layers";
+import { resolveLayer, layerKeyFor, resolveLayerByKey } from "../scheme/layers";
 import { LayerPanel } from "../scheme/LayerPanel";
+import {
+  resolveDimensionEndpoints,
+  computeDimensionLabel,
+  dimensionGeometry,
+  dimensionBoundingBox,
+} from "../scheme/dimensions";
+import {
+  addDimension,
+  removeDimension,
+  selectDimension,
+} from "../scheme/dimensionApplier";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
-type Mode = "select" | "addNode" | "addPipe" | "drawBuilding" | "measure" | "pickBuilding";
+type Mode = "select" | "addNode" | "addPipe" | "drawBuilding" | "measure" | "pickBuilding" | "drawDimension";
 type AngleMode = "free" | "ortho90" | "ortho45";
 
 interface Props {
@@ -84,6 +95,8 @@ export function SchemeEditor({ readOnly }: Props) {
   const selectMany = useHydraulicStore((s) => s.selectMany);
   const clearSelection = useHydraulicStore((s) => s.clearSelection);
   const multiSelection = useHydraulicStore((s) => s.multiSelection);
+  // Phase 6.6.1 — dimension entities
+  const dimensions = useHydraulicStore((s) => s.dimensions);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<Mode>("select");
@@ -158,6 +171,11 @@ export function SchemeEditor({ readOnly }: Props) {
   /** Phase 6.5.2 — ephemeral toast message + key (key forces re-mount
    *  so consecutive identical messages still trigger the animation). */
   const [toast, setToast] = useState<{ text: string; key: number; tone?: "neutral" | "success" } | null>(null);
+  /** Phase 6.6.1 — dimension drawing state. After click 1 on a node,
+   *  we lock the first anchor. The next click (also requires node
+   *  endpoint snap) locks the second anchor and commits the dimension.
+   *  Cursor-following preview line shown via mousePos. */
+  const [pendingDimAnchor, setPendingDimAnchor] = useState<{ nodeId: string; x: number; y: number } | null>(null);
   /** OSM Overpass API loading flag — shows a spinner while fetching building. */
   const [osmLoading, setOsmLoading] = useState(false);
   /** Stable reference for the onMapView callback — passing an arrow function
@@ -560,6 +578,14 @@ export function SchemeEditor({ readOnly }: Props) {
           nextPoint = snap(constrain(polygon[polygon.length - 1]!, pt));
         }
         setPolygon([...polygon, nextPoint]);
+      } else if (mode === "drawDimension") {
+        // Phase 6.6.1 — empty-canvas click in drawDimension mode is a
+        // no-op (dimensions require node endpoint snap). Toast hints.
+        setToast({
+          text: "Хэмжээс зурахын тулд эхний цэг дээр (node) click хий",
+          key: Date.now(),
+          tone: "neutral",
+        });
       } else if (mode === "select") {
         select(null);
       }
@@ -587,6 +613,38 @@ export function SchemeEditor({ readOnly }: Props) {
       e.stopPropagation();
       if (readOnly) {
         select({ kind: "node", id: node.id });
+        return;
+      }
+      // Phase 6.6.1 — dimension drawing two-click flow.
+      // First node click → lock fromNodeId; second click on a
+      // different node → commit dimension and auto-return to select.
+      if (mode === "drawDimension") {
+        if (!pendingDimAnchor) {
+          setPendingDimAnchor({ nodeId: node.id, x: node.x, y: node.y });
+          setToast({
+            text: "Эхний цэг сонгогдсон. Хоёрдугаар node-руу click хий.",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        } else if (pendingDimAnchor.nodeId !== node.id) {
+          // Commit.
+          addDimension({
+            id: uid("dim"),
+            fromNodeId: pendingDimAnchor.nodeId,
+            toNodeId: node.id,
+            offset_px: 30,
+            layerKey: "D",
+            fromNode_cached_xy: { x: pendingDimAnchor.x, y: pendingDimAnchor.y },
+            toNode_cached_xy: { x: node.x, y: node.y },
+          });
+          setPendingDimAnchor(null);
+          setMode("select");
+          setToast({
+            text: "Хэмжээс үүсгэв",
+            key: Date.now(),
+            tone: "success",
+          });
+        }
         return;
       }
       if (mode === "addPipe") {
@@ -962,6 +1020,8 @@ export function SchemeEditor({ readOnly }: Props) {
         setPendingFootprint(null);
         setMeasurePoints([]);
         setContextMenu(null);
+        // Phase 6.6.1 — cancel any in-flight dimension drawing.
+        setPendingDimAnchor(null);
         // Phase 6.5.1 — Esc also clears multi-selection.
         useHydraulicStore.getState().clearSelection();
       } else if (e.key === "Enter" && mode === "drawBuilding" && polygon.length >= 3) {
@@ -1181,6 +1241,17 @@ export function SchemeEditor({ readOnly }: Props) {
             icon="📏"
             label="Хэмжих"
             color="var(--bp-blue)"
+          />
+          <SideBtn
+            active={mode === "drawDimension"}
+            onClick={() => {
+              setMode((m) => (m === "drawDimension" ? "select" : "drawDimension"));
+              setPendingDimAnchor(null);
+              setShowPalette(null);
+            }}
+            icon="📐"
+            label="Хэмжээс"
+            color="#222"
           />
           <SideBtn
             active={mode === "pickBuilding"}
@@ -1524,6 +1595,161 @@ export function SchemeEditor({ readOnly }: Props) {
                 </g>
               );
             })}
+
+            {/* Phase 6.6.1 — Dimension lines. Rendered before pipes so
+                pipes can hover above dimension labels. Each dimension
+                gets witness ticks + offset main line + arrowheads +
+                centered label with white halo. Orphan state (anchor
+                deleted) renders in red dashed. */}
+            {(() => {
+              const dims = dimensions ?? [];
+              if (dims.length === 0) return null;
+              const dLayer = resolveLayerByKey("D", settings.layers);
+              if (!dLayer.visible) return null;
+              return dims.map((dim) => {
+                const resolved = resolveDimensionEndpoints(dim, nodes);
+                const geom = dimensionGeometry(resolved.from, resolved.to, dim.offset_px);
+                const label = computeDimensionLabel(dim, resolved);
+                const isSelected = selection?.kind === "dimension" && selection.id === dim.id;
+                const isMultiSelected = (multiSelection.dimensionIds ?? []).includes(dim.id);
+                const color = resolved.orphan
+                  ? "#C44"
+                  : isSelected
+                    ? "var(--accent)"
+                    : dLayer.color;
+                const strokeDasharray = resolved.orphan ? "4 2" : undefined;
+                return (
+                  <g
+                    key={dim.id}
+                    data-testid={`dimension-${dim.id}`}
+                    onMouseDown={(e) => {
+                      // Click selects (when not in a drawing mode).
+                      if (mode === "select" || mode === "drawDimension") {
+                        e.stopPropagation();
+                        selectDimension(dim.id);
+                      }
+                    }}
+                    style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                  >
+                    {isMultiSelected && (
+                      <rect
+                        x={Math.min(geom.witness1.from.x, geom.witness2.from.x, geom.dimLine.from.x, geom.dimLine.to.x) - 4}
+                        y={Math.min(geom.witness1.from.y, geom.witness2.from.y, geom.dimLine.from.y, geom.dimLine.to.y) - 4}
+                        width={
+                          Math.abs(
+                            Math.max(geom.witness1.to.x, geom.witness2.to.x, geom.dimLine.from.x, geom.dimLine.to.x)
+                            - Math.min(geom.witness1.from.x, geom.witness2.from.x, geom.dimLine.from.x, geom.dimLine.to.x),
+                          ) + 8
+                        }
+                        height={
+                          Math.abs(
+                            Math.max(geom.witness1.to.y, geom.witness2.to.y, geom.dimLine.from.y, geom.dimLine.to.y)
+                            - Math.min(geom.witness1.from.y, geom.witness2.from.y, geom.dimLine.from.y, geom.dimLine.to.y),
+                          ) + 8
+                        }
+                        fill="none"
+                        stroke="#FFB300"
+                        strokeWidth={2}
+                        strokeDasharray="3 2"
+                        pointerEvents="none"
+                      />
+                    )}
+                    {/* Witness lines (thin perpendicular ticks) */}
+                    <line
+                      x1={geom.witness1.from.x}
+                      y1={geom.witness1.from.y}
+                      x2={geom.witness1.to.x}
+                      y2={geom.witness1.to.y}
+                      stroke={color}
+                      strokeWidth={1}
+                      strokeDasharray={strokeDasharray}
+                      pointerEvents="none"
+                    />
+                    <line
+                      x1={geom.witness2.from.x}
+                      y1={geom.witness2.from.y}
+                      x2={geom.witness2.to.x}
+                      y2={geom.witness2.to.y}
+                      stroke={color}
+                      strokeWidth={1}
+                      strokeDasharray={strokeDasharray}
+                      pointerEvents="none"
+                    />
+                    {/* Main dimension line */}
+                    <line
+                      x1={geom.dimLine.from.x}
+                      y1={geom.dimLine.from.y}
+                      x2={geom.dimLine.to.x}
+                      y2={geom.dimLine.to.y}
+                      stroke={color}
+                      strokeWidth={1.5}
+                      strokeDasharray={strokeDasharray}
+                      // Wider invisible hit-area for easier clicking.
+                      style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                    />
+                    {/* Arrowheads */}
+                    <polygon points={geom.arrow1Points} fill={color} />
+                    <polygon points={geom.arrow2Points} fill={color} />
+                    {/* Label with white halo via stroke-then-fill */}
+                    <text
+                      x={geom.labelPos.x}
+                      y={geom.labelPos.y - 4}
+                      fontSize={11}
+                      fontFamily="var(--font-mono)"
+                      fill={color}
+                      stroke="white"
+                      strokeWidth={3}
+                      paintOrder="stroke"
+                      textAnchor="middle"
+                      transform={
+                        Math.abs(geom.angle_deg) > 90
+                          ? `rotate(${geom.angle_deg + 180} ${geom.labelPos.x} ${geom.labelPos.y})`
+                          : `rotate(${geom.angle_deg} ${geom.labelPos.x} ${geom.labelPos.y})`
+                      }
+                      pointerEvents="none"
+                    >
+                      {label}
+                    </text>
+                    {/* Orphan warning marker — small red dot at label */}
+                    {resolved.orphan && (
+                      <circle
+                        cx={geom.labelPos.x}
+                        cy={geom.labelPos.y}
+                        r={3}
+                        fill="#C44"
+                      >
+                        <title>Дутагдалтай зангилаа — устгана уу эсвэл шинэ зангилаа сонгоно уу</title>
+                      </circle>
+                    )}
+                  </g>
+                );
+              });
+            })()}
+
+            {/* Phase 6.6.1 — Dimension drawing preview: rubber-band-ish line
+                from pendingDimAnchor to cursor while engineer picks the
+                second node. */}
+            {mode === "drawDimension" && pendingDimAnchor && mousePos && (
+              <g pointerEvents="none">
+                <line
+                  x1={pendingDimAnchor.x}
+                  y1={pendingDimAnchor.y}
+                  x2={mousePos.x}
+                  y2={mousePos.y}
+                  stroke="#FFB300"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+                <circle
+                  cx={pendingDimAnchor.x}
+                  cy={pendingDimAnchor.y}
+                  r={5}
+                  fill="#FFB300"
+                  stroke="white"
+                  strokeWidth={1.5}
+                />
+              </g>
+            )}
 
             {/* pipes */}
             {pipes.map((p) => {
