@@ -232,6 +232,26 @@ export interface ProjectSettings {
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
   sourcePressure_mpa: number;
 
+  /* ===== Layer system (Phase 6E) ===== */
+  /** Per-layer visibility / lock / colour overrides. Sparse — any
+   *  layer key (D2.1/D2.2/D3/D4/U1) not listed inherits its default
+   *  from layers.ts. Persisted per project. */
+  layers?: Partial<Record<"D2.1" | "D2.2" | "D3" | "D4" | "U1", {
+    visible?: boolean;
+    locked?: boolean;
+    color?: string;
+    label?: string;
+  }>>;
+
+  /* ===== Snap engine (Phase 6B) ===== */
+  /** Snap settings — persisted per project so each scheme remembers
+   *  whether the engineer was using a 5-m or 10-m grid, 45° or 90°
+   *  angle snap, etc. Each sub-setting is independently toggleable.
+   *  Defaults: grid on/5 m, angle on/90°, endpoint on/12 px. */
+  snapGrid?: { enabled: boolean; sizeM: 1 | 5 | 10 };
+  snapAngle?: { enabled: boolean; incrementDeg: 15 | 30 | 45 | 90 };
+  snapEndpoint?: { enabled: boolean; pixelThreshold: number };
+
   /* ===== Heat loss integration (Phase 5D) ===== */
   /** Whether the solver integrates pipe insulation heat loss into the
    *  mass-flow / pump-sizing calculation. Default true. Engineers

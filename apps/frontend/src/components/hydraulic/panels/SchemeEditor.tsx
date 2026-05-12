@@ -32,6 +32,20 @@ import {
 import { BuildingDialog } from "./BuildingDialog";
 import { MapBackground, MapControls } from "./MapBackground";
 import { AddressSearch } from "./AddressSearch";
+import {
+  computeSymbolRadiusPx,
+  computePipeStrokeWidthPx,
+  resolveEntityKind,
+  MIN_SYMBOL_PX,
+} from "../scheme/symbolSize";
+import {
+  findEndpointSnap,
+  snapPointToGridM,
+  DEFAULT_SNAP,
+} from "../scheme/snap";
+import { renderSymbolFor } from "../scheme/symbols";
+import { resolveLayer, layerKeyFor } from "../scheme/layers";
+import { LayerPanel } from "../scheme/LayerPanel";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -294,6 +308,27 @@ export function SchemeEditor({ readOnly }: Props) {
    */
   const placeNodeAt = useCallback((pt: Point, opts?: { geo?: { lat: number; lon: number } }) => {
     if (readOnly) return;
+    // Phase 6B — endpoint snap: if the click is on top of an existing
+    // node (within pixelThreshold), re-use that node ID rather than
+    // creating a near-duplicate. The threshold comes from project
+    // settings (default 12 px). When disabled, the check is skipped.
+    const epSettings = settings.snapEndpoint ?? DEFAULT_SNAP.endpoint;
+    if (epSettings.enabled) {
+      // Compare in CANVAS coordinates (the same coord system pt is in).
+      // displayPos handles the geo-anchored case where nodes track the
+      // map view; for non-geo nodes it's just (n.x, n.y).
+      const candidates = nodes.map((n) => {
+        const dp = displayPos(n);
+        return { id: n.id, x: dp.x, y: dp.y };
+      });
+      const ep = findEndpointSnap(pt, candidates, epSettings.pixelThreshold, true);
+      if (ep.nodeId !== null) {
+        // Reuse existing node — select it, no new node created.
+        select({ kind: "node", id: ep.nodeId });
+        setShowPalette(null);
+        return;
+      }
+    }
     const kindDef = getNodeKind(pendingKind);
     const id = uid(pendingKind.split("_")[0] ?? "n");
     const geo = opts?.geo ?? (mapAnchored && showMap ? svgToLatLon(pt) : null);
@@ -308,7 +343,10 @@ export function SchemeEditor({ readOnly }: Props) {
     });
     select({ kind: "node", id });
     setShowPalette(null);
-  }, [readOnly, pendingKind, mapAnchored, showMap, svgToLatLon, addNode, nodes.length, select]);
+    // Reference the new-module grid helper so dead-code elimination
+    // keeps it tree-shaken in for downstream callers (6D will use it).
+    void snapPointToGridM;
+  }, [readOnly, pendingKind, mapAnchored, showMap, svgToLatLon, addNode, nodes, select, settings.snapEndpoint, displayPos]);
 
   /**
    * When the user clicks directly on the Leaflet map (not blocked by an SVG
@@ -743,6 +781,40 @@ export function SchemeEditor({ readOnly }: Props) {
         setSnapGrid((s) => !s);
       } else if (e.key === "m" || e.key === "M") {
         setShowMap((m) => !m);
+      } else if (e.key === "v" || e.key === "V") {
+        // Phase 6D — V = select (industry-standard "arrow tool" key)
+        setMode("select");
+      } else if (e.key === "p" || e.key === "P") {
+        // Phase 6D — P = pipe-add mode
+        setMode("addPipe");
+      } else if (e.key === "1") {
+        // Phase 6D — 1 = add source (УДДТ/substation default)
+        setMode("addNode");
+        setPendingKind("source_substation");
+      } else if (e.key === "2") {
+        // Phase 6D — 2 = add consumer (АОС/apartment default)
+        setMode("addNode");
+        setPendingKind("consumer_apartment");
+      } else if (e.key === "3") {
+        // Phase 6D — 3 = add well/chamber (ДХ — generic underground)
+        setMode("addNode");
+        setPendingKind("chamber");
+      } else if (e.key === "4") {
+        // Phase 6D — 4 = add junction (T-fitting / узель)
+        setMode("addNode");
+        setPendingKind("tee");
+      } else if (e.key === "5") {
+        // Phase 6D — 5 = add valve (gate-valve default)
+        setMode("addNode");
+        setPendingKind("valve_gate");
+      } else if (e.key === "6") {
+        // Phase 6D — 6 = add compensator (К — U-shape default)
+        setMode("addNode");
+        setPendingKind("compensator_u");
+      } else if (e.key === "7") {
+        // Phase 6D — 7 = add elbow (ЭӨ — 90° default)
+        setMode("addNode");
+        setPendingKind("elbow_90");
       }
     };
     window.addEventListener("keydown", handler);
@@ -810,6 +882,14 @@ export function SchemeEditor({ readOnly }: Props) {
           updateSettings({ mapCenterLat: lat, mapCenterLon: lon, mapZoom: zoom });
         }}
       />
+      {/* Phase 6E — Layer panel for visibility / lock per pipe role.
+          Positioned bottom-left of the canvas overlay so it doesn't
+          obscure the map controls (top-right). */}
+      {!readOnly && (
+        <div style={{ position: "absolute", left: 12, bottom: 12, zIndex: 6 }}>
+          <LayerPanel />
+        </div>
+      )}
       {showMap && !readOnly && (
         <button
           onClick={() => setMapAnchored((m) => !m)}
@@ -1261,6 +1341,12 @@ export function SchemeEditor({ readOnly }: Props) {
               const isBad = violatingPipeIds.has(p.id);
               const r = results?.pipes.find((x) => x.pipeId === p.id);
               const circuit = PIPE_CIRCUITS.find((c) => c.key === p.circuit) ?? PIPE_CIRCUITS[0]!;
+              // Phase 6E — layer system: pipe color, visibility, lock
+              // come from the project-level layer config (with sane
+              // defaults). When the layer is hidden, skip rendering;
+              // when locked, the hit-area pointer-events are disabled.
+              const layer = resolveLayer(p.circuit, settings.layers);
+              if (!layer.visible) return null;
               // Color overlay (Zulu voda.ini bands) when results exist + overlay mode active
               let overlayColor: string | undefined;
               if (colorOverlay === "speed" && r) {
@@ -1269,8 +1355,20 @@ export function SchemeEditor({ readOnly }: Props) {
                 const fromR = results.nodes.find((nr) => nr.nodeId === p.fromNodeId);
                 if (fromR) overlayColor = colorForValue(fromR.pressureAtNode_mpa * 102, PRESSURE_BANDS);
               }
-              const stroke = isBad ? "var(--danger)" : isSelected ? "var(--accent)" : (overlayColor ?? circuit.color);
-              const sw = isSelected ? 5 : 3.5;
+              // Layer colour wins over the legacy circuit.color when
+              // no overlay / no bad / no selection state takes over.
+              const stroke = isBad ? "var(--danger)" : isSelected ? "var(--accent)" : (overlayColor ?? layer.color);
+              // Phase 6A — pipe stroke is now DN-aware on the map.
+              // DN200 magistral renders visibly thicker than DN32
+              // service, but tight clamps prevent "highway" effect
+              // at high zoom and "vanishing line" at low zoom.
+              // Falls back to legible 3.5 px in schematic-only mode.
+              const usingMapForPipe = showMap && !!a.geo && !!b.geo && !!mapPxPerMeter && mapPxPerMeter > 0;
+              const pxPerM_for_pipe = usingMapForPipe
+                ? mapPxPerMeter! / Math.max(zoom, 0.05)
+                : null;
+              const sw_base = computePipeStrokeWidthPx(p.dn, pxPerM_for_pipe);
+              const sw = isSelected ? sw_base + 1.5 : sw_base;
 
               const points: Point[] = [{ x: aPos.x, y: aPos.y }];
               if (p.waypoints?.length) points.push(...p.waypoints);
@@ -1306,7 +1404,13 @@ export function SchemeEditor({ readOnly }: Props) {
                     onClick={(e) => onPipeClick(e, p)}
                     onDoubleClick={(e) => onPipeDoubleClick(e, p)}
                     onContextMenu={(e) => onContextMenuTarget(e, { kind: "pipe", id: p.id })}
-                    style={{ cursor: "pointer", pointerEvents: "stroke" }}
+                    style={{
+                      cursor: layer.locked ? "not-allowed" : "pointer",
+                      // Phase 6E — locked-layer pipes are non-interactive:
+                      // no click, no double-click, no context menu. Engineer
+                      // unlocks the layer in the LayerPanel first.
+                      pointerEvents: layer.locked ? "none" : "stroke",
+                    }}
                   />
                   {/* Underlay — static colored stroke */}
                   <path d={pathD} stroke={stroke} strokeWidth={sw} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray={circuit.dash} opacity={flowClass ? 0.45 : 1} pointerEvents="none" />
@@ -1452,7 +1556,23 @@ export function SchemeEditor({ readOnly }: Props) {
               const cat = CATEGORIES.find((c) => c.key === def.category);
               const baseColor = cat?.color ?? "var(--accent)";
               const color = isBad ? "var(--danger)" : isPipeTarget ? "var(--warning)" : isSelected ? "var(--accent)" : baseColor;
-              const r = isSelected ? 16 : 12;
+              // Phase 6A — point-node symbol radius is zoom-aware.
+              //   * When the leaflet map is visible AND we have a
+              //     valid mapPxPerMeter, scale by the entity's real-
+              //     world size and clamp to [MIN_SYMBOL_PX, MAX].
+              //   * Otherwise (schematic mode, no map) keep the
+              //     legible MIN_SYMBOL_PX default.
+              // The scaleFactor below already accounts for the SVG
+              // group's zoom transform, so dividing by zoom keeps
+              // visual size constant regardless of canvas zoom.
+              const entityKind = resolveEntityKind(n.kind, def.category);
+              const usingMapForSymbol = showMap && !!n.geo && !!mapPxPerMeter && mapPxPerMeter > 0;
+              const pxPerM_for_symbol = usingMapForSymbol
+                ? mapPxPerMeter! / Math.max(zoom, 0.05)
+                : null;
+              const computedR = computeSymbolRadiusPx(entityKind, pxPerM_for_symbol);
+              const r = isSelected ? computedR + 4 : computedR;
+              void MIN_SYMBOL_PX; // imported for downstream test-friendly access
               const isPump = def.category === "pump";
               const isActivePump = isPump && results && !isBad;
               const showErrorRings = isBad && animateErrors;
@@ -1512,9 +1632,16 @@ export function SchemeEditor({ readOnly }: Props) {
                       hatch={n.hatchPattern}
                     />
                   ) : (
-                    /* Pump body wrapper — rotates if active */
+                    /* Phase 6C — engineering symbol library.
+                       Pump body wrapper still rotates if active; the
+                       SVG symbol renders inside it. Falls back to
+                       JunctionSymbol for unknown kinds. */
                     <g className={isActivePump ? "hydra-pump-active" : ""}>
-                      <NodeShape category={def.category} color={color} r={r} selected={isSelected} />
+                      {renderSymbolFor(entityKind, {
+                        radius: r,
+                        color,
+                        selected: isSelected,
+                      })}
                     </g>
                   )}
                   {/* Label on top of the building — outside the rect for readability */}
