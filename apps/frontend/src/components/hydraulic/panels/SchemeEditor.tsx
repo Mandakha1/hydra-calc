@@ -44,6 +44,8 @@ import {
   DEFAULT_SNAP,
 } from "../scheme/snap";
 import { renderSymbolFor } from "../scheme/symbols";
+import { resolveLayer, layerKeyFor } from "../scheme/layers";
+import { LayerPanel } from "../scheme/LayerPanel";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -880,6 +882,14 @@ export function SchemeEditor({ readOnly }: Props) {
           updateSettings({ mapCenterLat: lat, mapCenterLon: lon, mapZoom: zoom });
         }}
       />
+      {/* Phase 6E — Layer panel for visibility / lock per pipe role.
+          Positioned bottom-left of the canvas overlay so it doesn't
+          obscure the map controls (top-right). */}
+      {!readOnly && (
+        <div style={{ position: "absolute", left: 12, bottom: 12, zIndex: 6 }}>
+          <LayerPanel />
+        </div>
+      )}
       {showMap && !readOnly && (
         <button
           onClick={() => setMapAnchored((m) => !m)}
@@ -1331,6 +1341,12 @@ export function SchemeEditor({ readOnly }: Props) {
               const isBad = violatingPipeIds.has(p.id);
               const r = results?.pipes.find((x) => x.pipeId === p.id);
               const circuit = PIPE_CIRCUITS.find((c) => c.key === p.circuit) ?? PIPE_CIRCUITS[0]!;
+              // Phase 6E — layer system: pipe color, visibility, lock
+              // come from the project-level layer config (with sane
+              // defaults). When the layer is hidden, skip rendering;
+              // when locked, the hit-area pointer-events are disabled.
+              const layer = resolveLayer(p.circuit, settings.layers);
+              if (!layer.visible) return null;
               // Color overlay (Zulu voda.ini bands) when results exist + overlay mode active
               let overlayColor: string | undefined;
               if (colorOverlay === "speed" && r) {
@@ -1339,7 +1355,9 @@ export function SchemeEditor({ readOnly }: Props) {
                 const fromR = results.nodes.find((nr) => nr.nodeId === p.fromNodeId);
                 if (fromR) overlayColor = colorForValue(fromR.pressureAtNode_mpa * 102, PRESSURE_BANDS);
               }
-              const stroke = isBad ? "var(--danger)" : isSelected ? "var(--accent)" : (overlayColor ?? circuit.color);
+              // Layer colour wins over the legacy circuit.color when
+              // no overlay / no bad / no selection state takes over.
+              const stroke = isBad ? "var(--danger)" : isSelected ? "var(--accent)" : (overlayColor ?? layer.color);
               // Phase 6A — pipe stroke is now DN-aware on the map.
               // DN200 magistral renders visibly thicker than DN32
               // service, but tight clamps prevent "highway" effect
@@ -1386,7 +1404,13 @@ export function SchemeEditor({ readOnly }: Props) {
                     onClick={(e) => onPipeClick(e, p)}
                     onDoubleClick={(e) => onPipeDoubleClick(e, p)}
                     onContextMenu={(e) => onContextMenuTarget(e, { kind: "pipe", id: p.id })}
-                    style={{ cursor: "pointer", pointerEvents: "stroke" }}
+                    style={{
+                      cursor: layer.locked ? "not-allowed" : "pointer",
+                      // Phase 6E — locked-layer pipes are non-interactive:
+                      // no click, no double-click, no context menu. Engineer
+                      // unlocks the layer in the LayerPanel first.
+                      pointerEvents: layer.locked ? "none" : "stroke",
+                    }}
                   />
                   {/* Underlay — static colored stroke */}
                   <path d={pathD} stroke={stroke} strokeWidth={sw} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray={circuit.dash} opacity={flowClass ? 0.45 : 1} pointerEvents="none" />

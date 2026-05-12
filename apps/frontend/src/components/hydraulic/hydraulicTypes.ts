@@ -232,6 +232,17 @@ export interface ProjectSettings {
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
   sourcePressure_mpa: number;
 
+  /* ===== Layer system (Phase 6E) ===== */
+  /** Per-layer visibility / lock / colour overrides. Sparse — any
+   *  layer key (D2.1/D2.2/D3/D4/U1) not listed inherits its default
+   *  from layers.ts. Persisted per project. */
+  layers?: Partial<Record<"D2.1" | "D2.2" | "D3" | "D4" | "U1", {
+    visible?: boolean;
+    locked?: boolean;
+    color?: string;
+    label?: string;
+  }>>;
+
   /* ===== Snap engine (Phase 6B) ===== */
   /** Snap settings — persisted per project so each scheme remembers
    *  whether the engineer was using a 5-m or 10-m grid, 45° or 90°
