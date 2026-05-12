@@ -282,7 +282,20 @@ export interface CalculationResults {
   /** Minimum consumer pressure (MPa). */
   minConsumerPressure_mpa: number;
   /** Pump duty — H (m water column), Q (m³/h), P (kW). */
-  pump?: { H_m: number; Q_m3h: number; P_kW: number };
+  pump?: {
+    H_m: number;
+    Q_m3h: number;
+    P_kW: number;
+    /** Optional metre-by-metre breakdown of how H_m was assembled.
+     *  Populated by sizePump() since the DISCREPANCY-002 fix (Phase 5A);
+     *  UI panels render it for transparency. */
+    breakdown?: {
+      supplyFriction_m: number;
+      returnFriction_m: number;
+      consumerReserve_m: number;
+      safetyMargin_m: number;
+    };
+  };
   /** ISO timestamp when results were computed. */
   computedAt: string;
 }
