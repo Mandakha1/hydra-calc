@@ -38,6 +38,11 @@ import {
   resolveEntityKind,
   MIN_SYMBOL_PX,
 } from "../scheme/symbolSize";
+import {
+  findEndpointSnap,
+  snapPointToGridM,
+  DEFAULT_SNAP,
+} from "../scheme/snap";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -300,6 +305,27 @@ export function SchemeEditor({ readOnly }: Props) {
    */
   const placeNodeAt = useCallback((pt: Point, opts?: { geo?: { lat: number; lon: number } }) => {
     if (readOnly) return;
+    // Phase 6B — endpoint snap: if the click is on top of an existing
+    // node (within pixelThreshold), re-use that node ID rather than
+    // creating a near-duplicate. The threshold comes from project
+    // settings (default 12 px). When disabled, the check is skipped.
+    const epSettings = settings.snapEndpoint ?? DEFAULT_SNAP.endpoint;
+    if (epSettings.enabled) {
+      // Compare in CANVAS coordinates (the same coord system pt is in).
+      // displayPos handles the geo-anchored case where nodes track the
+      // map view; for non-geo nodes it's just (n.x, n.y).
+      const candidates = nodes.map((n) => {
+        const dp = displayPos(n);
+        return { id: n.id, x: dp.x, y: dp.y };
+      });
+      const ep = findEndpointSnap(pt, candidates, epSettings.pixelThreshold, true);
+      if (ep.nodeId !== null) {
+        // Reuse existing node — select it, no new node created.
+        select({ kind: "node", id: ep.nodeId });
+        setShowPalette(null);
+        return;
+      }
+    }
     const kindDef = getNodeKind(pendingKind);
     const id = uid(pendingKind.split("_")[0] ?? "n");
     const geo = opts?.geo ?? (mapAnchored && showMap ? svgToLatLon(pt) : null);
@@ -314,7 +340,10 @@ export function SchemeEditor({ readOnly }: Props) {
     });
     select({ kind: "node", id });
     setShowPalette(null);
-  }, [readOnly, pendingKind, mapAnchored, showMap, svgToLatLon, addNode, nodes.length, select]);
+    // Reference the new-module grid helper so dead-code elimination
+    // keeps it tree-shaken in for downstream callers (6D will use it).
+    void snapPointToGridM;
+  }, [readOnly, pendingKind, mapAnchored, showMap, svgToLatLon, addNode, nodes, select, settings.snapEndpoint, displayPos]);
 
   /**
    * When the user clicks directly on the Leaflet map (not blocked by an SVG
