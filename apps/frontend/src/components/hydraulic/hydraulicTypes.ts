@@ -232,11 +232,15 @@ export interface ProjectSettings {
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
   sourcePressure_mpa: number;
 
-  /* ===== Layer system (Phase 6E) ===== */
+  /* ===== Layer system (Phase 6E + 6.6) ===== */
   /** Per-layer visibility / lock / colour overrides. Sparse — any
-   *  layer key (D2.1/D2.2/D3/D4/U1) not listed inherits its default
-   *  from layers.ts. Persisted per project. */
-  layers?: Partial<Record<"D2.1" | "D2.2" | "D3" | "D4" | "U1", {
+   *  layer key not listed inherits its default from layers.ts.
+   *  Persisted per project.
+   *
+   *  Layer key catalogue:
+   *    Phase 6E (pipe roles): D2.1, D2.2, D3, D4, U1
+   *    Phase 6.6 (drafting):  D (dimensions/text), C (construction) */
+  layers?: Partial<Record<"D2.1" | "D2.2" | "D3" | "D4" | "U1" | "D" | "C", {
     visible?: boolean;
     locked?: boolean;
     color?: string;
@@ -404,6 +408,44 @@ export interface NormViolation {
   unit: string;
 }
 
+/**
+ * Phase 6.6.1 — Dimension line entity.
+ *
+ * Drafting-style measurement annotation between two anchor nodes.
+ * The anchor IDs are the source of truth — when both nodes exist,
+ * the dimension's endpoints are computed live from them (so
+ * dimensions follow on node move). When EITHER anchor is deleted,
+ * the dimension falls back to the cached `*_xy` coords and renders
+ * in an orphan state (red dashed) so the engineer notices and
+ * either deletes it or re-anchors.
+ *
+ * The dimension's label defaults to auto-computed Haversine length
+ * (when both nodes carry geo) or Euclidean pixel-distance otherwise.
+ * Engineer can override via the `label` field for special cases
+ * (e.g. "70м (max)", "≥30м", "X = ?").
+ */
+export interface SchemeDimension {
+  id: string;
+  /** Anchor — must reference a node id at creation time. */
+  fromNodeId: string;
+  /** Anchor — must reference a node id at creation time. */
+  toNodeId: string;
+  /** Perpendicular offset of the dimension line from the
+   *  node-to-node axis, in SVG pixels. Positive = "above" when the
+   *  axis runs left-to-right (engineer-intuitive). Default 30. */
+  offset_px: number;
+  /** Optional label override. When empty/undefined, the renderer
+   *  computes the length from the live anchor positions. */
+  label?: string;
+  /** Layer assignment — "D" (Drafting, visible in print) or "C"
+   *  (Construction, hidden by default in print). Default "D". */
+  layerKey?: "D" | "C";
+  /** Cached anchor positions for orphan fallback. Updated on every
+   *  successful render that resolves both anchors. */
+  fromNode_cached_xy?: { x: number; y: number };
+  toNode_cached_xy?: { x: number; y: number };
+}
+
 /** Phase 6.5.5 — single undo/redo snapshot.
  *  Captures the minimum state needed to roll back / replay a batch
  *  operation: nodes + pipes + the two selection surfaces. Settings
@@ -417,8 +459,11 @@ export interface UndoSnapshot {
   affectedCount: number;
   nodes: SchemeNode[];
   pipes: SchemePipe[];
-  selection: { kind: "node" | "pipe"; id: string } | null;
-  multiSelection: { nodeIds: string[]; pipeIds: string[] };
+  /** Phase 6.6.1 — kind union extended with "dimension". */
+  selection: { kind: "node" | "pipe" | "dimension"; id: string } | null;
+  multiSelection: { nodeIds: string[]; pipeIds: string[]; dimensionIds?: string[] };
+  /** Phase 6.6.1 — dimensions snapshot for batched op undo. */
+  dimensions?: SchemeDimension[];
 }
 
 export type HydraulicState = {
@@ -436,6 +481,9 @@ export type HydraulicState = {
   /** Redo buffer — populated when the user pops the undo stack.
    *  Cleared on any new batch operation. */
   redoStack?: UndoSnapshot[];
+  /** Phase 6.6.1 — dimension-line entities. Optional so legacy
+   *  projects without drafting aids load cleanly. */
+  dimensions?: SchemeDimension[];
 };
 
 /** Default state for a fresh project. */

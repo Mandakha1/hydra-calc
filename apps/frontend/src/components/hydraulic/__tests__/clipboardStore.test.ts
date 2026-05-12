@@ -169,6 +169,6 @@ describe("clipboard store integration — Phase 6.5.2", () => {
     expect(useHydraulicStore.getState().nodes).toEqual([]);
     expect(useHydraulicStore.getState().clipboard).toBeNull();
     expect(useHydraulicStore.getState().selection).toBeNull();
-    expect(useHydraulicStore.getState().multiSelection).toEqual({ nodeIds: [], pipeIds: [] });
+    expect(useHydraulicStore.getState().multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [] });
   });
 });

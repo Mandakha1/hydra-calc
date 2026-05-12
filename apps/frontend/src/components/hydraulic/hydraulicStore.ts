@@ -49,6 +49,10 @@ import {
 export interface MultiSelection {
   nodeIds: string[];
   pipeIds: string[];
+  /** Phase 6.6.1 — dimension selection set. Optional in interface
+   *  for backward compatibility; readers should treat `undefined` as
+   *  `[]`. The store always initialises it as `[]`. */
+  dimensionIds?: string[];
 }
 
 interface StoreActions {
@@ -61,23 +65,23 @@ interface StoreActions {
   removePipe(id: string): void;
   updateSettings(patch: Partial<ProjectSettings>): void;
   setResults(results: HydraulicState["results"], violations: HydraulicState["violations"]): void;
-  /** Select a single node or pipe (replaces any existing selection).
-   *  Resets multiSelection to just this target. */
-  select(target: { kind: "node" | "pipe"; id: string } | null): void;
+  /** Select a single node, pipe, or (Phase 6.6.1) dimension (replaces
+   *  any existing selection). Resets multiSelection to just this target. */
+  select(target: { kind: "node" | "pipe" | "dimension"; id: string } | null): void;
   /** Ctrl+click: toggle a target in multiSelection. If it was selected,
    *  remove it; if not, add it. Legacy `selection` becomes the toggled
    *  target (or null if it was the only one and got removed). */
-  selectToggle(target: { kind: "node" | "pipe"; id: string }): void;
+  selectToggle(target: { kind: "node" | "pipe" | "dimension"; id: string }): void;
   /** Shift+click: add a target to multiSelection without toggling
    *  (idempotent — re-adding is a no-op). */
-  selectExtend(target: { kind: "node" | "pipe"; id: string }): void;
+  selectExtend(target: { kind: "node" | "pipe" | "dimension"; id: string }): void;
   /** Rubber-band drop or Ctrl+A: replace multiSelection with the
    *  given set. Legacy `selection` follows the first item (or null
    *  for empty input). */
   selectMany(ms: MultiSelection): void;
   /** Esc: clear both legacy `selection` and `multiSelection`. */
   clearSelection(): void;
-  selection: { kind: "node" | "pipe"; id: string } | null;
+  selection: { kind: "node" | "pipe" | "dimension"; id: string } | null;
   multiSelection: MultiSelection;
 
   /* ============== Clipboard (Phase 6.5.2) ==================== */
@@ -107,13 +111,13 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
   subscribeWithSelector((set) => ({
     ...emptyState(),
     selection: null,
-    multiSelection: { nodeIds: [], pipeIds: [] },
+    multiSelection: { nodeIds: [], pipeIds: [], dimensionIds: [] },
 
     reset: (state) =>
       set({
         ...(state ?? emptyState()),
         selection: null,
-        multiSelection: { nodeIds: [], pipeIds: [] },
+        multiSelection: { nodeIds: [], pipeIds: [], dimensionIds: [] },
         // Phase 6.5.2 — reset wipes the clipboard too. Engineers
         // switching projects don't want a stale paste from the
         // previous session to land in the new one.
@@ -121,6 +125,8 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         // Phase 6.5.5 — same blank-slate rule for undo/redo history.
         undoStack: [],
         redoStack: [],
+        // Phase 6.6.1 — same for dimensions (and future drafting aids).
+        dimensions: [],
       }),
 
     addNode: (node) =>
@@ -144,6 +150,11 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           pipeIds: s.multiSelection.pipeIds.filter((pid) =>
             s.pipes.find((p) => p.id === pid && p.fromNodeId !== id && p.toNodeId !== id),
           ),
+          // Phase 6.6.1 — dimensions are NOT cascade-deleted when an
+          // anchor node disappears; they go to "orphan state" via the
+          // cached XY fallback. So the dimensionIds selection set is
+          // preserved untouched here.
+          dimensionIds: s.multiSelection.dimensionIds ?? [],
         },
       })),
 
@@ -162,6 +173,7 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         multiSelection: {
           nodeIds: s.multiSelection.nodeIds,
           pipeIds: s.multiSelection.pipeIds.filter((x) => x !== id),
+          dimensionIds: s.multiSelection.dimensionIds ?? [],
         },
       })),
 
@@ -175,94 +187,126 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         selection: target,
         multiSelection: target
           ? target.kind === "node"
-            ? { nodeIds: [target.id], pipeIds: [] }
-            : { nodeIds: [], pipeIds: [target.id] }
-          : { nodeIds: [], pipeIds: [] },
+            ? { nodeIds: [target.id], pipeIds: [], dimensionIds: [] }
+            : target.kind === "pipe"
+              ? { nodeIds: [], pipeIds: [target.id], dimensionIds: [] }
+              : { nodeIds: [], pipeIds: [], dimensionIds: [target.id] }
+          : { nodeIds: [], pipeIds: [], dimensionIds: [] },
       }),
 
     selectToggle: (target) =>
       set((s) => {
+        // Phase 6.6.1 — unified toggle logic handling all 3 kinds.
+        // Pull out the relevant list, toggle the target, then
+        // figure out where the legacy `selection` should point.
         const ms = s.multiSelection;
-        if (target.kind === "node") {
-          const has = ms.nodeIds.includes(target.id);
-          const nextNodeIds = has
-            ? ms.nodeIds.filter((x) => x !== target.id)
-            : [...ms.nodeIds, target.id];
-          // After toggle off, fall back legacy `selection` to the last
-          // remaining item (priority: pipes if any, else first node, else null).
-          const wasOnly = has && nextNodeIds.length === 0 && ms.pipeIds.length === 0;
-          return {
-            multiSelection: { nodeIds: nextNodeIds, pipeIds: ms.pipeIds },
-            selection: wasOnly
-              ? null
-              : has
-                ? ms.pipeIds.length > 0
-                  ? { kind: "pipe", id: ms.pipeIds[ms.pipeIds.length - 1]! }
-                  : nextNodeIds.length > 0
-                    ? { kind: "node", id: nextNodeIds[nextNodeIds.length - 1]! }
-                    : null
-                : { kind: "node", id: target.id },
-          };
-        }
-        // pipe branch (symmetric)
-        const has = ms.pipeIds.includes(target.id);
-        const nextPipeIds = has
-          ? ms.pipeIds.filter((x) => x !== target.id)
-          : [...ms.pipeIds, target.id];
-        const wasOnly = has && nextPipeIds.length === 0 && ms.nodeIds.length === 0;
-        return {
-          multiSelection: { nodeIds: ms.nodeIds, pipeIds: nextPipeIds },
-          selection: wasOnly
-            ? null
-            : has
-              ? nextPipeIds.length > 0
-                ? { kind: "pipe", id: nextPipeIds[nextPipeIds.length - 1]! }
-                : ms.nodeIds.length > 0
-                  ? { kind: "node", id: ms.nodeIds[ms.nodeIds.length - 1]! }
-                  : null
-              : { kind: "pipe", id: target.id },
+        const dimIds = ms.dimensionIds ?? [];
+
+        const kindToList = {
+          node: ms.nodeIds,
+          pipe: ms.pipeIds,
+          dimension: dimIds,
+        } as const;
+        const currentList = kindToList[target.kind];
+        const has = currentList.includes(target.id);
+        const nextList = has
+          ? currentList.filter((x) => x !== target.id)
+          : [...currentList, target.id];
+
+        const nextMs: MultiSelection = {
+          nodeIds: target.kind === "node" ? nextList : ms.nodeIds,
+          pipeIds: target.kind === "pipe" ? nextList : ms.pipeIds,
+          dimensionIds: target.kind === "dimension" ? nextList : dimIds,
         };
+
+        // Legacy selection priority on toggle-off: latest of (this kind
+        // remaining → pipe → node → dimension → null).
+        let nextSel: { kind: "node" | "pipe" | "dimension"; id: string } | null;
+        if (!has) {
+          nextSel = { kind: target.kind, id: target.id };
+        } else {
+          // Walk priority list to find a fallback.
+          if (nextList.length > 0) {
+            nextSel = { kind: target.kind, id: nextList[nextList.length - 1]! };
+          } else if (nextMs.pipeIds.length > 0) {
+            nextSel = { kind: "pipe", id: nextMs.pipeIds[nextMs.pipeIds.length - 1]! };
+          } else if (nextMs.nodeIds.length > 0) {
+            nextSel = { kind: "node", id: nextMs.nodeIds[nextMs.nodeIds.length - 1]! };
+          } else if ((nextMs.dimensionIds ?? []).length > 0) {
+            const d = nextMs.dimensionIds!;
+            nextSel = { kind: "dimension", id: d[d.length - 1]! };
+          } else {
+            nextSel = null;
+          }
+        }
+
+        return { multiSelection: nextMs, selection: nextSel };
       }),
 
     selectExtend: (target) =>
       set((s) => {
         const ms = s.multiSelection;
+        const dimIds = ms.dimensionIds ?? [];
         if (target.kind === "node") {
           if (ms.nodeIds.includes(target.id)) return {}; // idempotent
           return {
             multiSelection: {
               nodeIds: [...ms.nodeIds, target.id],
               pipeIds: ms.pipeIds,
+              dimensionIds: dimIds,
             },
             selection: { kind: "node", id: target.id },
           };
         }
-        if (ms.pipeIds.includes(target.id)) return {};
+        if (target.kind === "pipe") {
+          if (ms.pipeIds.includes(target.id)) return {};
+          return {
+            multiSelection: {
+              nodeIds: ms.nodeIds,
+              pipeIds: [...ms.pipeIds, target.id],
+              dimensionIds: dimIds,
+            },
+            selection: { kind: "pipe", id: target.id },
+          };
+        }
+        // dimension branch
+        if (dimIds.includes(target.id)) return {};
         return {
           multiSelection: {
             nodeIds: ms.nodeIds,
-            pipeIds: [...ms.pipeIds, target.id],
+            pipeIds: ms.pipeIds,
+            dimensionIds: [...dimIds, target.id],
           },
-          selection: { kind: "pipe", id: target.id },
+          selection: { kind: "dimension", id: target.id },
         };
       }),
 
     selectMany: (ms) =>
       set(() => {
+        const dimIds = ms.dimensionIds ?? [];
         const first =
           ms.nodeIds[0] !== undefined
-            ? ({ kind: "node", id: ms.nodeIds[0] } as const)
+            ? ({ kind: "node" as const, id: ms.nodeIds[0]! })
             : ms.pipeIds[0] !== undefined
-              ? ({ kind: "pipe", id: ms.pipeIds[0] } as const)
-              : null;
+              ? ({ kind: "pipe" as const, id: ms.pipeIds[0]! })
+              : dimIds[0] !== undefined
+                ? ({ kind: "dimension" as const, id: dimIds[0]! })
+                : null;
         return {
-          multiSelection: { nodeIds: [...ms.nodeIds], pipeIds: [...ms.pipeIds] },
+          multiSelection: {
+            nodeIds: [...ms.nodeIds],
+            pipeIds: [...ms.pipeIds],
+            dimensionIds: [...dimIds],
+          },
           selection: first,
         };
       }),
 
     clearSelection: () =>
-      set({ selection: null, multiSelection: { nodeIds: [], pipeIds: [] } }),
+      set({
+        selection: null,
+        multiSelection: { nodeIds: [], pipeIds: [], dimensionIds: [] },
+      }),
 
     /* ============== Clipboard actions (Phase 6.5.2) ============== */
 

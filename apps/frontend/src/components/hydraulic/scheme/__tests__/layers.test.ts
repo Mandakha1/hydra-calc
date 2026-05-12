@@ -55,8 +55,8 @@ describe("DEFAULT_LAYERS — engineering drafting palette", () => {
     expect(DEFAULT_LAYERS["D2.2"].color.toLowerCase()).toBe("#185fa5");
   });
 
-  it("LAYER_ORDER lists all 5 keys in stable visual order", () => {
-    expect(LAYER_ORDER).toEqual(["D2.1", "D2.2", "D3", "D4", "U1"]);
+  it("LAYER_ORDER lists all 7 keys in stable visual order (Phase 6E pipe roles + Phase 6.6 drafting)", () => {
+    expect(LAYER_ORDER).toEqual(["D2.1", "D2.2", "D3", "D4", "U1", "D", "C"]);
   });
 });
 
