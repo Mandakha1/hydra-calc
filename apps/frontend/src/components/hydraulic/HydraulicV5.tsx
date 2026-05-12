@@ -17,7 +17,12 @@ import { storage } from "../../lib/storage";
 // mount; everything else (Үр дүн, Пьезометр, Тэнцвэржүүлэлт, Эвдрэлийн
 // загвар, Смет, Тохиргоо, ИТП picker) loads when its tab/button is clicked.
 // Suspense fallback (TabLoading) shows during the chunk download.
-const PiezometricChart = lazy(() => import("./panels/PiezometricChart").then((m) => ({ default: m.PiezometricChart })));
+// Piezometric tab now uses the new PiezometricView (computes via the
+// dedicated calc/piezometric.ts module — replaces the older inline
+// DFS-based PiezometricChart). Keeping the local binding name
+// "PiezometricChart" so the JSX dispatch in the tab switcher below
+// doesn't need touching.
+const PiezometricChart = lazy(() => import("./panels/PiezometricView").then((m) => ({ default: m.PiezometricView })));
 const BalancingPanel = lazy(() => import("./panels/BalancingPanel").then((m) => ({ default: m.BalancingPanel })));
 const FailurePanel = lazy(() => import("./panels/FailurePanel").then((m) => ({ default: m.FailurePanel })));
 const BomPanel = lazy(() => import("./panels/BomPanel").then((m) => ({ default: m.BomPanel })));

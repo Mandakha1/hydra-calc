@@ -98,11 +98,13 @@ function buildSyntheticNetwork(): { nodes: SchemeNode[]; pipes: SchemePipe[] } {
 }
 
 const SETTINGS: ProjectSettings = {
+  networkType: "two_pipe_closed",
   temperatureScheduleKey: "95_70",
+  designOutdoorTemp_c: -39,
+  city: "ulaanbaatar",
   primaryMaterialCategory: "steel",
   localLossesFraction: 0.3,
-  designOutdoorTemperatureC: -39,
-  networkType: "two_pipe_closed",
+  sourcePressure_mpa: 0.6,
 };
 
 describe("piezometric — GK-23/02 synthetic-topology fixture", () => {
