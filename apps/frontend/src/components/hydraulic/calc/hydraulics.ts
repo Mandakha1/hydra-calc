@@ -252,51 +252,149 @@ export function runFullCalc(
   };
 }
 
+/**
+ * Compute required pump head + flow + power for a 2-pipe heat network.
+ *
+ * Per БНбД 41-01-2019 §6.3 / СП 124.13330.2012 §7.4, the pump must
+ * overcome the friction along the WORST-served consumer's full loop
+ * (supply leg + return leg) AND still deliver the 0.15 MPa Δp the
+ * consumer needs at its ИТП inlet:
+ *
+ *   H_required = (ΔP_supply_max + ΔP_return_max) / (ρ·g)
+ *              + Δp_consumer_reserve / (ρ·g)
+ *
+ * Until this function was fixed (DISCREPANCY-002, Phase 5A), only the
+ * supply-leg term was counted — under-sizing the pump by ~4-5 % on a
+ * balanced 2-pipe system. That is enough to stall the return loop at
+ * the far consumer during −39 °C peak Mongolian winter, leaving cold
+ * radiators in the last building on the line. The current
+ * implementation walks BOTH supply and return circuits when present;
+ * if no return pipes are passed (synthetic supply-only test networks),
+ * it assumes the balanced-2-pipe mirror (return ΔP = supply ΔP).
+ *
+ * A 2 m design safety margin is surfaced in `breakdown.safetyMargin_m`
+ * so the UI can show "minimum required" (H_m) and "recommended" (H_m +
+ * margin) side-by-side; the margin is NOT folded into H_m itself so
+ * the value matches the fixture's `H_m_minimum_required`.
+ */
+const DESIGN_SAFETY_MARGIN_M = 2;
+
 function sizePump(
   nodes: SchemeNode[],
   pipes: SchemePipe[],
   pipeResults: PipeResult[],
   settings: ProjectSettings,
 ) {
-  // Sum friction loss along the critical path from source to the farthest consumer.
   const sourceId = nodes.find((n) => n.kind === "source")?.id ?? nodes[0]?.id;
   if (!sourceId) return undefined;
 
-  // Find the consumer with the max cumulative head loss from source.
-  const totalByConsumer = new Map<string, number>();
-  const adj = new Map<string, SchemePipe[]>();
-  for (const p of pipes) {
-    if (!adj.has(p.fromNodeId)) adj.set(p.fromNodeId, []);
-    adj.get(p.fromNodeId)!.push(p);
+  // Partition pipes by circuit so supply-tree and return-tree are walked
+  // independently. heating_supply is the directed tree from the source;
+  // heating_return points the OTHER way (consumer → source).
+  const supplyPipes = pipes.filter((p) => !p.circuit || p.circuit === "heating_supply");
+  const returnPipes = pipes.filter((p) => p.circuit === "heating_return");
+
+  const supplyAdj = new Map<string, SchemePipe[]>();
+  for (const p of supplyPipes) {
+    if (!supplyAdj.has(p.fromNodeId)) supplyAdj.set(p.fromNodeId, []);
+    supplyAdj.get(p.fromNodeId)!.push(p);
+  }
+  const returnAdj = new Map<string, SchemePipe[]>();
+  for (const p of returnPipes) {
+    if (!returnAdj.has(p.fromNodeId)) returnAdj.set(p.fromNodeId, []);
+    returnAdj.get(p.fromNodeId)!.push(p);
   }
   const resultByPipe = new Map(pipeResults.map((r) => [r.pipeId, r]));
 
-  function dfs(id: string, accum: number, visited: Set<string>) {
+  // 1. Supply leg: cumulative friction from source to each consumer.
+  const supplyDpByConsumer = new Map<string, number>();
+  function dfsSupply(id: string, accum: number, visited: Set<string>) {
     if (visited.has(id)) return;
     visited.add(id);
     const node = nodes.find((n) => n.id === id);
-    if (node?.kind === "consumer") totalByConsumer.set(id, accum);
-    for (const p of adj.get(id) ?? []) {
+    if (node?.kind === "consumer") supplyDpByConsumer.set(id, accum);
+    for (const p of supplyAdj.get(id) ?? []) {
       const r = resultByPipe.get(p.id);
       if (!r) continue;
-      dfs(p.toNodeId, accum + r.totalPressureDrop_pa, new Set(visited));
+      dfsSupply(p.toNodeId, accum + r.totalPressureDrop_pa, new Set(visited));
     }
   }
-  dfs(sourceId, 0, new Set());
+  dfsSupply(sourceId, 0, new Set());
 
-  const maxDp_pa = Math.max(0, ...Array.from(totalByConsumer.values()));
+  // 2. Return leg: cumulative friction from each consumer back to source.
+  // If no return pipes were supplied (synthetic supply-only network),
+  // fall back to the balanced-2-pipe assumption (return ΔP ≈ supply ΔP).
+  const returnDpByConsumer = new Map<string, number>();
+  if (returnPipes.length > 0) {
+    for (const [consumerId] of supplyDpByConsumer) {
+      let total = 0;
+      function walk(id: string, accum: number, visited: Set<string>) {
+        if (visited.has(id)) return;
+        visited.add(id);
+        if (id === sourceId) {
+          total = Math.max(total, accum);
+          return;
+        }
+        for (const p of returnAdj.get(id) ?? []) {
+          const r = resultByPipe.get(p.id);
+          if (!r) continue;
+          walk(p.toNodeId, accum + r.totalPressureDrop_pa, new Set(visited));
+        }
+      }
+      walk(consumerId, 0, new Set());
+      returnDpByConsumer.set(consumerId, total);
+    }
+  } else {
+    for (const [consumerId, supplyDp] of supplyDpByConsumer) {
+      returnDpByConsumer.set(consumerId, supplyDp);
+    }
+  }
+
+  // 3. Pick the consumer with the worst (supply + return) friction loop
+  //    — that's the one driving pump sizing.
+  let worstSupplyDp_pa = 0;
+  let worstReturnDp_pa = 0;
+  for (const [consumerId, supplyDp] of supplyDpByConsumer) {
+    const retDp = returnDpByConsumer.get(consumerId) ?? supplyDp;
+    if (supplyDp + retDp > worstSupplyDp_pa + worstReturnDp_pa) {
+      worstSupplyDp_pa = supplyDp;
+      worstReturnDp_pa = retDp;
+    }
+  }
+
   const reserveDp_pa = NORM_THRESHOLDS.dp_consumer_min_mpa * 1e6;
-  const required_dp_pa = maxDp_pa + reserveDp_pa;
 
   const schedule = TEMP_SCHEDULES.find((t) => t.key === settings.temperatureScheduleKey) ?? TEMP_SCHEDULES[0]!;
   const t_mean = (schedule.supply_c + schedule.return_c) / 2;
   const rho = waterDensity(t_mean);
-  const totalG = pipeResults.reduce((max, r) => Math.max(max, r.G_kg_s), 0);
+  const denom = rho * GRAVITY;
 
+  // Per-component breakdown in metres of water — surfaced to UI for
+  // engineer-readable pump-sizing rationale.
+  const supplyFriction_m = worstSupplyDp_pa / denom;
+  const returnFriction_m = worstReturnDp_pa / denom;
+  const consumerReserve_m = reserveDp_pa / denom;
+  const safetyMargin_m = DESIGN_SAFETY_MARGIN_M;
+
+  // Minimum required H — matches fixture's H_m_minimum_required.
+  // safetyMargin_m is left out of H_m and surfaced separately so the
+  // UI can present "minimum" and "recommended (with 2 m margin)".
+  const H_m = supplyFriction_m + returnFriction_m + consumerReserve_m;
+
+  const totalG = pipeResults.reduce((max, r) => Math.max(max, r.G_kg_s), 0);
   const Q_m3s = totalG / rho;
   const Q_m3h = Q_m3s * 3600;
-  const H_m = required_dp_pa / (rho * GRAVITY);
-  const P_kW = (rho * GRAVITY * Q_m3s * H_m) / PUMP_EFFICIENCY_DEFAULT / 1000;
+  const P_kW = (denom * Q_m3s * H_m) / PUMP_EFFICIENCY_DEFAULT / 1000;
 
-  return { H_m, Q_m3h, P_kW };
+  return {
+    H_m,
+    Q_m3h,
+    P_kW,
+    breakdown: {
+      supplyFriction_m,
+      returnFriction_m,
+      consumerReserve_m,
+      safetyMargin_m,
+    },
+  };
 }

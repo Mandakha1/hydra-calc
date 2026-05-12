@@ -214,28 +214,41 @@ describe("GK-23/02 v2 — full network validation (32 pipes, 15 nodes)", () => {
       expect(result.pump!.Q_m3h).toBeLessThan(expected.pump.Q_m3_h * (1 + tol));
     });
 
-    // DISCREPANCY-002 (see docs/diagnostic/phase-4-discrepancies.md):
-    // Solver currently sizes the pump using SUPPLY-LEG friction only
-    // (~16.5 kPa for this fixture → H ≈ 17.4 m once 0.15 MPa consumer
-    // reserve is added). The fixture's H_m_minimum_required of 18.3 m
-    // expects a round-trip (supply + return) friction accounting, which
-    // bumps H to ~20.3 m. Until the solver is taught to add the return
-    // leg, this assertion is skipped with a documented TODO.
-    it.skip("H ≥ minimum required (TODO DISCREPANCY-002: solver supply-only pump sizing)", () => {
+    // DISCREPANCY-002 RESOLVED in Phase 5A.2 (commit ${'<this commit>'}):
+    //   sizePump() now walks BOTH supply and return circuits and
+    //   surfaces a per-component breakdown. H_m now matches the
+    //   fixture's H_m_minimum_required; safetyMargin_m is exposed
+    //   separately so UI shows "minimum" vs "recommended" head.
+    it(`H_m ≥ minimum required ${expected.pump.H_m_minimum_required} m (round-trip)`, () => {
       expect(result.pump?.H_m).toBeDefined();
       expect(result.pump!.H_m).toBeGreaterThanOrEqual(expected.pump.H_m_minimum_required);
     });
 
-    it("H is consistent with supply-only friction (solver's current contract)", () => {
-      // What the solver DOES compute correctly: ΔP_supply_max + 0.15 MPa
-      // reserve, expressed in m of water at ρ≈970. Asserting that contract
-      // here so the regression bar is set on the current behaviour while
-      // DISCREPANCY-002 is open.
+    it(`H_m + design margin matches recommended ${expected.pump.H_m} m (±${expected.pump.tolerance_pct}%)`, () => {
+      // The fixture's headline H_m (20.3 m) is the engineer-recommended
+      // pump pick: round-trip friction + 0.15 MPa consumer reserve + 2 m
+      // design buffer. The solver returns H_m as the *minimum* required
+      // value, and the buffer in breakdown.safetyMargin_m. Reconstructing
+      // the recommended figure should land inside the fixture's ±5 %.
       expect(result.pump?.H_m).toBeDefined();
-      // Supply-only friction ≈ 1.65 m water; reserve 0.15 MPa ≈ 15.74 m.
-      // Total expected ≈ 17.39 m ± 5 %.
-      expect(result.pump!.H_m).toBeGreaterThan(17.39 * 0.95);
-      expect(result.pump!.H_m).toBeLessThan(17.39 * 1.05);
+      expect(result.pump?.breakdown?.safetyMargin_m).toBeDefined();
+      const recommended_m = result.pump!.H_m + result.pump!.breakdown!.safetyMargin_m;
+      const tol = expected.pump.tolerance_pct / 100;
+      expect(recommended_m).toBeGreaterThan(expected.pump.H_m * (1 - tol));
+      expect(recommended_m).toBeLessThan(expected.pump.H_m * (1 + tol));
+    });
+
+    it("breakdown surfaces supply, return, reserve, and safety-margin components", () => {
+      expect(result.pump?.breakdown).toBeDefined();
+      // Both legs are present and positive — proves return-leg arithmetic
+      // was actually walked, not just zero-padded.
+      expect(result.pump!.breakdown!.supplyFriction_m).toBeGreaterThan(0);
+      expect(result.pump!.breakdown!.returnFriction_m).toBeGreaterThan(0);
+      // Reserve is the fixed 0.15 MPa Δp at the consumer.
+      expect(result.pump!.breakdown!.consumerReserve_m).toBeGreaterThan(14);
+      expect(result.pump!.breakdown!.consumerReserve_m).toBeLessThan(17);
+      // Design buffer is the 2 m engineering convention.
+      expect(result.pump!.breakdown!.safetyMargin_m).toBe(2);
     });
   });
 });
