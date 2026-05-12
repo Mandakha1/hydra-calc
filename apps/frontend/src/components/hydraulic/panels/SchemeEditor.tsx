@@ -43,6 +43,7 @@ import {
   snapPointToGridM,
   DEFAULT_SNAP,
 } from "../scheme/snap";
+import { renderSymbolFor } from "../scheme/symbols";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -1573,9 +1574,16 @@ export function SchemeEditor({ readOnly }: Props) {
                       hatch={n.hatchPattern}
                     />
                   ) : (
-                    /* Pump body wrapper — rotates if active */
+                    /* Phase 6C — engineering symbol library.
+                       Pump body wrapper still rotates if active; the
+                       SVG symbol renders inside it. Falls back to
+                       JunctionSymbol for unknown kinds. */
                     <g className={isActivePump ? "hydra-pump-active" : ""}>
-                      <NodeShape category={def.category} color={color} r={r} selected={isSelected} />
+                      {renderSymbolFor(entityKind, {
+                        radius: r,
+                        color,
+                        selected: isSelected,
+                      })}
                     </g>
                   )}
                   {/* Label on top of the building — outside the rect for readability */}
