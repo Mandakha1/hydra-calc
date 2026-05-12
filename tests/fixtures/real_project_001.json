@@ -1,25 +1,200 @@
 {
-  "_placeholder": true,
-  "_status": "awaiting fixture from chat",
-  "_note": "User will paste the heating_project_extracted.json contents (extracted from ГК-23/02 real project paperwork). When that content lands, replace this entire file with the JSON payload and remove the _placeholder/_status/_note keys.",
-  "_expected_shape": {
-    "project": {
-      "name": "string — display name",
-      "standard": "string — БНбД 41-01-2019 etc.",
-      "source": "string — paperwork reference (e.g. ГК-23/02)"
-    },
-    "nodes": "array of { id, kind, label, geo?: {lat, lon}, x?, y?, heatLoad_w?, requiredPressure_mpa?, floors?, width_m?, height_m?, ... }",
-    "pipes": "array of { id, fromNodeId, toNodeId, dn, length_m, materialKey, circuit }",
-    "expected_results": {
-      "_optional": "any field present here will be diffed against the calc engine output; missing fields are tolerated",
-      "total_load_kW": "number — sum of all consumer heatLoad_w / 1000",
-      "max_velocity_m_s": "number",
-      "max_headloss_pa_per_m": "number",
-      "min_consumer_pressure_mpa": "number",
-      "pump": { "Q_m3h": "number", "H_m": "number" },
-      "per_section_flow_m3h": {
-        "_keyed_by_pipe_id": "Q_m3h — for sections that have a printed field-test result"
-      }
+  "project_meta": {
+    "name": "Songinokhairkhan 34-r khoroo - amiin oron suuts heating connection",
+    "project_id": "GK-23/02",
+    "date": "2023-01",
+    "location": "Ulaanbaatar, Songinokhairkhan district, 34th khoroo",
+    "designer": "B.Nasantogtokh",
+    "checker": "B.Tsedendorj",
+    "company": "GAN-CAD LLC",
+    "standards": [
+      "BNbD 23-01-09 - Climate and geophysical indicators for construction",
+      "BNbD 41-02-13 - Heat networks",
+      "BNbD 41-04-13 - Equipment and pipe heat insulation",
+      "BNbD 12-03-04 - Construction safety rules"
+    ],
+    "pipe_standard": "GOST 10704-91 V-group ST20 steel",
+    "galvanized_pipe_standard": "GOST 3262-75"
+  },
+  "climate": {
+    "design_outdoor_temp_C": -39,
+    "heating_season_avg_temp_C": -10.1,
+    "heating_season_days": 240,
+    "comment": "Ulaanbaatar climate per BNbD 23-01-09"
+  },
+  "temperature_graph": {
+    "supply_C": 95,
+    "return_C": 70,
+    "dT_C": 25,
+    "supply_designator": "D2.1",
+    "return_designator": "D2.2",
+    "comment": "Primary heating circuit. HW circuit: 5C cold -> 55C hot"
+  },
+  "domestic_hot_water": {
+    "cold_water_temp_C": 5,
+    "hot_water_temp_C": 55,
+    "supply_designator": "D3",
+    "return_designator": "D4",
+    "cold_water_pipe_designator": "U1"
+  },
+  "heat_source": {
+    "id": "UDDT-8",
+    "type": "heat_substation",
+    "description_mn": "Ус дулаан дамжуулах төв №8",
+    "description_en": "Water-heat transfer center No. 8",
+    "uddt_equipment": {
+      "heat_exchanger": "BR 0.15Q-2 plate type",
+      "heating_pump": "CNP TD40, 350m head",
+      "hw_pump": "CNP TD32, G=6 m3/h, 350m head",
+      "booster_pump": "Shimge PX404E with inverter",
+      "controller": "ECL 210 (Danfoss)",
+      "water_softener": "SRD electromagnetic",
+      "expansion_tank_dn": 32
     }
-  }
+  },
+  "consumers": [
+    {"id": "AOS-1", "type": "private_house_6_apartment", "load_heating_kcal_h": 13241, "load_heating_W": 15400, "load_ventilation_W": 0, "load_hw_kcal_h": 0, "load_hw_W": 0, "load_total_kcal_h": 13241, "load_total_W": 15400},
+    {"id": "AOS-2", "type": "private_house_6_apartment", "load_heating_kcal_h": 11522, "load_heating_W": 13400, "load_ventilation_W": 0, "load_hw_kcal_h": 0, "load_hw_W": 0, "load_total_kcal_h": 11522, "load_total_W": 13400},
+    {"id": "AOS-3", "type": "private_house", "load_heating_kcal_h": 13345, "load_heating_W": 15520, "load_ventilation_W": 0, "load_hw_kcal_h": 3955, "load_hw_W": 4600, "load_total_kcal_h": 17300, "load_total_W": 20120},
+    {"id": "AOS-4", "type": "private_house", "load_heating_kcal_h": 10834, "load_heating_W": 12600, "load_ventilation_W": 0, "load_hw_kcal_h": 0, "load_hw_W": 0, "load_total_kcal_h": 10834, "load_total_W": 12600},
+    {"id": "AOS-5", "type": "private_house", "load_heating_kcal_h": 12734, "load_heating_W": 14810, "load_ventilation_W": 0, "load_hw_kcal_h": 2579, "load_hw_W": 3000, "load_total_kcal_h": 15313, "load_total_W": 17810}
+  ],
+  "totals_from_design": {
+    "heating_kcal_h": 61676,
+    "heating_W": 71730,
+    "hw_kcal_h": 6534,
+    "hw_W": 7600,
+    "total_kcal_h": 68210,
+    "total_W": 79330
+  },
+  "network_topology_summary": {
+    "junctions_UHT_count": 15,
+    "junctions_EO_count": 7,
+    "compensators_K_count": 4,
+    "wells_DH_count": 6,
+    "heat_sources_count": 1,
+    "consumers_count": 5
+  },
+  "key_pipe_sections": [
+    {
+      "section_id": "UDDT8_to_UHT1",
+      "from_node": "UDDT-8",
+      "to_node": "UHT-1",
+      "supply_pipe": {"designator": "D2.1", "outer_diameter_mm": 65, "wall_thickness_mm": 2.5, "inner_diameter_mm": 60},
+      "return_pipe": {"designator": "D2.2", "outer_diameter_mm": 65, "wall_thickness_mm": 2.5},
+      "hw_supply": {"designator": "D3", "outer_diameter_mm": 50, "wall_thickness_mm": 2.5},
+      "hw_return": {"designator": "D4", "outer_diameter_mm": 40, "wall_thickness_mm": 2.5},
+      "cold_water": {"designator": "U1", "outer_diameter_mm": 40, "wall_thickness_mm": 2.5},
+      "length_m": 194,
+      "document_values": {"mass_flow_t_h": 3.59, "heat_power_kW": 71.73, "hw_mass_flow_t_h": 0.16, "hw_heat_power_kW": 7.6, "pressure_loss_Pa_m": 100, "velocity_m_s": 0.49},
+      "physics_check": {"expected_mass_flow_t_h_at_dT25": 2.46, "expected_velocity_at_doc_flow_m_s": 0.365, "expected_R_Darcy_at_doc_flow_Pa_m": 40, "discrepancy_note": "Document G is 46% higher than Q/(cp*dT). Likely accounts for HW instantaneous peak coefficient or design reserve."}
+    },
+    {
+      "section_id": "UHT1_to_UHT2",
+      "from_node": "UHT-1",
+      "to_node": "UHT-2",
+      "supply_pipe": {"designator": "D2.1", "outer_diameter_mm": 50, "wall_thickness_mm": 2.5},
+      "length_m": 70,
+      "document_values": {"mass_flow_t_h": 2.35, "heat_power_kW": 44.32, "pressure_loss_Pa_m": 45, "velocity_m_s": 0.45}
+    }
+  ],
+  "pipe_size_options": {
+    "available_outer_diameters_mm": [20, 25, 32, 40, 50, 65, 80, 100, 150],
+    "standard_wall_thickness_mm": 2.5,
+    "standard_material": "ST20 steel per GOST 10704-91 V-group"
+  },
+  "sliding_support_spacing": {
+    "DN20_m": 2.0, "DN25_m": 2.0, "DN32_m": 2.0, "DN40_m": 2.5, "DN50_m": 3.0, "DN65_m": 3.0,
+    "support_pad_type_for_smaller": "OP-1", "support_pad_type_for_larger": "OP-2"
+  },
+  "insulation_default": {
+    "material": "polyurethane_foam",
+    "thermal_conductivity_W_mK": 0.04,
+    "density_kg_m3": 20,
+    "thickness_m": 0.05,
+    "outer_protection": "protective_jacket",
+    "corrosion_protection": "oil_paint_2_coats"
+  },
+  "channel_dimensions_mm": {
+    "L-4": {"width": 600, "height": 450, "use": "small_branches"},
+    "L-7": {"width": 1200, "height": 580, "use": "secondary_lines"},
+    "L-9": {"width": 1500, "height": 610, "use": "main_lines"}
+  },
+  "well_dimensions_mm": {
+    "small": {"width": 2000, "length": 2000, "depth": 2000, "examples": ["DH-5", "DH-6"]},
+    "large": {"width": 2500, "length": 2500, "depth": 2000, "examples": ["DH-1", "DH-2", "DH-3", "DH-4"]}
+  },
+  "compensator_pretension_mm": {
+    "K-1_supply": 33.2,
+    "K-1_return": 21.7,
+    "type": "U_bend_natural_compensation_via_angle_changes"
+  },
+  "expected_results": {
+    "engineering_tolerance_pct": 15,
+    "comment": "Document values include design reserve factors and HW instantaneous peak coefficients. Program theoretical output is expected to be lower than documented values by ~30-50% on shared primary pipes. This is NOT a bug — it reflects design margin built into the original engineering.",
+    "primary_temperature_graph": {
+      "supply_C": 95,
+      "return_C": 70,
+      "dT_C": 25,
+      "cp_kJ_kgK_at_82_5C": 4.187,
+      "rho_kg_m3_at_82_5C": 970.6
+    },
+    "per_consumer_mass_flow_theoretical_kg_s": {
+      "AOS-1": {"value": 0.1471, "tolerance_pct": 1.0, "derivation": "15400 W / (4187 J/kgK * 25 K)"},
+      "AOS-2": {"value": 0.1280, "tolerance_pct": 1.0, "derivation": "13400 W / (4187 * 25)"},
+      "AOS-3": {"value": 0.1922, "tolerance_pct": 1.0, "derivation": "20120 W total (heating+HW lumped on primary) / (4187 * 25)"},
+      "AOS-4": {"value": 0.1204, "tolerance_pct": 1.0, "derivation": "12600 W / (4187 * 25)"},
+      "AOS-5": {"value": 0.1702, "tolerance_pct": 1.0, "derivation": "17810 W total / (4187 * 25)"}
+    },
+    "system_total_mass_flow_theoretical_kg_s": {
+      "value": 0.7579,
+      "tolerance_pct": 1.0,
+      "as_t_per_h": 2.73,
+      "derivation": "Sum = 79330 W / (4187 * 25)"
+    },
+    "pipe_sections_to_validate": [
+      {
+        "section_id": "UDDT8_to_UHT1",
+        "from": "UDDT-8",
+        "to": "UHT-1",
+        "dn": 65,
+        "length_m": 194,
+        "document_mass_flow_t_h": 3.59,
+        "theoretical_mass_flow_t_h": 2.46,
+        "expected_program_output_t_h": 2.46,
+        "tolerance_pct": 5,
+        "document_velocity_m_s": 0.49,
+        "theoretical_velocity_m_s": 0.365,
+        "expected_program_velocity_m_s": 0.365,
+        "comment": "Program should output theoretical 2.46, NOT document 3.59"
+      },
+      {
+        "section_id": "UHT1_to_UHT2",
+        "from": "UHT-1",
+        "to": "UHT-2",
+        "dn": 50,
+        "length_m": 70,
+        "document_mass_flow_t_h": 2.35,
+        "theoretical_mass_flow_t_h": 1.526,
+        "expected_program_output_t_h": 1.526,
+        "tolerance_pct": 5,
+        "comment": "After AOS-1 branch, remaining load ~ 44.32 kW theoretical"
+      }
+    ],
+    "norm_check_expectations": {
+      "all_velocities_below_3_5_ms": true,
+      "all_pressure_losses_below_80_pa_m": true,
+      "min_consumer_dp_above_0_15_MPa": true
+    }
+  },
+  "notes_for_program": [
+    "Use SI units internally (W, kg/s, m, Pa, C). Convert at I/O.",
+    "1 kcal/h = 1.163 W.",
+    "95/70C graph is THE default for residential heating in Mongolia.",
+    "DH wells = physical infrastructure where pipes branch, drain, or compensate.",
+    "UHT = fixed support, treat as pass-through hydraulically.",
+    "K = Compensator, also pass-through hydraulically.",
+    "EO = Elbow, pass-through with local loss coefficient.",
+    "Document G values include reserve factors. Compare program to theoretical, not document."
+  ]
 }
