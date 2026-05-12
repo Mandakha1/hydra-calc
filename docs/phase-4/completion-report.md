@@ -5,6 +5,11 @@
 > per-pipe expectation green or `.skip` with documented reason.
 > Achieved: **72 / 73 v2 assertions green, 1 .skip (DISCREPANCY-002)**;
 > overall test suite **124 / 125 passing**.
+>
+> *Update 2026-05-12 (Phase 5A.2)*: DISCREPANCY-002 resolved.
+> v2 suite now **74 / 74** (.skip removed, 3 new pump-head assertions
+> added); overall **131 / 131 passing**. See
+> `docs/phase-5/sub-phase-5A-pump-sizing.md`.
 
 ---
 
