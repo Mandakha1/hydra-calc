@@ -7,6 +7,16 @@ import {
   applyPaste,
   type ClipboardPayload,
 } from "./scheme/clipboard";
+// Phase 6.5.3 — pure transform helpers exist in ./scheme/transforms.ts
+// (translateNodes / rotateNodes / mirrorNodes / centroidPx / centroidGeo)
+// with 23 tests covering rotation + mirror + geo-coord behaviour.
+// Store-level wiring (translateSelection / rotateSelectionAroundCentroid
+// / mirrorSelectionHorizontal-Vertical) intentionally DEFERRED to a
+// follow-on PR — adding these to StoreActions pushed TS's curried-
+// generic inference past its complexity budget, breaking selector
+// type inference across every consumer panel. The math is ready;
+// the store wiring needs a careful selector-typing refactor (or a
+// Zustand slice split) which is a separate-PR risk-isolated task.
 
 /** Phase 6.5.1 — Multi-selection state.
  *
@@ -88,7 +98,12 @@ interface StoreActions {
   pasteClipboard(offset_m?: { x: number; y: number }): { nodes: number; pipes: number } | null;
 }
 
-export const useHydraulicStore = create<HydraulicState & StoreActions>()(
+/** Phase 6.5.3 — explicit combined store type so consumers can
+ *  annotate selector parameters when TS's curried-generic inference
+ *  collapses to `any` on the bare arrow form. */
+export type HydraulicStoreState = HydraulicState & StoreActions;
+
+export const useHydraulicStore = create<HydraulicStoreState>()(
   subscribeWithSelector((set) => ({
     ...emptyState(),
     selection: null,
