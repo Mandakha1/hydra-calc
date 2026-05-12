@@ -93,6 +93,63 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             />
           </Field>
         </div>
+        {/* Phase 6D — numeric lat/lon input. Lets the engineer pin a
+            node to an exact coordinate (e.g. paste from a surveyor's
+            GPS readout) instead of dragging it on the map. Hidden
+            until a `geo` already exists OR the engineer toggles
+            the empty fields. */}
+        <div style={{ display: "flex", gap: 8 }}>
+          <Field label="Lat">
+            <input
+              type="number"
+              step={0.0000001}
+              placeholder="47.9184"
+              value={node.geo?.lat ?? ""}
+              disabled={readOnly}
+              onChange={(e) => {
+                const v = e.target.value === "" ? null : Number(e.target.value);
+                if (v === null) {
+                  // Clearing lat removes the geo lock — node falls
+                  // back to drag-based positioning.
+                  updateNode(node.id, { geo: undefined });
+                } else {
+                  updateNode(node.id, {
+                    geo: {
+                      lat: v,
+                      lon: node.geo?.lon ?? 106.9176, // default to УБ centre if user only set lat
+                    },
+                  });
+                }
+              }}
+              style={inputStyle}
+              title="Geographic latitude. Зөвхөн node-ийн геогр. байрлалыг засна — газрын зураг автоматаар тэнд хөдөлнө."
+            />
+          </Field>
+          <Field label="Lon">
+            <input
+              type="number"
+              step={0.0000001}
+              placeholder="106.9176"
+              value={node.geo?.lon ?? ""}
+              disabled={readOnly}
+              onChange={(e) => {
+                const v = e.target.value === "" ? null : Number(e.target.value);
+                if (v === null) {
+                  updateNode(node.id, { geo: undefined });
+                } else {
+                  updateNode(node.id, {
+                    geo: {
+                      lat: node.geo?.lat ?? 47.9184,
+                      lon: v,
+                    },
+                  });
+                }
+              }}
+              style={inputStyle}
+              title="Geographic longitude."
+            />
+          </Field>
+        </div>
 
         {node.kind === "consumer" && (
           <>

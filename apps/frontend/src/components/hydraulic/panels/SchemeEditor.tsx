@@ -779,6 +779,40 @@ export function SchemeEditor({ readOnly }: Props) {
         setSnapGrid((s) => !s);
       } else if (e.key === "m" || e.key === "M") {
         setShowMap((m) => !m);
+      } else if (e.key === "v" || e.key === "V") {
+        // Phase 6D — V = select (industry-standard "arrow tool" key)
+        setMode("select");
+      } else if (e.key === "p" || e.key === "P") {
+        // Phase 6D — P = pipe-add mode
+        setMode("addPipe");
+      } else if (e.key === "1") {
+        // Phase 6D — 1 = add source (УДДТ/substation default)
+        setMode("addNode");
+        setPendingKind("source_substation");
+      } else if (e.key === "2") {
+        // Phase 6D — 2 = add consumer (АОС/apartment default)
+        setMode("addNode");
+        setPendingKind("consumer_apartment");
+      } else if (e.key === "3") {
+        // Phase 6D — 3 = add well/chamber (ДХ — generic underground)
+        setMode("addNode");
+        setPendingKind("chamber");
+      } else if (e.key === "4") {
+        // Phase 6D — 4 = add junction (T-fitting / узель)
+        setMode("addNode");
+        setPendingKind("tee");
+      } else if (e.key === "5") {
+        // Phase 6D — 5 = add valve (gate-valve default)
+        setMode("addNode");
+        setPendingKind("valve_gate");
+      } else if (e.key === "6") {
+        // Phase 6D — 6 = add compensator (К — U-shape default)
+        setMode("addNode");
+        setPendingKind("compensator_u");
+      } else if (e.key === "7") {
+        // Phase 6D — 7 = add elbow (ЭӨ — 90° default)
+        setMode("addNode");
+        setPendingKind("elbow_90");
       }
     };
     window.addEventListener("keydown", handler);
