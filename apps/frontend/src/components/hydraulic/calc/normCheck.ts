@@ -77,6 +77,14 @@ export function checkNorms(
   }
 
   // --- per consumer ---
+  // RULE-T01 (Phase 5D.4): supply temperature at consumer inlet must
+  // stay at or above the engineering minimum (default 80 °C per БНбД
+  // 41-01-2019 §5.4 — ensures the ИТП exchanger can deliver design
+  // ΔT at the radiators). The check is opt-in: it only fires when the
+  // solver ran with heat-loss integration enabled (supplyTemp_C_at_inlet
+  // is populated). Legacy projects without heat-loss data skip the
+  // check entirely.
+  const minSupplyT = settings.minSupplyTemp_c ?? 80;
   for (const node of nodes.filter((n) => n.kind === "consumer")) {
     const nr = results.nodes.find((x) => x.nodeId === node.id);
     if (!nr) continue;
@@ -90,6 +98,18 @@ export function checkNorms(
         threshold: minRequired,
         actual: nr.pressureAtNode_mpa,
         unit: "MPa",
+      });
+    }
+    // RULE-T01 — supply temperature minimum at consumer.
+    if (typeof nr.supplyTemp_C_at_inlet === "number" && nr.supplyTemp_C_at_inlet < minSupplyT) {
+      violations.push({
+        kind: "supply_temp_low",
+        severity: "error",
+        message: `"${node.label}" дээрх нийлүүлэх ус ${nr.supplyTemp_C_at_inlet.toFixed(1)}°C < ${minSupplyT}°C доод хязгаар (БНбД 41-01-2019 §5.4). Магистрал хоолойн дулаалга нэмэх / диаметр өсгөх.`,
+        target: { kind: "node", id: node.id },
+        threshold: minSupplyT,
+        actual: nr.supplyTemp_C_at_inlet,
+        unit: "°C",
       });
     }
   }
