@@ -27,7 +27,7 @@
  *   - Undo coverage — wired into the store's undo stack in 6.5.5.
  */
 
-import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
+import type { SchemeAnnotation, SchemeNode, SchemePipe } from "../hydraulicTypes";
 
 /**
  * What lives in the in-memory clipboard after a `copy()` or `cut()`.
@@ -40,6 +40,9 @@ export interface ClipboardPayload {
   /** Snapshot of the intra-selection pipes (both endpoints in the
    *  selected node set). */
   pipes: SchemePipe[];
+  /** Phase 6.6.3 — snapshot of selected annotations at copy time.
+   *  Free-coord entities so no topology preservation needed. */
+  annotations?: SchemeAnnotation[];
   /** ms timestamp — useful for UI staleness checks ("pasted from
    *  clipboard 4 minutes ago"). */
   copiedAt: number;
@@ -69,8 +72,16 @@ export function buildClipboardPayload(
   pipes: SchemePipe[],
   nodeIds: string[],
   pipeIds: string[],
+  /** Phase 6.6.3 — extra free-coord entities. Both arguments optional
+   *  for callers that haven't been threaded through yet (backward
+   *  compat with Phase 6.5.2 store cut/copy/paste signatures). */
+  annotations?: SchemeAnnotation[],
+  annotationIds?: string[],
 ): ClipboardPayload | null {
-  if (nodeIds.length === 0 && pipeIds.length === 0) return null;
+  const annIds = annotationIds ?? [];
+  if (nodeIds.length === 0 && pipeIds.length === 0 && annIds.length === 0) {
+    return null;
+  }
 
   const nodeIdSet = new Set(nodeIds);
   const copiedNodes: SchemeNode[] = [];
@@ -94,9 +105,22 @@ export function buildClipboardPayload(
     }
   }
 
+  // Phase 6.6.3 — free-coord annotations. No topology constraint,
+  // just clone the selected ones verbatim.
+  const annIdSet = new Set(annIds);
+  const copiedAnnotations: SchemeAnnotation[] = [];
+  if (annotations && annIdSet.size > 0) {
+    for (const a of annotations) {
+      if (annIdSet.has(a.id)) {
+        copiedAnnotations.push(JSON.parse(JSON.stringify(a)) as SchemeAnnotation);
+      }
+    }
+  }
+
   return {
     nodes: copiedNodes,
     pipes: copiedPipes,
+    annotations: copiedAnnotations,
     copiedAt: Date.now(),
   };
 }
@@ -124,7 +148,15 @@ export function applyPaste(
   uid: (prefix?: string) => string,
   offset_m: { x: number; y: number } = { x: PASTE_OFFSET_M, y: PASTE_OFFSET_M },
   mapPxPerMeter: number | null = null,
-): { nodes: SchemeNode[]; pipes: SchemePipe[]; oldToNewId: Map<string, string> } {
+): {
+  nodes: SchemeNode[];
+  pipes: SchemePipe[];
+  /** Phase 6.6.3 — free-coord annotations cloned with fresh ids and
+   *  the same px offset as nodes. Always present (possibly empty)
+   *  so consumers don't need a null check. */
+  annotations: SchemeAnnotation[];
+  oldToNewId: Map<string, string>;
+} {
   const oldToNewId = new Map<string, string>();
 
   // Earth-consistent m → deg conversion (same Web-Mercator formula as
@@ -180,5 +212,17 @@ export function applyPaste(
     });
   }
 
-  return { nodes: newNodes, pipes: newPipes, oldToNewId };
+  // Phase 6.6.3 — annotations clone with fresh ids and a px-space
+  // offset that mirrors the node shift (no geo math — annotations
+  // aren't geo-anchored).
+  const px_offset_x = offset_m.x * (mapPxPerMeter ?? 1);
+  const px_offset_y = offset_m.y * (mapPxPerMeter ?? 1);
+  const newAnnotations: SchemeAnnotation[] = (payload.annotations ?? []).map((a) => ({
+    ...a,
+    id: uid("note"),
+    x: Math.round(a.x + px_offset_x),
+    y: Math.round(a.y + px_offset_y),
+  }));
+
+  return { nodes: newNodes, pipes: newPipes, annotations: newAnnotations, oldToNewId };
 }

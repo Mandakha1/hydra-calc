@@ -56,16 +56,19 @@ export interface MultiSelection {
   /** Phase 6.6.2 — construction-line selection set. Same optional
    *  semantics as dimensionIds. */
   constructionLineIds?: string[];
+  /** Phase 6.6.3 — annotation selection set. */
+  annotationIds?: string[];
 }
 
 /** Phase 6.6.2 — central selection-kind union. Each phase that adds
  *  a new selectable entity extends this union. Pulled into a named
  *  alias so the four selection actions (select, selectToggle,
  *  selectExtend, selectMany) and the legacy `selection` field
- *  reference the same type — adding a future kind ("annotation",
- *  "leader", …) is a single-line edit. */
+ *  reference the same type — adding a future kind ("leader", …) is a
+ *  single-line edit.
+ *  Phase 6.6.3 — extended with "annotation". */
 export type SelectionTarget = {
-  kind: "node" | "pipe" | "dimension" | "constructionLine";
+  kind: "node" | "pipe" | "dimension" | "constructionLine" | "annotation";
   id: string;
 };
 
@@ -105,15 +108,15 @@ interface StoreActions {
   /** Ctrl+C: copy current multiSelection into clipboard. No-op when
    *  the selection is empty. Returns the count of items copied (so
    *  the UI can render a toast). */
-  copySelection(): { nodes: number; pipes: number } | null;
+  copySelection(): { nodes: number; pipes: number; annotations: number } | null;
   /** Ctrl+X: copy + delete the multiSelection in one step. Returns
    *  the count of items affected. */
-  cutSelection(): { nodes: number; pipes: number } | null;
+  cutSelection(): { nodes: number; pipes: number; annotations: number } | null;
   /** Ctrl+V: paste the clipboard with default offset (or custom
    *  delta). Each paste produces fresh IDs and select the newly-
    *  pasted objects so the engineer can immediately drag them
    *  further. Returns the count of items inserted. */
-  pasteClipboard(offset_m?: { x: number; y: number }): { nodes: number; pipes: number } | null;
+  pasteClipboard(offset_m?: { x: number; y: number }): { nodes: number; pipes: number; annotations: number } | null;
 }
 
 /** Phase 6.5.3 — explicit combined store type so consumers can
@@ -132,6 +135,7 @@ function emptyMs(partial: Partial<MultiSelection>): MultiSelection {
     pipeIds: partial.pipeIds ?? [],
     dimensionIds: partial.dimensionIds ?? [],
     constructionLineIds: partial.constructionLineIds ?? [],
+    annotationIds: partial.annotationIds ?? [],
   };
 }
 
@@ -139,13 +143,13 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
   subscribeWithSelector((set) => ({
     ...emptyState(),
     selection: null,
-    multiSelection: { nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [] },
+    multiSelection: emptyMs({}),
 
     reset: (state) =>
       set({
         ...(state ?? emptyState()),
         selection: null,
-        multiSelection: { nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [] },
+        multiSelection: emptyMs({}),
         // Phase 6.5.2 — reset wipes the clipboard too. Engineers
         // switching projects don't want a stale paste from the
         // previous session to land in the new one.
@@ -153,10 +157,10 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         // Phase 6.5.5 — same blank-slate rule for undo/redo history.
         undoStack: [],
         redoStack: [],
-        // Phase 6.6.1 — same for dimensions (and future drafting aids).
+        // Phase 6.6.1/6.6.2/6.6.3 — same for drafting aids.
         dimensions: [],
-        // Phase 6.6.2 — same for construction lines.
         constructionLines: [],
+        annotations: [],
       }),
 
     addNode: (node) =>
@@ -188,6 +192,8 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           // Phase 6.6.2 — construction lines are orthogonal entities
           // (no node anchor) so a node removal doesn't touch them at all.
           constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+          // Phase 6.6.3 — annotations are orthogonal too.
+          annotationIds: s.multiSelection.annotationIds ?? [],
         },
       })),
 
@@ -209,6 +215,8 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           dimensionIds: s.multiSelection.dimensionIds ?? [],
           // Phase 6.6.2 — construction lines untouched.
           constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+          // Phase 6.6.3 — annotations untouched.
+          annotationIds: s.multiSelection.annotationIds ?? [],
         },
       })),
 
@@ -228,25 +236,29 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
                 ? { pipeIds: [target.id] }
                 : target.kind === "dimension"
                   ? { dimensionIds: [target.id] }
-                  : { constructionLineIds: [target.id] }
+                  : target.kind === "constructionLine"
+                    ? { constructionLineIds: [target.id] }
+                    : { annotationIds: [target.id] }
             : {},
         ),
       }),
 
     selectToggle: (target) =>
       set((s) => {
-        // Phase 6.6.2 — unified toggle logic handling all 4 kinds.
+        // Phase 6.6.3 — unified toggle logic handling all 5 kinds.
         // Pull out the relevant list, toggle the target, then
         // figure out where the legacy `selection` should point.
         const ms = s.multiSelection;
         const dimIds = ms.dimensionIds ?? [];
         const clIds = ms.constructionLineIds ?? [];
+        const anIds = ms.annotationIds ?? [];
 
         const kindToList = {
           node: ms.nodeIds,
           pipe: ms.pipeIds,
           dimension: dimIds,
           constructionLine: clIds,
+          annotation: anIds,
         } as const;
         const currentList = kindToList[target.kind];
         const has = currentList.includes(target.id);
@@ -259,10 +271,12 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           pipeIds: target.kind === "pipe" ? nextList : ms.pipeIds,
           dimensionIds: target.kind === "dimension" ? nextList : dimIds,
           constructionLineIds: target.kind === "constructionLine" ? nextList : clIds,
+          annotationIds: target.kind === "annotation" ? nextList : anIds,
         };
 
         // Legacy selection priority on toggle-off: latest of (this kind
-        // remaining → pipe → node → dimension → constructionLine → null).
+        // remaining → pipe → node → dimension → constructionLine →
+        // annotation → null).
         let nextSel: SelectionTarget | null;
         if (!has) {
           nextSel = { kind: target.kind, id: target.id };
@@ -280,6 +294,9 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           } else if ((nextMs.constructionLineIds ?? []).length > 0) {
             const c = nextMs.constructionLineIds!;
             nextSel = { kind: "constructionLine", id: c[c.length - 1]! };
+          } else if ((nextMs.annotationIds ?? []).length > 0) {
+            const a = nextMs.annotationIds!;
+            nextSel = { kind: "annotation", id: a[a.length - 1]! };
           } else {
             nextSel = null;
           }
@@ -293,52 +310,47 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         const ms = s.multiSelection;
         const dimIds = ms.dimensionIds ?? [];
         const clIds = ms.constructionLineIds ?? [];
+        const anIds = ms.annotationIds ?? [];
+        const base: MultiSelection = {
+          nodeIds: ms.nodeIds,
+          pipeIds: ms.pipeIds,
+          dimensionIds: dimIds,
+          constructionLineIds: clIds,
+          annotationIds: anIds,
+        };
         if (target.kind === "node") {
           if (ms.nodeIds.includes(target.id)) return {}; // idempotent
           return {
-            multiSelection: {
-              nodeIds: [...ms.nodeIds, target.id],
-              pipeIds: ms.pipeIds,
-              dimensionIds: dimIds,
-              constructionLineIds: clIds,
-            },
+            multiSelection: { ...base, nodeIds: [...ms.nodeIds, target.id] },
             selection: { kind: "node", id: target.id },
           };
         }
         if (target.kind === "pipe") {
           if (ms.pipeIds.includes(target.id)) return {};
           return {
-            multiSelection: {
-              nodeIds: ms.nodeIds,
-              pipeIds: [...ms.pipeIds, target.id],
-              dimensionIds: dimIds,
-              constructionLineIds: clIds,
-            },
+            multiSelection: { ...base, pipeIds: [...ms.pipeIds, target.id] },
             selection: { kind: "pipe", id: target.id },
           };
         }
         if (target.kind === "dimension") {
           if (dimIds.includes(target.id)) return {};
           return {
-            multiSelection: {
-              nodeIds: ms.nodeIds,
-              pipeIds: ms.pipeIds,
-              dimensionIds: [...dimIds, target.id],
-              constructionLineIds: clIds,
-            },
+            multiSelection: { ...base, dimensionIds: [...dimIds, target.id] },
             selection: { kind: "dimension", id: target.id },
           };
         }
-        // constructionLine branch
-        if (clIds.includes(target.id)) return {};
+        if (target.kind === "constructionLine") {
+          if (clIds.includes(target.id)) return {};
+          return {
+            multiSelection: { ...base, constructionLineIds: [...clIds, target.id] },
+            selection: { kind: "constructionLine", id: target.id },
+          };
+        }
+        // annotation branch
+        if (anIds.includes(target.id)) return {};
         return {
-          multiSelection: {
-            nodeIds: ms.nodeIds,
-            pipeIds: ms.pipeIds,
-            dimensionIds: dimIds,
-            constructionLineIds: [...clIds, target.id],
-          },
-          selection: { kind: "constructionLine", id: target.id },
+          multiSelection: { ...base, annotationIds: [...anIds, target.id] },
+          selection: { kind: "annotation", id: target.id },
         };
       }),
 
@@ -346,6 +358,7 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
       set(() => {
         const dimIds = ms.dimensionIds ?? [];
         const clIds = ms.constructionLineIds ?? [];
+        const anIds = ms.annotationIds ?? [];
         const first: SelectionTarget | null =
           ms.nodeIds[0] !== undefined
             ? ({ kind: "node", id: ms.nodeIds[0]! })
@@ -355,13 +368,16 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
                 ? ({ kind: "dimension", id: dimIds[0]! })
                 : clIds[0] !== undefined
                   ? ({ kind: "constructionLine", id: clIds[0]! })
-                  : null;
+                  : anIds[0] !== undefined
+                    ? ({ kind: "annotation", id: anIds[0]! })
+                    : null;
         return {
           multiSelection: {
             nodeIds: [...ms.nodeIds],
             pipeIds: [...ms.pipeIds],
             dimensionIds: [...dimIds],
             constructionLineIds: [...clIds],
+            annotationIds: [...anIds],
           },
           selection: first,
         };
@@ -384,10 +400,18 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         s.pipes,
         s.multiSelection.nodeIds,
         s.multiSelection.pipeIds,
+        // Phase 6.6.3 — pass annotations through so text content is
+        // preserved on paste.
+        s.annotations ?? [],
+        s.multiSelection.annotationIds ?? [],
       );
       if (!payload) return null;
       set({ clipboard: payload });
-      return { nodes: payload.nodes.length, pipes: payload.pipes.length };
+      return {
+        nodes: payload.nodes.length,
+        pipes: payload.pipes.length,
+        annotations: (payload.annotations ?? []).length,
+      };
     },
 
     cutSelection: () => {
@@ -397,26 +421,41 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         s.pipes,
         s.multiSelection.nodeIds,
         s.multiSelection.pipeIds,
+        s.annotations ?? [],
+        s.multiSelection.annotationIds ?? [],
       );
       if (!payload) return null;
       // Phase 6.5.5 — snapshot BEFORE cascade-delete so Ctrl+Z
-      // restores the cut nodes + pipes verbatim. Inlined here to
-      // avoid a cyclic import (undoStack.ts imports from this file).
+      // restores the cut nodes + pipes + annotations verbatim.
+      // Inlined here to avoid a cyclic import (undoStack.ts imports
+      // from this file).
       _pushUndoSnapshotInline(
         "Бөгөмөөр зүссэн",
-        payload.nodes.length + payload.pipes.length,
+        payload.nodes.length + payload.pipes.length + (payload.annotations ?? []).length,
       );
       // Snapshot ids — removeNode cascades to touched pipes and would
       // mutate multiSelection mid-iteration otherwise.
       const pipeIds = [...s.multiSelection.pipeIds];
       const nodeIds = [...s.multiSelection.nodeIds];
+      const annIds = [...(s.multiSelection.annotationIds ?? [])];
       set({ clipboard: payload });
       for (const pid of pipeIds) useHydraulicStore.getState().removePipe(pid);
       for (const nid of nodeIds) useHydraulicStore.getState().removeNode(nid);
+      // Phase 6.6.3 — drop annotations inline (no per-item undo
+      // snapshot needed; we already pushed the batch snapshot above).
+      if (annIds.length > 0) {
+        useHydraulicStore.setState((cur) => ({
+          annotations: (cur.annotations ?? []).filter((a) => !annIds.includes(a.id)),
+        }));
+      }
       // After cascade, multiSelection might still have stray pipe ids
       // that got swept by the cascade — clearSelection cleans up.
       useHydraulicStore.getState().clearSelection();
-      return { nodes: payload.nodes.length, pipes: payload.pipes.length };
+      return {
+        nodes: payload.nodes.length,
+        pipes: payload.pipes.length,
+        annotations: (payload.annotations ?? []).length,
+      };
     },
 
     pasteClipboard: (offset_m) => {
@@ -424,7 +463,7 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
       if (!s.clipboard) return null;
       // Use the existing uid() generator so pasted IDs share the
       // same namespace as hand-placed nodes — no collision risk.
-      const { nodes: pastedNodes, pipes: pastedPipes } = applyPaste(
+      const { nodes: pastedNodes, pipes: pastedPipes, annotations: pastedAnnotations } = applyPaste(
         s.clipboard,
         uid,
         offset_m,
@@ -433,7 +472,7 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
       // pasted cluster in one step.
       _pushUndoSnapshotInline(
         "Буулгасан",
-        pastedNodes.length + pastedPipes.length,
+        pastedNodes.length + pastedPipes.length + pastedAnnotations.length,
       );
       // Insert each — addNode / addPipe push to the arrays atomically
       // per call. set() in a single shot would also work but is less
@@ -441,14 +480,20 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
       set((cur) => ({
         nodes: [...cur.nodes, ...pastedNodes],
         pipes: [...cur.pipes, ...pastedPipes],
+        annotations: [...(cur.annotations ?? []), ...pastedAnnotations],
       }));
       // Auto-select the pasted cluster (UX expectation: paste = "now
       // I want to drag this further"). Replaces any prior selection.
       useHydraulicStore.getState().selectMany({
         nodeIds: pastedNodes.map((n) => n.id),
         pipeIds: pastedPipes.map((p) => p.id),
+        annotationIds: pastedAnnotations.map((a) => a.id),
       });
-      return { nodes: pastedNodes.length, pipes: pastedPipes.length };
+      return {
+        nodes: pastedNodes.length,
+        pipes: pastedPipes.length,
+        annotations: pastedAnnotations.length,
+      };
     },
   })),
 );
@@ -503,12 +548,14 @@ function _pushUndoSnapshotInline(label: string, affectedCount: number): void {
       pipeIds: [...s.multiSelection.pipeIds],
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
+      annotationIds: [...(s.multiSelection.annotationIds ?? [])],
     },
-    // Phase 6.6.2 — drafting aids participate in undo so a paste /
-    // cut snapshot taken AFTER a dimension or construction-line edit
+    // Phase 6.6.2/6.6.3 — all drafting aids participate in undo so a
+    // paste/cut snapshot taken AFTER a dimension/CL/annotation edit
     // restores them correctly on rollback.
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<typeof s.dimensions>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<typeof s.constructionLines>,
+    annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<typeof s.annotations>,
   };
   const existing = s.undoStack ?? [];
   const next = [...existing, snap];
