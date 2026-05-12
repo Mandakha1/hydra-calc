@@ -1,0 +1,181 @@
+import type { CSSProperties, ReactNode } from "react";
+import { useHydraulicStore } from "../hydraulicStore";
+import { PIPE_MATERIALS } from "shared";
+
+export function ResultsPanel() {
+  const results = useHydraulicStore((s) => s.results);
+  const violations = useHydraulicStore((s) => s.violations);
+  const nodes = useHydraulicStore((s) => s.nodes);
+  const pipes = useHydraulicStore((s) => s.pipes);
+
+  if (!results) {
+    return (
+      <div style={{ padding: "2rem", color: "var(--fg-muted)", textAlign: "center" }}>
+        Тооцоолол хийгдээгүй байна. "Тооцоолох" товч дарна уу.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "1.25rem", overflowY: "auto", height: "100%" }}>
+      {violations && violations.length > 0 && (
+        <section style={{ marginBottom: "1.5rem" }}>
+          <h3>Норм зөрчил ({violations.length})</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {violations.map((v, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: "0.5rem 0.75rem",
+                  borderRadius: 6,
+                  background: v.severity === "error" ? "rgba(226,107,107,0.1)" : "rgba(215,165,74,0.1)",
+                  border: `1px solid ${v.severity === "error" ? "var(--danger)" : "var(--warning)"}`,
+                  fontSize: 13,
+                }}
+              >
+                <b style={{ color: v.severity === "error" ? "var(--danger)" : "var(--warning)" }}>
+                  {v.severity === "error" ? "⚠" : "!"}
+                </b>{" "}
+                {v.message}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section style={{ marginBottom: "1.5rem" }}>
+        <h3>Хоолойн үр дүн</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <Th>№</Th>
+                <Th>Материал</Th>
+                <Th>DN</Th>
+                <Th>L (м)</Th>
+                <Th>G (кг/с)</Th>
+                <Th>v (м/с)</Th>
+                <Th>Re</Th>
+                <Th>λ</Th>
+                <Th>R (Pa/м)</Th>
+                <Th>ΔP (кПа)</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.pipes.map((r, i) => {
+                const p = pipes.find((x) => x.id === r.pipeId);
+                const mat = PIPE_MATERIALS.find((m) => m.key === p?.materialKey)?.name.split(" ")[0] ?? "";
+                return (
+                  <tr key={r.pipeId}>
+                    <Td>{i + 1}</Td>
+                    <Td>{mat}</Td>
+                    <Td>{p?.dn}</Td>
+                    <Td>{p?.length_m}</Td>
+                    <Td>{r.G_kg_s.toFixed(3)}</Td>
+                    <Td red={r.v_m_s > 3.5}>{r.v_m_s.toFixed(3)}</Td>
+                    <Td>{r.Re.toFixed(0)}</Td>
+                    <Td>{r.lambda.toFixed(4)}</Td>
+                    <Td red={r.headlossPerMeter_pa > 80}>{r.headlossPerMeter_pa.toFixed(1)}</Td>
+                    <Td>{(r.totalPressureDrop_pa / 1000).toFixed(2)}</Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section style={{ marginBottom: "1.5rem" }}>
+        <h3>Зангилаа</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <Th>№</Th>
+                <Th>Нэр</Th>
+                <Th>Төрөл</Th>
+                <Th>Ачаалал (кВт)</Th>
+                <Th>Даралт (MPa)</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.nodes.map((r, i) => {
+                const n = nodes.find((x) => x.id === r.nodeId);
+                return (
+                  <tr key={r.nodeId}>
+                    <Td>{i + 1}</Td>
+                    <Td>{n?.label}</Td>
+                    <Td>{n?.kind}</Td>
+                    <Td>{(r.heatLoad_w / 1000).toFixed(2)}</Td>
+                    <Td red={n?.kind === "consumer" && r.pressureAtNode_mpa < 0.15}>
+                      {r.pressureAtNode_mpa.toFixed(3)}
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {results.pump && (
+        <section>
+          <h3>Насосын тооцоо</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+            <Stat label="Напор H" value={`${results.pump.H_m.toFixed(2)} м`} />
+            <Stat label="Дебит Q" value={`${results.pump.Q_m3h.toFixed(2)} м³/ц`} />
+            <Stat label="Чадал P" value={`${results.pump.P_kW.toFixed(2)} кВт`} />
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-soft)", padding: "0.75rem", borderRadius: 8 }}>
+      <div style={{ fontSize: 11, color: "var(--fg-muted)", textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontSize: 20, fontFamily: "var(--font-mono)", color: "var(--accent)", marginTop: 4 }}>{value}</div>
+    </div>
+  );
+}
+
+const tableStyle: CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+  fontSize: 13,
+  fontFamily: "var(--font-mono)",
+};
+
+function Th({ children }: { children: ReactNode }) {
+  return (
+    <th
+      style={{
+        padding: "0.4rem 0.6rem",
+        textAlign: "left",
+        borderBottom: "1px solid var(--border)",
+        color: "var(--fg-muted)",
+        fontWeight: 600,
+        fontSize: 12,
+        textTransform: "uppercase",
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, red }: { children: ReactNode; red?: boolean }) {
+  return (
+    <td
+      style={{
+        padding: "0.35rem 0.6rem",
+        borderBottom: "1px solid var(--border-soft)",
+        color: red ? "var(--danger)" : "var(--fg)",
+      }}
+    >
+      {children}
+    </td>
+  );
+}

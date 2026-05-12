@@ -1,0 +1,34 @@
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+.env
+.env.local
+.env.*.local
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+deploy/secrets/*.txt
+!deploy/secrets/.gitkeep
+deploy/backups/*.dump
+deploy/backups/*.sql
+pgdata/
+caddy_data/
+caddy_config/
+apps/backend/drizzle/meta/*.snapshot.json
+
+# Research / dev-only working folders (huge: DXF, PDF books, Zulu samples)
+.zulu-research/
+.design-ref/
+.claude/
+
+# OS / IDE
+*.swp
+*.swo
+*.bak

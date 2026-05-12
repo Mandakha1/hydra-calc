@@ -1,0 +1,362 @@
+import { useEffect, useState, useCallback, type CSSProperties, type ReactNode } from "react";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { useHydraulicStore, snapshotForSave } from "./hydraulicStore";
+import { emptyState, type HydraulicState } from "./hydraulicTypes";
+import { checkNorms } from "./calc/normCheck";
+import { runThreeMode, type CalcMode } from "./calc/threeModeEngine";
+import { hasLoops } from "./calc/loopSolver";
+import { writeBackResults } from "./calc/writeBack";
+import { exportToExcel } from "./export/excelExport";
+import { downloadDXF } from "./export/dxfExport";
+import { exportToZuluSqlite, downloadAsBlob } from "../../lib/zuluExport";
+import { SchemeEditor } from "./panels/SchemeEditor";
+import { InspectorPanel } from "./panels/InspectorPanel";
+import { ResultsPanel } from "./panels/ResultsPanel";
+import { SettingsPanel } from "./panels/SettingsPanel";
+import { PiezometricChart } from "./panels/PiezometricChart";
+import { BalancingPanel } from "./panels/BalancingPanel";
+import { ItpSchemePicker } from "./panels/ItpSchemePicker";
+import { FailurePanel } from "./panels/FailurePanel";
+import { BomPanel } from "./panels/BomPanel";
+import { api, HttpError } from "../../lib/api";
+import { useAuthStore } from "../../lib/authStore";
+import { storage } from "../../lib/storage";
+
+interface Props {
+  projectId?: string;
+  readOnly?: boolean;
+  sharedData?: unknown;
+}
+
+type Tab = "scheme" | "results" | "piezo" | "balancing" | "failure" | "bom" | "settings";
+
+export function HydraulicV5(props: Props) {
+  return (
+    <ErrorBoundary>
+      <HydraulicInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
+  const [tab, setTab] = useState<Tab>("scheme");
+  const [calcMode, setCalcMode] = useState<CalcMode>("verification");
+  const [calcReport, setCalcReport] = useState<string[]>([]);
+  const [showItpPicker, setShowItpPicker] = useState(false);
+  const updateNodeAction = useHydraulicStore((s) => s.updateNode);
+  const selection = useHydraulicStore((s) => s.selection);
+  const [projectName, setProjectName] = useState<string>(
+    projectId ? "" : `Төсөл ${new Date().toISOString().slice(0, 10)}`,
+  );
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const reset = useHydraulicStore((s) => s.reset);
+  const setResults = useHydraulicStore((s) => s.setResults);
+  const state = useHydraulicStore((s) => s);
+  const demoMode = useAuthStore((s) => s.demoMode);
+  const looped = hasLoops(state.nodes, state.pipes);
+
+  // Load project from server, localStorage (demo), or from sharedData
+  useEffect(() => {
+    if (sharedData) {
+      reset(sharedData as HydraulicState);
+      return;
+    }
+    if (!projectId) {
+      reset(emptyState());
+      return;
+    }
+    (async () => {
+      try {
+        if (demoMode) {
+          const entry = await storage.get(`project:${projectId}`);
+          if (entry) {
+            setProjectName(projectId);
+            setLoadedId(projectId);
+            reset(JSON.parse(entry.value) as HydraulicState);
+          } else {
+            reset(emptyState());
+          }
+          return;
+        }
+        const res = await api.get<{ id: string; name: string; data: HydraulicState }>(`/projects/${projectId}`);
+        setProjectName(res.name);
+        setLoadedId(res.id);
+        reset(res.data);
+      } catch (err) {
+        console.error("load failed", err);
+      }
+    })();
+  }, [projectId, reset, sharedData, demoMode]);
+
+  const compute = useCallback(() => {
+    const s = useHydraulicStore.getState();
+    const out = runThreeMode(s.nodes, s.pipes, s.settings, { mode: calcMode });
+    const violations = checkNorms(s.nodes, s.pipes, out.hydraulic, s.settings);
+    // Zulu-style write-back: mutate node + pipe in place with result_* fields
+    writeBackResults(s.nodes, s.pipes, out.hydraulic, s.settings);
+    setResults(out.hydraulic, violations);
+    setCalcReport(out.report);
+    setTab(calcMode === "commissioning" ? "balancing" : "results");
+  }, [setResults, calcMode]);
+
+  const save = useCallback(async () => {
+    if (readOnly) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const snapshot = snapshotForSave(useHydraulicStore.getState());
+
+      if (demoMode) {
+        await storage.set(`project:${projectName}`, JSON.stringify(snapshot));
+        setLoadedId(projectName);
+        history.replaceState(null, "", `/app/${encodeURIComponent(projectName)}`);
+        setSaveMsg("✓ Хадгалсан (local)");
+        setTimeout(() => setSaveMsg(null), 2000);
+        return;
+      }
+
+      const payload = { name: projectName, data: snapshot };
+      if (loadedId) {
+        await api.put(`/projects/${loadedId}`, payload);
+      } else {
+        const created = await api.post<{ id: string }>("/projects", payload);
+        setLoadedId(created.id);
+        history.replaceState(null, "", `/app/${created.id}`);
+      }
+      setSaveMsg("✓ Хадгалсан");
+      setTimeout(() => setSaveMsg(null), 2000);
+    } catch (err) {
+      setSaveMsg(err instanceof HttpError ? `⚠ ${err.message}` : "⚠ Хадгалж чадсангүй");
+    } finally {
+      setSaving(false);
+    }
+  }, [loadedId, projectName, readOnly, demoMode]);
+
+  const exportXlsx = useCallback(() => {
+    exportToExcel(snapshotForSave(useHydraulicStore.getState()), `${projectName || "hydra"}.xlsx`);
+  }, [projectName]);
+
+  const exportDxf = useCallback(() => {
+    downloadDXF(snapshotForSave(useHydraulicStore.getState()), `${projectName || "hydra"}.dxf`);
+  }, [projectName]);
+
+  const exportZulu = useCallback(async () => {
+    try {
+      const data = await exportToZuluSqlite(snapshotForSave(useHydraulicStore.getState()), { prefix: "Teplo" });
+      downloadAsBlob(data, `${projectName || "hydra"}.sqlite`);
+    } catch (e) {
+      alert(`Zulu export алдаа: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [projectName]);
+
+  const share = useCallback(async () => {
+    if (demoMode) {
+      alert("Demo горимд хуваалцах байхгүй — жинхэнэ нэвтрэлт хийнэ үү.");
+      return;
+    }
+    if (!loadedId) {
+      alert("Хуваалцахын өмнө төслийг хадгалаарай.");
+      return;
+    }
+    try {
+      const res = await api.post<{ token: string; url: string }>(`/projects/${loadedId}/share`, { canEdit: false });
+      const fullUrl = `${location.origin}${res.url}`;
+      await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
+      alert(`Хуваалцах холбоос хуулагдсан:\n${fullUrl}`);
+    } catch (err) {
+      alert(err instanceof HttpError ? err.message : "Холбоос үүсгэж чадсангүй");
+    }
+  }, [loadedId, demoMode]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Top toolbar */}
+      <header
+        style={{
+          borderBottom: "1px solid var(--border-soft)",
+          background: "var(--bg-soft)",
+          padding: "0.5rem 0.85rem",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <input
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+          disabled={readOnly}
+          style={{
+            background: "var(--bg)",
+            color: "var(--fg)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: "0.35rem 0.6rem",
+            fontSize: 14,
+            fontWeight: 600,
+            minWidth: 220,
+          }}
+          placeholder="Төслийн нэр"
+        />
+
+        <TabBtn active={tab === "scheme"} onClick={() => setTab("scheme")}>Схем</TabBtn>
+        <TabBtn active={tab === "results"} onClick={() => setTab("results")}>Үр дүн</TabBtn>
+        <TabBtn active={tab === "piezo"} onClick={() => setTab("piezo")}>📈 Пьезометр</TabBtn>
+        <TabBtn active={tab === "balancing"} onClick={() => setTab("balancing")}>⚖ Тэнцвэржүүлэлт</TabBtn>
+        <TabBtn active={tab === "failure"} onClick={() => setTab("failure")}>🚨 Эвдрэлийн загвар</TabBtn>
+        <TabBtn active={tab === "bom"} onClick={() => setTab("bom")}>💰 Смет</TabBtn>
+        <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
+
+        <div style={{ flex: 1 }} />
+
+        {looped && (
+          <span
+            title="Битүү (loop) сүлжээ илрүүлсэн — Hardy-Cross иттераци ашиглана"
+            style={{ fontSize: 11, color: "var(--warning)", padding: "0.25rem 0.5rem", border: "1px solid var(--warning)", borderRadius: 4 }}
+          >
+            ◯ Loop network
+          </span>
+        )}
+
+        <select
+          value={calcMode}
+          onChange={(e) => setCalcMode(e.target.value as CalcMode)}
+          disabled={readOnly}
+          title="Тооцооны горим"
+          style={{
+            background: "var(--bg)",
+            color: "var(--fg)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: "0.4rem 0.5rem",
+            fontSize: 12,
+          }}
+        >
+          <option value="verification">Шалгах (бодит)</option>
+          <option value="constructive">DN-сонгох (зураг төсөл)</option>
+          <option value="commissioning">Тэнцвэржүүлэх (тохируулга)</option>
+        </select>
+
+        <button onClick={compute} style={primaryBtn} disabled={state.nodes.length === 0}>
+          ⚙ Тооцоолох
+        </button>
+        {!readOnly && (
+          <button onClick={save} style={btn} disabled={saving}>
+            {saving ? "Хадгалж..." : "💾 Хадгалах"}
+          </button>
+        )}
+        <button onClick={() => setShowItpPicker(true)} style={btn} title="СП 41-101 ИТП схем сонгох">⊕ ИТП схем</button>
+        <button onClick={exportXlsx} style={btn}>📊 Excel</button>
+        <button onClick={exportDxf} style={btn}>📐 DXF</button>
+        <button onClick={exportZulu} style={btn} title="Hydro .sqlite — Zulu Thermo desktop-тэй нийцтэй формат">⊕ Hydro .sqlite</button>
+        {!readOnly && loadedId && (
+          <button onClick={share} style={btn}>🔗 Хуваалцах</button>
+        )}
+        {saveMsg && <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>{saveMsg}</span>}
+      </header>
+
+      {/* Calc mode report banner */}
+      {calcReport.length > 0 && (
+        <div
+          style={{
+            background: "var(--accent-bg)",
+            borderBottom: "1px solid var(--accent-dim)",
+            padding: "0.4rem 0.85rem",
+            fontSize: 12,
+            color: "var(--accent)",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          {calcReport.map((m, i) => (
+            <span key={i}>{m}</span>
+          ))}
+          <button
+            onClick={() => setCalcReport([])}
+            style={{ marginLeft: "auto", border: 0, background: "transparent", color: "var(--fg-muted)", cursor: "pointer", fontSize: 14 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {showItpPicker && (
+        <ItpSchemePicker
+          onCancel={() => setShowItpPicker(false)}
+          onPick={(scheme) => {
+            // Apply scheme to selected node (or alert if none)
+            if (selection?.kind === "node") {
+              const noteLines = [
+                `ИТП схем: ${scheme.name_mn}`,
+                scheme.use_case_mn ? `Хэрэглэх: ${scheme.use_case_mn}` : "",
+                scheme.components ? `Тоног: ${scheme.components.map((c) => c.kind).join(", ")}` : "",
+              ].filter(Boolean).join("\n");
+              updateNodeAction(selection.id, {
+                equipment: scheme.key,
+                notes: noteLines,
+              });
+              alert(`✓ "${scheme.name_mn}" сонгогдлоо. Зангилаагын тэмдэглэлд хадгаласан.`);
+            } else {
+              alert("Эхлээд зангилаа сонгоно уу (ИТП эсвэл ЦТП цэг). Дараа нь схемийг хэрэглэнэ.");
+            }
+            setShowItpPicker(false);
+          }}
+        />
+      )}
+
+      {/* Main area */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <main style={{ flex: 1, overflow: "auto" }}>
+          {tab === "scheme" && <SchemeEditor readOnly={readOnly} />}
+          {tab === "results" && <ResultsPanel />}
+          {tab === "failure" && <FailurePanel />}
+          {tab === "bom" && <BomPanel />}
+          {tab === "piezo" && <PiezometricChart />}
+          {tab === "balancing" && <BalancingPanel />}
+          {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
+        </main>
+        {tab === "scheme" && <InspectorPanel readOnly={readOnly} />}
+      </div>
+    </div>
+  );
+}
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "0.4rem 0.9rem",
+        fontSize: 13,
+        border: "1px solid " + (active ? "var(--accent)" : "transparent"),
+        background: active ? "var(--accent-bg)" : "transparent",
+        color: active ? "var(--accent)" : "var(--fg-muted)",
+        borderRadius: 6,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+const btn: CSSProperties = {
+  padding: "0.4rem 0.8rem",
+  fontSize: 13,
+  background: "var(--bg)",
+  color: "var(--fg)",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  cursor: "pointer",
+};
+
+const primaryBtn: CSSProperties = {
+  ...btn,
+  background: "var(--accent)",
+  color: "#0b1117",
+  border: "1px solid var(--accent)",
+  fontWeight: 600,
+};

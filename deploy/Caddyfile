@@ -1,0 +1,56 @@
+# Hydra Calc — Caddy edge config
+# Auto Let's Encrypt, HSTS, CSP tuned for OpenStreetMap + SheetJS.
+
+{
+  email {$ADMIN_EMAIL}
+  # Disable HTTP/3 per-host below if UDP/443 blocked by ISP (uncomment `protocols h1 h2`)
+}
+
+{$DOMAIN} {
+  encode zstd gzip
+
+  # ---------------- API ----------------
+  handle /api/* {
+    reverse_proxy api:3000 {
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Proto https
+    }
+  }
+
+  # ---------------- Static frontend ----------------
+  handle {
+    reverse_proxy web:80
+  }
+
+  # ---------------- Security headers ----------------
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "geolocation=(self), camera=(), microphone=()"
+    # CSP: images from OSM tiles allowed, inline styles permitted for Vite build,
+    # connect-src covers OSM Nominatim + Open-Elevation API for hydraulic tooling.
+    Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.open-elevation.com https://nominatim.openstreetmap.org; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self';"
+    -Server
+  }
+
+  # ---------------- Access log ----------------
+  log {
+    output file /data/access.log {
+      roll_size 10mb
+      roll_keep 5
+      roll_keep_for 30d
+    }
+    format json
+  }
+
+  # ---------------- Rate limit tuning (edge — app-layer also enforces) ----------------
+  @api_auth path /api/auth/*
+  # (Caddy 2 doesn't ship rate_limit in core; relying on Fastify rate-limit plugin)
+}
+
+www.{$DOMAIN} {
+  redir https://{$DOMAIN}{uri} permanent
+}

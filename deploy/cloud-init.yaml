@@ -1,0 +1,72 @@
+#cloud-config
+# Oracle Always Free — Ubuntu 22.04 ARM64 bootstrap
+# Paste this into "Advanced → User data" when creating the VM.
+
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - curl
+  - vim
+  - htop
+  - netfilter-persistent
+  - iptables-persistent
+
+write_files:
+  - path: /etc/sysctl.d/99-hydra.conf
+    content: |
+      net.ipv4.tcp_fastopen=3
+      net.core.somaxconn=1024
+      net.ipv4.tcp_tw_reuse=1
+      vm.swappiness=10
+
+  - path: /etc/fail2ban/jail.d/sshd.conf
+    content: |
+      [sshd]
+      enabled = true
+      port = ssh
+      maxretry = 5
+      bantime = 3600
+
+runcmd:
+  # Enable docker
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+
+  # Firewall (UFW)
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow 443/udp
+  - ufw --force enable
+
+  # Oracle VM's INPUT iptables chain blocks 80/443 by default — punch holes
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80  -j ACCEPT
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+  - iptables -I INPUT 6 -m state --state NEW -p udp --dport 443 -j ACCEPT
+  - netfilter-persistent save
+
+  # SSH hardening
+  - sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  - sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - systemctl restart ssh
+
+  # sysctl
+  - sysctl --system
+
+  # fail2ban
+  - systemctl enable --now fail2ban
+
+  # App directory
+  - mkdir -p /opt/hydra-calc
+  - chown ubuntu:ubuntu /opt/hydra-calc
+
+  # Unattended security upgrades
+  - dpkg-reconfigure -plow unattended-upgrades

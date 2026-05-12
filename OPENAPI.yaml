@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: Hydra Calc API
+  version: 0.1.0
+  description: |
+    Backend API for hydra-calc.mn.
+    Auth: Bearer JWT in `Authorization` header; refresh cookie on `/api/auth`.
+  contact:
+    email: hello@example.com
+servers:
+  - url: https://{domain}/api
+    variables:
+      domain:
+        default: hydra.example.com
+  - url: http://localhost:3000/api
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    PublicUser:
+      type: object
+      required: [id, email, role, verified, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string, nullable: true }
+        role: { type: string, enum: [user, admin] }
+        verified: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    AuthResponse:
+      type: object
+      required: [user, accessToken, accessExpiresAt]
+      properties:
+        user: { $ref: "#/components/schemas/PublicUser" }
+        accessToken: { type: string }
+        accessExpiresAt: { type: integer, description: "Epoch ms" }
+    ProjectSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        tags: { type: array, items: { type: string } }
+        isPublic: { type: boolean }
+        schemaVersion: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ApiError:
+      type: object
+      required: [error, message, statusCode]
+      properties:
+        error: { type: string }
+        message: { type: string }
+        statusCode: { type: integer }
+        details: { type: object }
+
+paths:
+  /health:
+    get:
+      summary: Database ping
+      responses: { "200": { description: ok } }
+
+  /auth/register:
+    post:
+      summary: Create account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                name: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } }
+        "409": { description: email taken }
+
+  /auth/login:
+    post:
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/AuthResponse" } }
+        "401": { description: bad credentials }
+
+  /auth/refresh:
+    post:
+      summary: Rotate refresh token, issue new access
+      responses:
+        "200": { description: OK }
+        "401": { description: refresh invalid }
+
+  /auth/logout:
+    post:
+      summary: Revoke session
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK } }
+
+  /auth/me:
+    get:
+      summary: Current user
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/PublicUser" } }
+
+  /projects:
+    get:
+      summary: List projects
+      security: [{ bearer: [] }]
+      parameters:
+        - in: query
+          name: name
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ProjectSummary" } }
+                  total: { type: integer }
+    post:
+      summary: Create project
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, data]
+              properties:
+                name: { type: string, maxLength: 200 }
+                description: { type: string, nullable: true }
+                tags: { type: array, items: { type: string } }
+                data: { type: object }
+      responses: { "201": { description: created }, "409": { description: name conflict } }
+
+  /projects/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Load project
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK }, "404": { description: not found } }
+    put:
+      summary: Update project
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK } }
+    delete:
+      summary: Delete project
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK } }
+
+  /projects/{id}/share:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      summary: Generate share token
+      security: [{ bearer: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                canEdit: { type: boolean, default: false }
+                expiresInSeconds: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  url: { type: string }
+                  expiresAt: { type: string, format: date-time, nullable: true }
+
+  /shared/{token}:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string }
+    get:
+      summary: Public read-only view
+      responses: { "200": { description: OK }, "404": { description: not found or expired } }
+
+  /admin/stats:
+    get:
+      summary: Admin dashboard
+      security: [{ bearer: [] }]
+      responses: { "200": { description: OK }, "403": { description: not admin } }
