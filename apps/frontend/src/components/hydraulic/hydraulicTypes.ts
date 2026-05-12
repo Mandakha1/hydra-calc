@@ -232,6 +232,20 @@ export interface ProjectSettings {
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
   sourcePressure_mpa: number;
 
+  /* ===== Map / OSM background (Phase 5B.1) ===== */
+  /** Tile-layer provider key (from MAP_PROVIDERS). Persisted so each
+   *  project remembers whether the engineer prefers OSM, satellite,
+   *  topo, etc. */
+  mapProviderKey?: string;
+  /** Background-tile opacity 0–1. Persisted alongside the provider. */
+  mapOpacity?: number;
+  /** Default map centre + zoom for this project. When the user clicks
+   *  a Nominatim search result, this is updated so re-opening the
+   *  project lands on the same view. */
+  mapCenterLat?: number;
+  mapCenterLon?: number;
+  mapZoom?: number;
+
   /* ===== Zulu-compatible seasonal averages + economics (per Zulu istok) ===== */
   /** Seasonal mean supply temperature, °C. */
   tsg_pod_c?: number;

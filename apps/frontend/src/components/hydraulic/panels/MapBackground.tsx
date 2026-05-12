@@ -24,14 +24,14 @@ export interface MapProvider {
 export const MAP_PROVIDERS: MapProvider[] = [
   {
     key: "osm",
-    name: "OpenStreetMap",
+    name: "Гудамжны зураг (OSM)",
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution: "© OpenStreetMap contributors",
     maxZoom: 19,
   },
   {
     key: "satellite",
-    name: "Satellite (Esri)",
+    name: "Хиймэл дагуулын зураг",
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attribution: "© Esri, Maxar, Earthstar Geographics",
     maxZoom: 22,
@@ -39,21 +39,21 @@ export const MAP_PROVIDERS: MapProvider[] = [
   },
   {
     key: "topo",
-    name: "Topo (OpenTopoMap)",
+    name: "Топографи зураг",
     url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
     attribution: "© OpenTopoMap, © OpenStreetMap",
     maxZoom: 17,
   },
   {
     key: "carto_light",
-    name: "Carto Light",
+    name: "Цайвар (Carto Light)",
     url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
     attribution: "© CARTO, © OpenStreetMap",
     maxZoom: 20,
   },
   {
     key: "esri_topo",
-    name: "Esri Topo",
+    name: "Esri Топо",
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
     attribution: "© Esri",
     maxZoom: 19,

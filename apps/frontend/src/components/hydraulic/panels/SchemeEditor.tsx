@@ -51,12 +51,14 @@ export function SchemeEditor({ readOnly }: Props) {
   const selection = useHydraulicStore((s) => s.selection);
   const results = useHydraulicStore((s) => s.results);
   const violations = useHydraulicStore((s) => s.violations);
+  const settings = useHydraulicStore((s) => s.settings);
   const addNode = useHydraulicStore((s) => s.addNode);
   const addPipe = useHydraulicStore((s) => s.addPipe);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
   const removePipe = useHydraulicStore((s) => s.removePipe);
+  const updateSettings = useHydraulicStore((s) => s.updateSettings);
   const select = useHydraulicStore((s) => s.select);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -75,8 +77,20 @@ export function SchemeEditor({ readOnly }: Props) {
   const [showGrid, setShowGrid] = useState(true);
   const [snapGrid, setSnapGrid] = useState(true);
   const [showMap, setShowMap] = useState(false);
-  const [mapProvider, setMapProvider] = useState("osm");
-  const [mapOpacity, setMapOpacity] = useState(1.0);
+  // Map provider + opacity are persisted on ProjectSettings (Phase 5B.1a)
+  // so each project remembers the engineer's preferred tile style across
+  // page reloads. Default to OSM / 1.0 opacity if the project never had
+  // them set.
+  const mapProvider = settings.mapProviderKey ?? "osm";
+  const mapOpacity = settings.mapOpacity ?? 1.0;
+  const setMapProvider = useCallback(
+    (k: string) => updateSettings({ mapProviderKey: k }),
+    [updateSettings],
+  );
+  const setMapOpacity = useCallback(
+    (v: number) => updateSettings({ mapOpacity: v }),
+    [updateSettings],
+  );
   const [colorOverlay, setColorOverlay] = useState<"off" | "speed" | "pressure">("off");
   /** Шугам хоолойн урсгалын анимаци — Zulu-стилийн. Тооцоо хийгдсэний дараа автомат идэвхждэг. */
   const [animateFlow, setAnimateFlow] = useState(true);
