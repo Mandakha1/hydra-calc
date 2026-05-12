@@ -31,6 +31,7 @@ import {
 } from "../geometry";
 import { BuildingDialog } from "./BuildingDialog";
 import { MapBackground, MapControls } from "./MapBackground";
+import { AddressSearch } from "./AddressSearch";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -798,6 +799,16 @@ export function SchemeEditor({ readOnly }: Props) {
         onProviderChange={setMapProvider}
         opacity={mapOpacity}
         onOpacityChange={setMapOpacity}
+      />
+      <AddressSearch
+        enabled={showMap}
+        onPick={({ lat, lon, zoom }) => {
+          // Fly the map to the hit, then persist the centre + zoom so
+          // reopening the project lands here. flyTo is a no-op when the
+          // map ref isn't yet mounted (defensive — Leaflet attaches async).
+          leafletMapRef.current?.flyTo([lat, lon], zoom, { duration: 0.6 });
+          updateSettings({ mapCenterLat: lat, mapCenterLon: lon, mapZoom: zoom });
+        }}
       />
       {showMap && !readOnly && (
         <button
