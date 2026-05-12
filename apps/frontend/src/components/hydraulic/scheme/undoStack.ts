@@ -60,7 +60,8 @@ export const MAX_UNDO_DEPTH = 50;
 export function pushUndoSnapshot(label: string, affectedCount: number): void {
   const s = useHydraulicStore.getState();
   // Deep-clone the arrays so future mutations don't leak into our
-  // snapshot. JSON round-trip is fine — nodes/pipes are pure data.
+  // snapshot. JSON round-trip is fine — nodes/pipes/dimensions/
+  // constructionLines are pure data.
   const snap: UndoSnapshot = {
     label,
     affectedCount,
@@ -70,7 +71,16 @@ export function pushUndoSnapshot(label: string, affectedCount: number): void {
     multiSelection: {
       nodeIds: [...s.multiSelection.nodeIds],
       pipeIds: [...s.multiSelection.pipeIds],
+      dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
+      constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
     },
+    // Phase 6.6.1 declared `dimensions?` on UndoSnapshot but didn't
+    // wire the read/write paths, so Ctrl+Z after addDimension was a
+    // silent no-op (the stack entry existed but undoing only touched
+    // nodes/pipes). Phase 6.6.2 fixes both at once — drafting aids
+    // now round-trip through undo/redo as expected.
+    dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
+    constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
   };
   const existing = s.undoStack ?? [];
   const next = [...existing, snap];
@@ -108,15 +118,24 @@ export function undo(): { label: string; affectedCount: number } | null {
     multiSelection: {
       nodeIds: [...s.multiSelection.nodeIds],
       pipeIds: [...s.multiSelection.pipeIds],
+      dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
+      constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
     },
+    dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
+    constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
   };
 
-  // Apply the snapshot.
+  // Apply the snapshot. Drafting aids restored only when the
+  // snapshot has them (older snapshots from pre-6.6.2 sessions
+  // that somehow leaked in would be `undefined` — leave current
+  // dimensions/constructionLines alone in that case).
   useHydraulicStore.setState({
     nodes: top.nodes,
     pipes: top.pipes,
     selection: top.selection,
     multiSelection: top.multiSelection,
+    ...(top.dimensions !== undefined ? { dimensions: top.dimensions } : {}),
+    ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
     undoStack: stack.slice(0, stack.length - 1),
     redoStack: [...(s.redoStack ?? []), currentSnap],
   });
@@ -146,7 +165,11 @@ export function redo(): { label: string; affectedCount: number } | null {
     multiSelection: {
       nodeIds: [...s.multiSelection.nodeIds],
       pipeIds: [...s.multiSelection.pipeIds],
+      dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
+      constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
     },
+    dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
+    constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
   };
 
   useHydraulicStore.setState({
@@ -154,6 +177,8 @@ export function redo(): { label: string; affectedCount: number } | null {
     pipes: top.pipes,
     selection: top.selection,
     multiSelection: top.multiSelection,
+    ...(top.dimensions !== undefined ? { dimensions: top.dimensions } : {}),
+    ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
     undoStack: [...(s.undoStack ?? []), currentSnap],
     redoStack: stack.slice(0, stack.length - 1),
   });
