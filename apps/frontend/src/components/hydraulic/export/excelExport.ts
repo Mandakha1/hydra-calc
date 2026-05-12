@@ -26,10 +26,22 @@ export function exportToExcel(state: HydraulicState, filename = "hydra-calc.xlsx
     );
     if (state.results.pump) {
       summary.push(
-        ["Насос H (м)", state.results.pump.H_m.toFixed(2)],
+        ["Насос H (м, минимум)", state.results.pump.H_m.toFixed(2)],
         ["Насос Q (м³/ц)", state.results.pump.Q_m3h.toFixed(2)],
         ["Насос P (кВт)", state.results.pump.P_kW.toFixed(2)],
       );
+      const bd = state.results.pump.breakdown;
+      if (bd) {
+        summary.push(
+          [],
+          ["Напорын задаргаа (БНбД 41-01 §6.3)"],
+          ["  Магистрал шугам (м)", bd.supplyFriction_m.toFixed(2)],
+          ["  Эргэх шугам (м)", bd.returnFriction_m.toFixed(2)],
+          ["  Хэрэглэгчийн нөөц (м)", bd.consumerReserve_m.toFixed(2)],
+          ["  Дизайн нөөц (м)", bd.safetyMargin_m.toFixed(2)],
+          ["Насос H (м, зөвлөсөн)", (state.results.pump.H_m + bd.safetyMargin_m).toFixed(2)],
+        );
+      }
     }
   }
   const wsSummary = XLSX.utils.aoa_to_sheet(summary);

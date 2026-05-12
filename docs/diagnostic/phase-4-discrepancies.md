@@ -13,13 +13,18 @@
 
 ---
 
-## DISCREPANCY-002 — Pump head sizing is supply-leg only
+## DISCREPANCY-002 — Pump head sizing is supply-leg only — *RESOLVED in Phase 5A.2 (commit 2c9feb3)*
 
 **Test**:
 `apps/frontend/src/components/hydraulic/calc/__tests__/real_project_v2.test.ts`
-→ `Pump sizing > H ≥ minimum required 18.3 m`
+→ `Pump sizing > H_m ≥ minimum required 18.3 m (round-trip)`
+plus the dedicated regression bar
+`apps/frontend/src/components/hydraulic/calc/__tests__/pumpSizing.test.ts`
 
-**Status**: `.skip` with TODO, parallel "current contract" assertion kept passing.
+**Status**: ✅ **RESOLVED** — both the fixture assertion and the
+minimal-network regression test pass. Removed the `.skip` and the
+stale "supply-only current contract" parallel assertion. UI breakdown
+shipped in Phase 5A.3 (commit ac50ecb).
 
 ### What the fixture expects
 
@@ -61,25 +66,43 @@ own friction**, the consumer's heat exchanger stalls, and the whole
 loop loses circulation. Engineering practice (and the fixture's
 arithmetic) accounts for the full loop.
 
-### Resolution proposed (do NOT apply unilaterally)
+### Resolution shipped (Phase 5A.2, commit 2c9feb3)
 
-Two options, increasing scope:
+Took **Option 2 — the proper fix** instead of the quick ×2 multiplier:
 
-1. **Quick fix (preferred)**: in `sizePump()`, multiply the supply-leg
-   `maxDp_pa` by 2 before adding the reserve. This is the assumption
-   the fixture and most balanced 2-pipe systems already encode (return
-   friction ≈ supply friction). Single-line change, low risk.
+- `sizePump()` now partitions pipes by `circuit` (heating_supply vs
+  heating_return) and DFS-walks each tree independently. For every
+  consumer reached on the supply side, the matching path on the
+  return side is summed back to the source.
+- Returns a per-component breakdown:
+  `{ supplyFriction_m, returnFriction_m, consumerReserve_m,
+  safetyMargin_m }`. H_m is the *minimum required* head (supply +
+  return + reserve, matching the fixture's `H_m_minimum_required`).
+  The 2 m design buffer is exposed separately so the UI can render
+  both "minimum" and "recommended" head with the engineer's
+  rationale.
+- Balanced-2-pipe fallback (return ΔP = supply ΔP) is retained for
+  synthetic supply-only test networks where the return circuit
+  isn't supplied — keeps the unit tests honest without forcing
+  test authors to mirror every pipe.
 
-2. **Proper fix**: walk both supply and return trees, sum ΔP on the
-   actual round-trip path to each consumer, take the max. Requires
-   teaching the solver about return-circuit direction (currently it
-   only sees the supply tree). Larger refactor, deferred until the
-   Hardy-Cross loop solver is wired through (Phase 5+ candidate).
+### Verification
 
-Until resolved, the test asserts the **current** solver contract
-(supply-only H ≈ 17.39 m ±5 %) to set the regression bar. The
-fixture-expectation assertion (`H ≥ 18.3`) is `.skip` with a TODO
-pointing at this document.
+| Test | Before fix | After fix |
+|------|-----------|-----------|
+| `pumpSizing.test.ts > H_m includes return leg` (round-trip identity) | ❌ FAIL | ✅ PASS |
+| `pumpSizing.test.ts > GK-23/02 fixture H ≥ 18.3` | ❌ FAIL | ✅ PASS |
+| `pumpSizing.test.ts > breakdown shape` | ❌ FAIL | ✅ PASS |
+| `real_project_v2.test.ts > H ≥ minimum required 18.3 m` | ⏭ SKIP | ✅ PASS (un-skipped) |
+| `real_project_v2.test.ts > recommended H matches fixture 20.3 ±5 %` | (new) | ✅ PASS |
+| `real_project_v2.test.ts > breakdown surfaces all 4 components` | (new) | ✅ PASS |
+| Full suite | 124 pass + 1 skip | **131 pass + 0 skip** |
+
+### UI follow-up (Phase 5A.3, commit ac50ecb)
+
+`ResultsPanel.tsx` renders the breakdown as a labelled table; the
+Excel "Тойм" sheet exports the same lines so the rationale travels
+with the workbook into procurement review.
 
 ### Sanity verification — the rest of Phase 4 passes
 
@@ -112,5 +135,6 @@ residential project import.
 
 ---
 
-*Filed 2026-05-12 from `pnpm --filter frontend test`. One open
-discrepancy (DISCREPANCY-002). Phase 5 candidate fix.*
+*Filed 2026-05-12 from `pnpm --filter frontend test`. DISCREPANCY-002
+RESOLVED in Phase 5A.2 (2026-05-12, commit 2c9feb3). Zero open
+discrepancies on the GK-23/02 v2 fixture.*
