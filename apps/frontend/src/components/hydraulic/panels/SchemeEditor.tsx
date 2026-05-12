@@ -48,6 +48,7 @@ import { resolveLayer, layerKeyFor } from "../scheme/layers";
 import { LayerPanel } from "../scheme/LayerPanel";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
+import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -855,7 +856,13 @@ export function SchemeEditor({ readOnly }: Props) {
         const ms = useHydraulicStore.getState().multiSelection;
         const hasMulti = ms.nodeIds.length + ms.pipeIds.length > 1;
         if (hasMulti) {
-          // Snapshot first — removeNode cascades to pipes touching it
+          // Phase 6.5.5 — snapshot before cascade-delete so Ctrl+Z
+          // restores all removed nodes + pipes.
+          pushUndoSnapshot(
+            "Бөгөмөөр устгасан",
+            ms.nodeIds.length + ms.pipeIds.length,
+          );
+          // Snapshot ids — removeNode cascades to pipes touching it
           // and would mutate ms mid-iteration.
           const pipeIds = [...ms.pipeIds];
           const nodeIds = [...ms.nodeIds];
@@ -865,8 +872,42 @@ export function SchemeEditor({ readOnly }: Props) {
           return;
         }
         if (!selection) return;
+        // Phase 6.5.5 — single-target delete also snapshot-able.
+        pushUndoSnapshot("Устгасан", 1);
         if (selection.kind === "node") useHydraulicStore.getState().removeNode(selection.id);
         else useHydraulicStore.getState().removePipe(selection.id);
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        // Phase 6.5.5 — Ctrl+Z (no Shift): undo.
+        e.preventDefault();
+        const r = undoOp();
+        if (r) {
+          setToast({
+            text: `Буцаалаа: ${r.label} (${r.affectedCount})`,
+            key: Date.now(),
+            tone: "neutral",
+          });
+        } else {
+          setToast({
+            text: "Буцаах түүх алга",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        }
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        ((e.key === "y" || e.key === "Y") ||
+          (e.shiftKey && (e.key === "z" || e.key === "Z")))
+      ) {
+        // Phase 6.5.5 — Ctrl+Y or Ctrl+Shift+Z: redo.
+        e.preventDefault();
+        const r = redoOp();
+        if (r) {
+          setToast({
+            text: `Дахин гүйцэтгэв: ${r.label} (${r.affectedCount})`,
+            key: Date.now(),
+            tone: "success",
+          });
+        }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
         // Phase 6.5.1 — Ctrl+A: select-all on the current network.
         e.preventDefault();
