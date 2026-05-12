@@ -491,7 +491,11 @@ export function SchemeEditor({ readOnly }: Props) {
         select(null);
       }
     },
-    [mode, toSvg, snap, select, readOnly, polygon, constrain, placeNodeAt],
+    // pickBuildingFromOsm + svgToLatLon are useCallback values that depend on
+    // [pan, zoom] — omitting them caused stale closures: after the user pans
+    // the canvas, pickBuilding clicks would resolve to the OLD viewport's
+    // lat/lon (wrong OSM building fetched). Adding them as deps fixes that.
+    [mode, toSvg, snap, select, readOnly, polygon, constrain, placeNodeAt, pickBuildingFromOsm, svgToLatLon],
   );
 
   const onCanvasDoubleClick = useCallback(
@@ -541,7 +545,11 @@ export function SchemeEditor({ readOnly }: Props) {
         setDrag({ nodeId: node.id, offX: pt.x - node.x, offY: pt.y - node.y });
       }
     },
-    [mode, pipeFrom, nodes, addPipe, toSvg, select, readOnly, pendingCircuit],
+    // pipeLengthInput is read at line 522 (manual length override). Without
+    // it in deps, the closure captures the value at the time the user clicked
+    // the FROM node — if they then typed in the L field BEFORE clicking the TO
+    // node, the typed length was silently ignored. This was a real bug.
+    [mode, pipeFrom, nodes, addPipe, toSvg, select, readOnly, pendingCircuit, pipeLengthInput],
   );
 
   const onPipeClick = useCallback(

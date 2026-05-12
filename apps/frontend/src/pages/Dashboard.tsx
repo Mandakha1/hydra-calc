@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, HttpError } from "../lib/api";
 import { Button } from "../components/ui/Button";
@@ -54,7 +54,11 @@ export function Dashboard() {
     }
   }
 
-  async function load() {
+  // load() is memoized on [demoMode] so its identity is stable while demoMode
+  // is unchanged — fixing the previous bug where toggling demoMode AFTER mount
+  // would leave the captured load() reading the old demoMode value. The
+  // useEffect now correctly re-fires when the user logs in/out mid-session.
+  const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
@@ -72,11 +76,11 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [demoMode]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   async function onDelete(id: string, name: string) {
     if (!confirm(`"${name}" төслийг устгах уу? Буцаах боломжгүй.`)) return;
