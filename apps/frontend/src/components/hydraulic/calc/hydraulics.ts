@@ -271,7 +271,7 @@ function sizePump(
   }
   const resultByPipe = new Map(pipeResults.map((r) => [r.pipeId, r]));
 
-  function dfs(id: string, accum: number, visited: Set<string>) {
+  const dfs = (id: string, accum: number, visited: Set<string>): void => {
     if (visited.has(id)) return;
     visited.add(id);
     const node = nodes.find((n) => n.id === id);
@@ -281,7 +281,7 @@ function sizePump(
       if (!r) continue;
       dfs(p.toNodeId, accum + r.totalPressureDrop_pa, new Set(visited));
     }
-  }
+  };
   dfs(sourceId, 0, new Set());
 
   const maxDp_pa = Math.max(0, ...Array.from(totalByConsumer.values()));
