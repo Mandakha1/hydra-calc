@@ -28,6 +28,9 @@ apps/backend/drizzle/meta/*.snapshot.json
 .design-ref/
 .claude/
 
+# PGlite local dev database (binary WAL files, not source)
+apps/backend/data/pglite/
+
 # OS / IDE
 *.swp
 *.swo
