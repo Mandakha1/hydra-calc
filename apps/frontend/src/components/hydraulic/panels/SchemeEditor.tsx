@@ -46,6 +46,7 @@ import {
 import { renderSymbolFor } from "../scheme/symbols";
 import { resolveLayer, layerKeyFor } from "../scheme/layers";
 import { LayerPanel } from "../scheme/LayerPanel";
+import { Toast } from "../scheme/Toast";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -152,6 +153,9 @@ export function SchemeEditor({ readOnly }: Props) {
     startSvg: Point;
     endSvg: Point;
   } | null>(null);
+  /** Phase 6.5.2 — ephemeral toast message + key (key forces re-mount
+   *  so consecutive identical messages still trigger the animation). */
+  const [toast, setToast] = useState<{ text: string; key: number; tone?: "neutral" | "success" } | null>(null);
   /** OSM Overpass API loading flag — shows a spinner while fetching building. */
   const [osmLoading, setOsmLoading] = useState(false);
   /** Stable reference for the onMapView callback — passing an arrow function
@@ -869,6 +873,45 @@ export function SchemeEditor({ readOnly }: Props) {
           nodeIds: useHydraulicStore.getState().nodes.map((n) => n.id),
           pipeIds: useHydraulicStore.getState().pipes.map((p) => p.id),
         });
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+        // Phase 6.5.2 — Ctrl+C: copy multi-selection to clipboard.
+        e.preventDefault();
+        const r = useHydraulicStore.getState().copySelection();
+        if (r) {
+          setToast({
+            text: `${r.nodes} цэг, ${r.pipes} хоолой clipboard-д хуулсан`,
+            key: Date.now(),
+            tone: "success",
+          });
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "x" || e.key === "X")) {
+        // Phase 6.5.2 — Ctrl+X: cut (copy + delete in one step).
+        e.preventDefault();
+        const r = useHydraulicStore.getState().cutSelection();
+        if (r) {
+          setToast({
+            text: `${r.nodes} цэг, ${r.pipes} хоолой устгасан, clipboard-д хадгалсан`,
+            key: Date.now(),
+            tone: "success",
+          });
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        // Phase 6.5.2 — Ctrl+V: paste with default +20m offset.
+        e.preventDefault();
+        const r = useHydraulicStore.getState().pasteClipboard();
+        if (r) {
+          setToast({
+            text: `${r.nodes} цэг, ${r.pipes} хоолой буулгасан`,
+            key: Date.now(),
+            tone: "success",
+          });
+        } else {
+          setToast({
+            text: "Clipboard хоосон",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        }
       } else if (e.key === "Escape") {
         setMode("select");
         setShowPalette(null);
@@ -1870,6 +1913,18 @@ export function SchemeEditor({ readOnly }: Props) {
           </text>
         )}
       </svg>
+
+      {/* Phase 6.5.2 — Ephemeral toast for copy/cut/paste feedback.
+          Re-mounts on key change so consecutive identical messages
+          still play the fade-in. */}
+      {toast && (
+        <Toast
+          key={toast.key}
+          message={toast.text}
+          tone={toast.tone}
+          onDismiss={() => setToast(null)}
+        />
+      )}
 
       {/* Phase 6.5.1 — Multi-selection counter HUD. Shows when 2+
           objects selected (single-select is already obvious from the
