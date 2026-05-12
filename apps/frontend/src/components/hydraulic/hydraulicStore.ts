@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import type { HydraulicState, SchemeNode, SchemePipe, ProjectSettings } from "./hydraulicTypes";
 import { emptyState } from "./hydraulicTypes";
+import {
+  buildClipboardPayload,
+  applyPaste,
+  type ClipboardPayload,
+} from "./scheme/clipboard";
 
 /** Phase 6.5.1 — Multi-selection state.
  *
@@ -64,6 +69,23 @@ interface StoreActions {
   clearSelection(): void;
   selection: { kind: "node" | "pipe"; id: string } | null;
   multiSelection: MultiSelection;
+
+  /* ============== Clipboard (Phase 6.5.2) ==================== */
+
+  /** In-memory clipboard payload from the last copy/cut, or null. */
+  clipboard: ClipboardPayload | null;
+  /** Ctrl+C: copy current multiSelection into clipboard. No-op when
+   *  the selection is empty. Returns the count of items copied (so
+   *  the UI can render a toast). */
+  copySelection(): { nodes: number; pipes: number } | null;
+  /** Ctrl+X: copy + delete the multiSelection in one step. Returns
+   *  the count of items affected. */
+  cutSelection(): { nodes: number; pipes: number } | null;
+  /** Ctrl+V: paste the clipboard with default offset (or custom
+   *  delta). Each paste produces fresh IDs and select the newly-
+   *  pasted objects so the engineer can immediately drag them
+   *  further. Returns the count of items inserted. */
+  pasteClipboard(offset_m?: { x: number; y: number }): { nodes: number; pipes: number } | null;
 }
 
 export const useHydraulicStore = create<HydraulicState & StoreActions>()(
@@ -77,6 +99,10 @@ export const useHydraulicStore = create<HydraulicState & StoreActions>()(
         ...(state ?? emptyState()),
         selection: null,
         multiSelection: { nodeIds: [], pipeIds: [] },
+        // Phase 6.5.2 — reset wipes the clipboard too. Engineers
+        // switching projects don't want a stale paste from the
+        // previous session to land in the new one.
+        clipboard: null,
       }),
 
     addNode: (node) =>
@@ -219,6 +245,71 @@ export const useHydraulicStore = create<HydraulicState & StoreActions>()(
 
     clearSelection: () =>
       set({ selection: null, multiSelection: { nodeIds: [], pipeIds: [] } }),
+
+    /* ============== Clipboard actions (Phase 6.5.2) ============== */
+
+    clipboard: null,
+
+    copySelection: () => {
+      const s = useHydraulicStore.getState();
+      const payload = buildClipboardPayload(
+        s.nodes,
+        s.pipes,
+        s.multiSelection.nodeIds,
+        s.multiSelection.pipeIds,
+      );
+      if (!payload) return null;
+      set({ clipboard: payload });
+      return { nodes: payload.nodes.length, pipes: payload.pipes.length };
+    },
+
+    cutSelection: () => {
+      const s = useHydraulicStore.getState();
+      const payload = buildClipboardPayload(
+        s.nodes,
+        s.pipes,
+        s.multiSelection.nodeIds,
+        s.multiSelection.pipeIds,
+      );
+      if (!payload) return null;
+      // Snapshot ids — removeNode cascades to touched pipes and would
+      // mutate multiSelection mid-iteration otherwise.
+      const pipeIds = [...s.multiSelection.pipeIds];
+      const nodeIds = [...s.multiSelection.nodeIds];
+      set({ clipboard: payload });
+      for (const pid of pipeIds) useHydraulicStore.getState().removePipe(pid);
+      for (const nid of nodeIds) useHydraulicStore.getState().removeNode(nid);
+      // After cascade, multiSelection might still have stray pipe ids
+      // that got swept by the cascade — clearSelection cleans up.
+      useHydraulicStore.getState().clearSelection();
+      return { nodes: payload.nodes.length, pipes: payload.pipes.length };
+    },
+
+    pasteClipboard: (offset_m) => {
+      const s = useHydraulicStore.getState();
+      if (!s.clipboard) return null;
+      // Use the existing uid() generator so pasted IDs share the
+      // same namespace as hand-placed nodes — no collision risk.
+      const { nodes: pastedNodes, pipes: pastedPipes } = applyPaste(
+        s.clipboard,
+        uid,
+        offset_m,
+      );
+      // Insert each — addNode / addPipe push to the arrays atomically
+      // per call. set() in a single shot would also work but is less
+      // friendly for future undo-stack integration (6.5.5).
+      set((cur) => ({
+        nodes: [...cur.nodes, ...pastedNodes],
+        pipes: [...cur.pipes, ...pastedPipes],
+      }));
+      // Auto-select the pasted cluster (UX expectation: paste = "now
+      // I want to drag this further"). Replaces any prior selection.
+      useHydraulicStore.getState().selectMany({
+        nodeIds: pastedNodes.map((n) => n.id),
+        pipeIds: pastedPipes.map((p) => p.id),
+      });
+      return { nodes: pastedNodes.length, pipes: pastedPipes.length };
+    },
   })),
 );
 
