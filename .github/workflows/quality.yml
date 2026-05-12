@@ -56,6 +56,10 @@ jobs:
 
       - name: Test — Vitest in backend + frontend
         run: pnpm test
+        env:
+          JWT_SECRET: test-jwt-secret-for-ci-only-32chars
+          USE_PGLITE: "1"
+          PGLITE_PATH: .tmp/pglite-vitest
 
       - name: Build — production bundles
         run: pnpm build
