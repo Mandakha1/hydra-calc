@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback, type CSSProperties, type ReactNode } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { useHydraulicStore, snapshotForSave } from "./hydraulicStore";
 import { emptyState, type HydraulicState } from "./hydraulicTypes";
@@ -6,21 +6,24 @@ import { checkNorms } from "./calc/normCheck";
 import { runThreeMode, type CalcMode } from "./calc/threeModeEngine";
 import { hasLoops } from "./calc/loopSolver";
 import { writeBackResults } from "./calc/writeBack";
-import { exportToExcel } from "./export/excelExport";
-import { downloadDXF } from "./export/dxfExport";
-import { exportToZuluSqlite, downloadAsBlob } from "../../lib/zuluExport";
 import { SchemeEditor } from "./panels/SchemeEditor";
 import { InspectorPanel } from "./panels/InspectorPanel";
-import { ResultsPanel } from "./panels/ResultsPanel";
-import { SettingsPanel } from "./panels/SettingsPanel";
-import { PiezometricChart } from "./panels/PiezometricChart";
-import { BalancingPanel } from "./panels/BalancingPanel";
-import { ItpSchemePicker } from "./panels/ItpSchemePicker";
-import { FailurePanel } from "./panels/FailurePanel";
-import { BomPanel } from "./panels/BomPanel";
 import { api, HttpError } from "../../lib/api";
 import { useAuthStore } from "../../lib/authStore";
 import { storage } from "../../lib/storage";
+
+// Lazy-loaded tabs + modals — keep the initial editor bundle as small as
+// possible. The SchemeEditor canvas is the only thing the user sees on
+// mount; everything else (Үр дүн, Пьезометр, Тэнцвэржүүлэлт, Эвдрэлийн
+// загвар, Смет, Тохиргоо, ИТП picker) loads when its tab/button is clicked.
+// Suspense fallback (TabLoading) shows during the chunk download.
+const PiezometricChart = lazy(() => import("./panels/PiezometricChart").then((m) => ({ default: m.PiezometricChart })));
+const BalancingPanel = lazy(() => import("./panels/BalancingPanel").then((m) => ({ default: m.BalancingPanel })));
+const FailurePanel = lazy(() => import("./panels/FailurePanel").then((m) => ({ default: m.FailurePanel })));
+const BomPanel = lazy(() => import("./panels/BomPanel").then((m) => ({ default: m.BomPanel })));
+const ResultsPanel = lazy(() => import("./panels/ResultsPanel").then((m) => ({ default: m.ResultsPanel })));
+const SettingsPanel = lazy(() => import("./panels/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
+const ItpSchemePicker = lazy(() => import("./panels/ItpSchemePicker").then((m) => ({ default: m.ItpSchemePicker })));
 
 interface Props {
   projectId?: string;
@@ -134,16 +137,22 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
     }
   }, [loadedId, projectName, readOnly, demoMode]);
 
-  const exportXlsx = useCallback(() => {
+  // Export functions use dynamic imports — xlsx (~150 KB) and the DXF/Zulu
+  // exporters together add ~200 KB to the bundle. By loading them only on
+  // button click, the initial editor stays lean.
+  const exportXlsx = useCallback(async () => {
+    const { exportToExcel } = await import("./export/excelExport");
     exportToExcel(snapshotForSave(useHydraulicStore.getState()), `${projectName || "hydra"}.xlsx`);
   }, [projectName]);
 
-  const exportDxf = useCallback(() => {
+  const exportDxf = useCallback(async () => {
+    const { downloadDXF } = await import("./export/dxfExport");
     downloadDXF(snapshotForSave(useHydraulicStore.getState()), `${projectName || "hydra"}.dxf`);
   }, [projectName]);
 
   const exportZulu = useCallback(async () => {
     try {
+      const { exportToZuluSqlite, downloadAsBlob } = await import("../../lib/zuluExport");
       const data = await exportToZuluSqlite(snapshotForSave(useHydraulicStore.getState()), { prefix: "Teplo" });
       downloadAsBlob(data, `${projectName || "hydra"}.sqlite`);
     } catch (e) {
@@ -284,39 +293,43 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
       )}
 
       {showItpPicker && (
-        <ItpSchemePicker
-          onCancel={() => setShowItpPicker(false)}
-          onPick={(scheme) => {
-            // Apply scheme to selected node (or alert if none)
-            if (selection?.kind === "node") {
-              const noteLines = [
-                `ИТП схем: ${scheme.name_mn}`,
-                scheme.use_case_mn ? `Хэрэглэх: ${scheme.use_case_mn}` : "",
-                scheme.components ? `Тоног: ${scheme.components.map((c) => c.kind).join(", ")}` : "",
-              ].filter(Boolean).join("\n");
-              updateNodeAction(selection.id, {
-                equipment: scheme.key,
-                notes: noteLines,
-              });
-              alert(`✓ "${scheme.name_mn}" сонгогдлоо. Зангилаагын тэмдэглэлд хадгаласан.`);
-            } else {
-              alert("Эхлээд зангилаа сонгоно уу (ИТП эсвэл ЦТП цэг). Дараа нь схемийг хэрэглэнэ.");
-            }
-            setShowItpPicker(false);
-          }}
-        />
+        <Suspense fallback={<TabLoading />}>
+          <ItpSchemePicker
+            onCancel={() => setShowItpPicker(false)}
+            onPick={(scheme) => {
+              // Apply scheme to selected node (or alert if none)
+              if (selection?.kind === "node") {
+                const noteLines = [
+                  `ИТП схем: ${scheme.name_mn}`,
+                  scheme.use_case_mn ? `Хэрэглэх: ${scheme.use_case_mn}` : "",
+                  scheme.components ? `Тоног: ${scheme.components.map((c) => c.kind).join(", ")}` : "",
+                ].filter(Boolean).join("\n");
+                updateNodeAction(selection.id, {
+                  equipment: scheme.key,
+                  notes: noteLines,
+                });
+                alert(`✓ "${scheme.name_mn}" сонгогдлоо. Зангилаагын тэмдэглэлд хадгаласан.`);
+              } else {
+                alert("Эхлээд зангилаа сонгоно уу (ИТП эсвэл ЦТП цэг). Дараа нь схемийг хэрэглэнэ.");
+              }
+              setShowItpPicker(false);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Main area */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <main style={{ flex: 1, overflow: "auto" }}>
           {tab === "scheme" && <SchemeEditor readOnly={readOnly} />}
-          {tab === "results" && <ResultsPanel />}
-          {tab === "failure" && <FailurePanel />}
-          {tab === "bom" && <BomPanel />}
-          {tab === "piezo" && <PiezometricChart />}
-          {tab === "balancing" && <BalancingPanel />}
-          {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
+          <Suspense fallback={<TabLoading />}>
+            {tab === "results" && <ResultsPanel />}
+            {tab === "failure" && <FailurePanel />}
+            {tab === "bom" && <BomPanel />}
+            {tab === "piezo" && <PiezometricChart />}
+            {tab === "balancing" && <BalancingPanel />}
+            {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
+          </Suspense>
         </main>
         {tab === "scheme" && <InspectorPanel readOnly={readOnly} />}
       </div>
@@ -340,6 +353,15 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
     >
       {children}
     </button>
+  );
+}
+
+/** Suspense fallback shown while a lazy-loaded panel chunk is downloading. */
+function TabLoading() {
+  return (
+    <div style={{ padding: "2rem", textAlign: "center", color: "var(--fg-muted)", fontSize: 13 }}>
+      ⏳ Хэсэг ачаалж байна…
+    </div>
   );
 }
 
