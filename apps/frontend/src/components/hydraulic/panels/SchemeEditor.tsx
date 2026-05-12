@@ -57,13 +57,30 @@ import {
   removeDimension,
   selectDimension,
 } from "../scheme/dimensionApplier";
+import {
+  strokeDasharrayForStyle,
+  constructionLineMidpoint,
+  constructionLineBoundingBox,
+} from "../scheme/constructionLines";
+import {
+  addConstructionLine,
+  selectConstructionLine,
+} from "../scheme/constructionLineApplier";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
-type Mode = "select" | "addNode" | "addPipe" | "drawBuilding" | "measure" | "pickBuilding" | "drawDimension";
+type Mode =
+  | "select"
+  | "addNode"
+  | "addPipe"
+  | "drawBuilding"
+  | "measure"
+  | "pickBuilding"
+  | "drawDimension"
+  | "drawConstruction";
 type AngleMode = "free" | "ortho90" | "ortho45";
 
 interface Props {
@@ -97,6 +114,8 @@ export function SchemeEditor({ readOnly }: Props) {
   const multiSelection = useHydraulicStore((s) => s.multiSelection);
   // Phase 6.6.1 — dimension entities
   const dimensions = useHydraulicStore((s) => s.dimensions);
+  // Phase 6.6.2 — construction-line entities
+  const constructionLines = useHydraulicStore((s) => s.constructionLines);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<Mode>("select");
@@ -176,6 +195,11 @@ export function SchemeEditor({ readOnly }: Props) {
    *  endpoint snap) locks the second anchor and commits the dimension.
    *  Cursor-following preview line shown via mousePos. */
   const [pendingDimAnchor, setPendingDimAnchor] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+  /** Phase 6.6.2 — construction-line drawing state. Free-coord
+   *  (no node anchor) — first click sets the start point in scheme
+   *  pixel space, second click anywhere commits the line. Esc
+   *  cancels in-flight. */
+  const [pendingConstructionAnchor, setPendingConstructionAnchor] = useState<{ x: number; y: number } | null>(null);
   /** OSM Overpass API loading flag — shows a spinner while fetching building. */
   const [osmLoading, setOsmLoading] = useState(false);
   /** Stable reference for the onMapView callback — passing an arrow function
@@ -586,6 +610,39 @@ export function SchemeEditor({ readOnly }: Props) {
           key: Date.now(),
           tone: "neutral",
         });
+      } else if (mode === "drawConstruction") {
+        // Phase 6.6.2 — free-placement (no node anchor required).
+        // First click sets start; second click commits the line.
+        if (!pendingConstructionAnchor) {
+          setPendingConstructionAnchor(pt);
+          setToast({
+            text: "Эхний цэг тогтлоо. Дараагийн цэг рүү дарж туслах шугам үүсгэнэ.",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        } else if (
+          Math.abs(pendingConstructionAnchor.x - pt.x) > 0.5 ||
+          Math.abs(pendingConstructionAnchor.y - pt.y) > 0.5
+        ) {
+          // Different point → commit. The orthogonal-constraint helper
+          // is applied for consistency with measure/polygon flows so
+          // 90°/45° snap respects the engineer's setting.
+          const endPt = snap(constrain(pendingConstructionAnchor, pt));
+          addConstructionLine({
+            id: uid("cl"),
+            from: { x: pendingConstructionAnchor.x, y: pendingConstructionAnchor.y },
+            to: { x: endPt.x, y: endPt.y },
+            layerKey: "C",
+            style: "dashed",
+          });
+          setPendingConstructionAnchor(null);
+          setMode("select");
+          setToast({
+            text: "Туслах шугам үүсгэв",
+            key: Date.now(),
+            tone: "success",
+          });
+        }
       } else if (mode === "select") {
         select(null);
       }
@@ -594,7 +651,19 @@ export function SchemeEditor({ readOnly }: Props) {
     // [pan, zoom] — omitting them caused stale closures: after the user pans
     // the canvas, pickBuilding clicks would resolve to the OLD viewport's
     // lat/lon (wrong OSM building fetched). Adding them as deps fixes that.
-    [mode, toSvg, snap, select, readOnly, polygon, constrain, placeNodeAt, pickBuildingFromOsm, svgToLatLon],
+    [
+      mode,
+      toSvg,
+      snap,
+      select,
+      readOnly,
+      polygon,
+      constrain,
+      placeNodeAt,
+      pickBuildingFromOsm,
+      svgToLatLon,
+      pendingConstructionAnchor,
+    ],
   );
 
   const onCanvasDoubleClick = useCallback(
@@ -647,6 +716,40 @@ export function SchemeEditor({ readOnly }: Props) {
         }
         return;
       }
+      // Phase 6.6.2 — construction-line drawing: treat a node click
+      // as a "snap to vertex" so engineers can lay out alignment
+      // lines starting from existing nodes. No anchor relationship
+      // is recorded — the construction line just stores the (x,y).
+      if (mode === "drawConstruction") {
+        const nodePt = { x: node.x, y: node.y };
+        if (!pendingConstructionAnchor) {
+          setPendingConstructionAnchor(nodePt);
+          setToast({
+            text: "Эхний цэг тогтлоо. Дараагийн цэг рүү дарж туслах шугам үүсгэнэ.",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        } else if (
+          Math.abs(pendingConstructionAnchor.x - nodePt.x) > 0.5 ||
+          Math.abs(pendingConstructionAnchor.y - nodePt.y) > 0.5
+        ) {
+          addConstructionLine({
+            id: uid("cl"),
+            from: { x: pendingConstructionAnchor.x, y: pendingConstructionAnchor.y },
+            to: nodePt,
+            layerKey: "C",
+            style: "dashed",
+          });
+          setPendingConstructionAnchor(null);
+          setMode("select");
+          setToast({
+            text: "Туслах шугам үүсгэв",
+            key: Date.now(),
+            tone: "success",
+          });
+        }
+        return;
+      }
       if (mode === "addPipe") {
         if (!pipeFrom) {
           setPipeFrom(node.id);
@@ -692,7 +795,21 @@ export function SchemeEditor({ readOnly }: Props) {
     // it in deps, the closure captures the value at the time the user clicked
     // the FROM node — if they then typed in the L field BEFORE clicking the TO
     // node, the typed length was silently ignored. This was a real bug.
-    [mode, pipeFrom, nodes, addPipe, toSvg, select, selectToggle, selectExtend, readOnly, pendingCircuit, pipeLengthInput],
+    [
+      mode,
+      pipeFrom,
+      nodes,
+      addPipe,
+      toSvg,
+      select,
+      selectToggle,
+      selectExtend,
+      readOnly,
+      pendingCircuit,
+      pipeLengthInput,
+      pendingDimAnchor,
+      pendingConstructionAnchor,
+    ],
   );
 
   const onPipeClick = useCallback(
@@ -911,21 +1028,35 @@ export function SchemeEditor({ readOnly }: Props) {
         // Phase 6.5.1 — Delete now removes ALL multi-selected objects
         // in one shot, not just the legacy single-target. Engineers
         // selecting 5 АОС-ы blocks and pressing Del expect all 5 gone.
+        // Phase 6.6.1/6.6.2 — also includes dimensions + construction
+        // lines in the multi-delete batch.
         const ms = useHydraulicStore.getState().multiSelection;
-        const hasMulti = ms.nodeIds.length + ms.pipeIds.length > 1;
+        const dimIdsSel = ms.dimensionIds ?? [];
+        const clIdsSel = ms.constructionLineIds ?? [];
+        const totalSelected =
+          ms.nodeIds.length + ms.pipeIds.length + dimIdsSel.length + clIdsSel.length;
+        const hasMulti = totalSelected > 1;
         if (hasMulti) {
           // Phase 6.5.5 — snapshot before cascade-delete so Ctrl+Z
-          // restores all removed nodes + pipes.
-          pushUndoSnapshot(
-            "Бөгөмөөр устгасан",
-            ms.nodeIds.length + ms.pipeIds.length,
-          );
+          // restores all removed nodes + pipes + drafting aids.
+          pushUndoSnapshot("Бөгөмөөр устгасан", totalSelected);
           // Snapshot ids — removeNode cascades to pipes touching it
           // and would mutate ms mid-iteration.
           const pipeIds = [...ms.pipeIds];
           const nodeIds = [...ms.nodeIds];
+          const dimIds = [...dimIdsSel];
+          const clIds = [...clIdsSel];
           for (const pid of pipeIds) useHydraulicStore.getState().removePipe(pid);
           for (const nid of nodeIds) useHydraulicStore.getState().removeNode(nid);
+          // Drafting aids — set-based delete inline so we don't push
+          // N extra snapshots (the appliers each push one; this batch
+          // already pushed its own).
+          if (dimIds.length > 0 || clIds.length > 0) {
+            useHydraulicStore.setState((s) => ({
+              dimensions: (s.dimensions ?? []).filter((d) => !dimIds.includes(d.id)),
+              constructionLines: (s.constructionLines ?? []).filter((c) => !clIds.includes(c.id)),
+            }));
+          }
           useHydraulicStore.getState().clearSelection();
           return;
         }
@@ -933,7 +1064,33 @@ export function SchemeEditor({ readOnly }: Props) {
         // Phase 6.5.5 — single-target delete also snapshot-able.
         pushUndoSnapshot("Устгасан", 1);
         if (selection.kind === "node") useHydraulicStore.getState().removeNode(selection.id);
-        else useHydraulicStore.getState().removePipe(selection.id);
+        else if (selection.kind === "pipe") useHydraulicStore.getState().removePipe(selection.id);
+        else if (selection.kind === "dimension") {
+          // Phase 6.6.1 — drop dimension inline (applier would push a
+          // duplicate snapshot — we already pushed one above).
+          useHydraulicStore.setState((s) => ({
+            dimensions: (s.dimensions ?? []).filter((d) => d.id !== selection.id),
+            selection: null,
+            multiSelection: {
+              nodeIds: s.multiSelection.nodeIds,
+              pipeIds: s.multiSelection.pipeIds,
+              dimensionIds: (s.multiSelection.dimensionIds ?? []).filter((x) => x !== selection.id),
+              constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+            },
+          }));
+        } else if (selection.kind === "constructionLine") {
+          // Phase 6.6.2 — same pattern for construction lines.
+          useHydraulicStore.setState((s) => ({
+            constructionLines: (s.constructionLines ?? []).filter((c) => c.id !== selection.id),
+            selection: null,
+            multiSelection: {
+              nodeIds: s.multiSelection.nodeIds,
+              pipeIds: s.multiSelection.pipeIds,
+              dimensionIds: s.multiSelection.dimensionIds ?? [],
+              constructionLineIds: (s.multiSelection.constructionLineIds ?? []).filter((x) => x !== selection.id),
+            },
+          }));
+        }
       } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
         // Phase 6.5.5 — Ctrl+Z (no Shift): undo.
         e.preventDefault();
@@ -1022,6 +1179,8 @@ export function SchemeEditor({ readOnly }: Props) {
         setContextMenu(null);
         // Phase 6.6.1 — cancel any in-flight dimension drawing.
         setPendingDimAnchor(null);
+        // Phase 6.6.2 — cancel any in-flight construction-line drawing.
+        setPendingConstructionAnchor(null);
         // Phase 6.5.1 — Esc also clears multi-selection.
         useHydraulicStore.getState().clearSelection();
       } else if (e.key === "Enter" && mode === "drawBuilding" && polygon.length >= 3) {
@@ -1252,6 +1411,17 @@ export function SchemeEditor({ readOnly }: Props) {
             icon="📐"
             label="Хэмжээс"
             color="#222"
+          />
+          <SideBtn
+            active={mode === "drawConstruction"}
+            onClick={() => {
+              setMode((m) => (m === "drawConstruction" ? "select" : "drawConstruction"));
+              setPendingConstructionAnchor(null);
+              setShowPalette(null);
+            }}
+            icon="┄"
+            label="Туслах"
+            color="#888"
           />
           <SideBtn
             active={mode === "pickBuilding"}
@@ -1747,6 +1917,122 @@ export function SchemeEditor({ readOnly }: Props) {
                   fill="#FFB300"
                   stroke="white"
                   strokeWidth={1.5}
+                />
+              </g>
+            )}
+
+            {/* Phase 6.6.2 — Construction lines. Rendered before pipes so
+                pipes stay on top visually. Layer-respecting visibility
+                + style (solid/dashed/dotted) + optional centred label
+                with halo. No orphan state — these are free-coord. */}
+            {(() => {
+              const lines = constructionLines ?? [];
+              if (lines.length === 0) return null;
+              return lines.map((cl) => {
+                const lk = cl.layerKey ?? "C";
+                const layer = resolveLayerByKey(lk, settings.layers);
+                if (!layer.visible) return null;
+                const isSelected = selection?.kind === "constructionLine" && selection.id === cl.id;
+                const isMultiSelected = (multiSelection.constructionLineIds ?? []).includes(cl.id);
+                const color = isSelected ? "var(--accent)" : layer.color;
+                const dash = strokeDasharrayForStyle(cl.style);
+                const mid = constructionLineMidpoint(cl);
+                const angle_deg = (Math.atan2(cl.to.y - cl.from.y, cl.to.x - cl.from.x) * 180) / Math.PI;
+                const bb = constructionLineBoundingBox(cl);
+                return (
+                  <g
+                    key={cl.id}
+                    data-testid={`construction-line-${cl.id}`}
+                    onMouseDown={(e) => {
+                      // Click selects (when not in a drawing mode).
+                      if (mode === "select" || mode === "drawConstruction") {
+                        e.stopPropagation();
+                        selectConstructionLine(cl.id);
+                      }
+                    }}
+                    style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                  >
+                    {isMultiSelected && (
+                      <rect
+                        x={bb.minX - 4}
+                        y={bb.minY - 4}
+                        width={bb.maxX - bb.minX + 8}
+                        height={bb.maxY - bb.minY + 8}
+                        fill="none"
+                        stroke="#FFB300"
+                        strokeWidth={2}
+                        strokeDasharray="3 2"
+                        pointerEvents="none"
+                      />
+                    )}
+                    {/* Wider invisible hit zone for easier clicking on
+                        a thin dashed/dotted stroke. */}
+                    <line
+                      x1={cl.from.x}
+                      y1={cl.from.y}
+                      x2={cl.to.x}
+                      y2={cl.to.y}
+                      stroke="transparent"
+                      strokeWidth={10}
+                      pointerEvents="stroke"
+                      style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                    />
+                    {/* Visible line */}
+                    <line
+                      x1={cl.from.x}
+                      y1={cl.from.y}
+                      x2={cl.to.x}
+                      y2={cl.to.y}
+                      stroke={color}
+                      strokeWidth={1.25}
+                      strokeDasharray={dash}
+                      pointerEvents="none"
+                    />
+                    {cl.label && cl.label.trim().length > 0 && (
+                      <text
+                        x={mid.x}
+                        y={mid.y - 4}
+                        fontSize={11}
+                        fontFamily="var(--font-mono)"
+                        fill={color}
+                        stroke="white"
+                        strokeWidth={3}
+                        paintOrder="stroke"
+                        textAnchor="middle"
+                        transform={
+                          Math.abs(angle_deg) > 90
+                            ? `rotate(${angle_deg + 180} ${mid.x} ${mid.y})`
+                            : `rotate(${angle_deg} ${mid.x} ${mid.y})`
+                        }
+                        pointerEvents="none"
+                      >
+                        {cl.label}
+                      </text>
+                    )}
+                  </g>
+                );
+              });
+            })()}
+
+            {/* Phase 6.6.2 — Construction-line drawing preview. */}
+            {mode === "drawConstruction" && pendingConstructionAnchor && mousePos && (
+              <g pointerEvents="none">
+                <line
+                  x1={pendingConstructionAnchor.x}
+                  y1={pendingConstructionAnchor.y}
+                  x2={mousePos.x}
+                  y2={mousePos.y}
+                  stroke="#888"
+                  strokeWidth={1.25}
+                  strokeDasharray="6 4"
+                />
+                <circle
+                  cx={pendingConstructionAnchor.x}
+                  cy={pendingConstructionAnchor.y}
+                  r={4}
+                  fill="#888"
+                  stroke="white"
+                  strokeWidth={1.25}
                 />
               </g>
             )}

@@ -446,6 +446,35 @@ export interface SchemeDimension {
   toNode_cached_xy?: { x: number; y: number };
 }
 
+/**
+ * Phase 6.6.2 — Construction line entity.
+ *
+ * Free-standing drafting guide line (centre-line, axis, alignment
+ * aid). UNLIKE dimensions, construction lines:
+ *   - have free XY endpoints (no anchor nodes, no orphan state)
+ *   - don't auto-compute a label — engineer types their own (axis
+ *     name "А-А", "Х-Х", or leaves blank)
+ *   - live on layer "C" by default (hidden in print unless toggled)
+ *
+ * The line is rendered with a configurable stroke style — dashed by
+ * drafting convention, but engineers can override to solid/dotted.
+ */
+export interface SchemeConstructionLine {
+  id: string;
+  /** Free endpoint in scheme-space pixels. */
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  /** Optional free-text label — typically an axis name like "А-А".
+   *  Rendered centred on the line, with white halo for legibility. */
+  label?: string;
+  /** Layer assignment — "C" (Construction, hidden by default in
+   *  print) or "D" (Drafting, visible in print). Default "C". */
+  layerKey?: "C" | "D";
+  /** Line stroke style — "dashed" (drafting default), "solid"
+   *  (centre-line / heavy axis), "dotted" (alignment aid). */
+  style?: "dashed" | "solid" | "dotted";
+}
+
 /** Phase 6.5.5 — single undo/redo snapshot.
  *  Captures the minimum state needed to roll back / replay a batch
  *  operation: nodes + pipes + the two selection surfaces. Settings
@@ -459,11 +488,20 @@ export interface UndoSnapshot {
   affectedCount: number;
   nodes: SchemeNode[];
   pipes: SchemePipe[];
-  /** Phase 6.6.1 — kind union extended with "dimension". */
-  selection: { kind: "node" | "pipe" | "dimension"; id: string } | null;
-  multiSelection: { nodeIds: string[]; pipeIds: string[]; dimensionIds?: string[] };
+  /** Phase 6.6.1 — kind union extended with "dimension".
+   *  Phase 6.6.2 — extended again with "constructionLine". */
+  selection: { kind: "node" | "pipe" | "dimension" | "constructionLine"; id: string } | null;
+  multiSelection: {
+    nodeIds: string[];
+    pipeIds: string[];
+    dimensionIds?: string[];
+    /** Phase 6.6.2 — construction-line selection set. */
+    constructionLineIds?: string[];
+  };
   /** Phase 6.6.1 — dimensions snapshot for batched op undo. */
   dimensions?: SchemeDimension[];
+  /** Phase 6.6.2 — construction-lines snapshot for batched op undo. */
+  constructionLines?: SchemeConstructionLine[];
 }
 
 export type HydraulicState = {
@@ -484,6 +522,9 @@ export type HydraulicState = {
   /** Phase 6.6.1 — dimension-line entities. Optional so legacy
    *  projects without drafting aids load cleanly. */
   dimensions?: SchemeDimension[];
+  /** Phase 6.6.2 — construction-line entities. Optional so legacy
+   *  projects without drafting aids load cleanly. */
+  constructionLines?: SchemeConstructionLine[];
 };
 
 /** Default state for a fresh project. */

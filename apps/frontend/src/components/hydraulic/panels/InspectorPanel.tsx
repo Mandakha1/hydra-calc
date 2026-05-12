@@ -8,7 +8,17 @@ import {
   resolveDimensionEndpoints,
   computeDimensionLabel,
 } from "../scheme/dimensions";
-import type { BuildingEnvelope, EnvelopeSurface, SchemeDimension } from "../hydraulicTypes";
+import {
+  updateConstructionLine,
+  removeConstructionLine,
+} from "../scheme/constructionLineApplier";
+import { constructionLineLength } from "../scheme/constructionLines";
+import type {
+  BuildingEnvelope,
+  EnvelopeSurface,
+  SchemeDimension,
+  SchemeConstructionLine,
+} from "../hydraulicTypes";
 
 export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   const selection = useHydraulicStore((s) => s.selection);
@@ -16,6 +26,7 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   const pipes = useHydraulicStore((s) => s.pipes);
   const settings = useHydraulicStore((s) => s.settings);
   const dimensions = useHydraulicStore((s) => s.dimensions);
+  const constructionLines = useHydraulicStore((s) => s.constructionLines);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
@@ -116,6 +127,82 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             onClick={() => removeDimension(dim.id)}
           >
             Хэмжээсийг устгах
+          </button>
+        )}
+      </aside>
+    );
+  }
+
+  // Phase 6.6.2 — construction-line inspector branch.
+  if (selection.kind === "constructionLine") {
+    const cl = (constructionLines ?? []).find(
+      (c: SchemeConstructionLine) => c.id === selection.id,
+    );
+    if (!cl) return null;
+    const length_m = constructionLineLength(cl);
+    return (
+      <aside style={sidebarStyle}>
+        <h3>Туслах шугам</h3>
+        <Field label={`Урт (${length_m.toFixed(2)}м)`}>
+          <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>
+            ({cl.from.x.toFixed(0)}, {cl.from.y.toFixed(0)}) → ({cl.to.x.toFixed(0)}, {cl.to.y.toFixed(0)})
+          </div>
+        </Field>
+        <Field label="Нэр (axis, ось)">
+          <input
+            type="text"
+            placeholder="жишээ нь: А-А, Х-Х"
+            value={cl.label ?? ""}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateConstructionLine(cl.id, { label: e.target.value || undefined })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Шугамын төрөл">
+          <select
+            value={cl.style ?? "dashed"}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateConstructionLine(cl.id, {
+                style: e.target.value as SchemeConstructionLine["style"],
+              })
+            }
+            style={inputStyle}
+          >
+            <option value="dashed">Тасархай (dashed)</option>
+            <option value="solid">Бүхэл (solid)</option>
+            <option value="dotted">Цэгчилсэн (dotted)</option>
+          </select>
+        </Field>
+        <Field label="Давхрага">
+          <select
+            value={cl.layerKey ?? "C"}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateConstructionLine(cl.id, {
+                layerKey: e.target.value as "D" | "C",
+              })
+            }
+            style={inputStyle}
+          >
+            <option value="C">C — Туслах шугам</option>
+            <option value="D">D — Хэмжээс / Текст</option>
+          </select>
+        </Field>
+        {!readOnly && (
+          <button
+            style={{
+              ...inputStyle,
+              color: "var(--danger)",
+              borderColor: "var(--danger)",
+              marginTop: 8,
+              cursor: "pointer",
+            }}
+            onClick={() => removeConstructionLine(cl.id)}
+          >
+            Туслах шугамыг устгах
           </button>
         )}
       </aside>
