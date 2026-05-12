@@ -1,0 +1,62 @@
+# Phase 0 quality gate — runs on every push and pull request.
+#
+# Sequence (each step must pass or the workflow fails):
+#   1. pnpm install         — clean dependency resolution
+#   2. pnpm typecheck       — TypeScript strict on all 3 workspaces
+#   3. pnpm lint            — zero lint errors (warnings allowed for now)
+#   4. pnpm test            — backend + frontend test suites
+#   5. pnpm build           — production bundle must build without warnings
+#
+# A red check on this workflow blocks PRs from merging into main once branch
+# protection is configured at github.com/Mandakha1/hydra-calc/settings/branches.
+
+name: Quality gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel any in-flight run when a new commit lands on the same ref — saves CI
+# minutes on rapid pushes.
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck • Lint • Test • Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Set up Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck — packages/shared, apps/backend, apps/frontend
+        run: pnpm typecheck
+
+      - name: Lint — must be zero errors
+        run: pnpm lint
+
+      - name: Test — Vitest in backend + frontend
+        run: pnpm test
+
+      - name: Build — production bundles
+        run: pnpm build
