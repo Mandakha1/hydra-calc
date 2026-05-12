@@ -119,7 +119,7 @@ export function sizeElevator(input: ElevatorInput): ElevatorResult {
   const D_throat = Math.floor(D_throat_raw * 2) / 2;
 
   const D_nozzle_raw = D_throat / Math.sqrt(1 + 0.78 * u + 0.6 * u * u);
-  let D_nozzle = Math.max(3, Math.floor(D_nozzle_raw * 10) / 10);
+  const D_nozzle = Math.max(3, Math.floor(D_nozzle_raw * 10) / 10);
 
   let warning: string | undefined;
   if (u < 1.5) warning = "u < 1.5 — холих коэффициент бага, элеватор оронд насос үзнэ үү";

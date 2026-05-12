@@ -46,7 +46,7 @@ export function FailurePanel() {
   if (!results) {
     return (
       <div style={{ padding: "2rem", color: "var(--bp-text-3)", textAlign: "center" }}>
-        Тооцоолол хийгдээгүй. Эхлээд "⚙ Тооцоолох" дарж сүлжээний baseline тооцоог хийнэ үү.
+        Тооцоолол хийгдээгүй. Эхлээд &quot;⚙ Тооцоолох&quot; дарж сүлжээний baseline тооцоог хийнэ үү.
       </div>
     );
   }

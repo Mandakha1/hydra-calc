@@ -22,9 +22,10 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   };
 }
 
-// SVGElement.getBBox isn't implemented in jsdom — stub for the hydraulic canvas.
-if (typeof SVGElement !== "undefined" && !SVGElement.prototype.getBBox) {
-  SVGElement.prototype.getBBox = function () {
+// SVGGraphicsElement.getBBox isn't implemented in jsdom — stub for the hydraulic canvas.
+if (typeof SVGGraphicsElement !== "undefined" && !SVGGraphicsElement.prototype.getBBox) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (SVGGraphicsElement.prototype as any).getBBox = function () {
     return { x: 0, y: 0, width: 0, height: 0 } as DOMRect;
   };
 }

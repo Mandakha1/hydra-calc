@@ -200,7 +200,7 @@ export function Home() {
 
       {/* FEATURES bento */}
       <section style={{ padding: "72px 48px" }}>
-        <div className="hdr-mono" style={{ marginBottom: 8 }}>// 01 — Бүтээгдэхүүн</div>
+        <div className="hdr-mono" style={{ marginBottom: 8 }}>{"// 01 — Бүтээгдэхүүн"}</div>
         <h2 style={h2}>
           Инженерийн график бус,<br />
           <span style={{ color: "var(--bp-text-3)" }}>инженерийн</span> хэрэгсэл.
@@ -251,7 +251,7 @@ export function Home() {
 
       {/* Pricing */}
       <section style={{ padding: "32px 48px 72px", borderTop: "1px solid var(--bp-line)" }}>
-        <div className="hdr-mono" style={{ marginBottom: 8 }}>// 02 — Үнийн санал</div>
+        <div className="hdr-mono" style={{ marginBottom: 8 }}>{"// 02 — Үнийн санал"}</div>
         <h2 style={h2}>Инженер бүрд хүртээмжтэй.</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginTop: 40 }}>
           <Plan name="Үнэгүй" price="₮0" period="/14 хоног" features={["1 идэвхтэй төсөл", "10 сегмент хүртэл", "Excel экспорт"]} />

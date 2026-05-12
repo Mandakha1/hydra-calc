@@ -158,7 +158,7 @@ export function ImportDxf() {
                 </Button>
               </div>
               <p style={{ marginTop: "1rem", fontSize: 11, color: "var(--bp-text-3)" }}>
-                💡 DWG файлыг DXF болгох хэрэгтэй бол: AutoCAD → "Save As" → AutoCAD 2018 DXF (*.dxf)
+                💡 DWG файлыг DXF болгох хэрэгтэй бол: AutoCAD → &quot;Save As&quot; → AutoCAD 2018 DXF (*.dxf)
                 <br />
                 Эсвэл үнэгүй ODA File Converter ашиглан хөрвүүл (winget install ODA.ODAFileConverter).
               </p>

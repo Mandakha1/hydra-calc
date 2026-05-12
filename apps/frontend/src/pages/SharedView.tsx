@@ -61,7 +61,7 @@ export function SharedView() {
           color: "var(--accent)",
         }}
       >
-        📖 Зөвхөн харах горим — "{data.project.name}"
+        📖 Зөвхөн харах горим — &quot;{data.project.name}&quot;
       </div>
       <div style={{ height: "calc(100vh - 58px - 34px)" }}>
         <Suspense fallback={<div style={{ padding: "2rem" }}>Ачааллаж байна...</div>}>
