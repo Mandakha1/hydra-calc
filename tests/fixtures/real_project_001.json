@@ -1,0 +1,25 @@
+{
+  "_placeholder": true,
+  "_status": "awaiting fixture from chat",
+  "_note": "User will paste the heating_project_extracted.json contents (extracted from ГК-23/02 real project paperwork). When that content lands, replace this entire file with the JSON payload and remove the _placeholder/_status/_note keys.",
+  "_expected_shape": {
+    "project": {
+      "name": "string — display name",
+      "standard": "string — БНбД 41-01-2019 etc.",
+      "source": "string — paperwork reference (e.g. ГК-23/02)"
+    },
+    "nodes": "array of { id, kind, label, geo?: {lat, lon}, x?, y?, heatLoad_w?, requiredPressure_mpa?, floors?, width_m?, height_m?, ... }",
+    "pipes": "array of { id, fromNodeId, toNodeId, dn, length_m, materialKey, circuit }",
+    "expected_results": {
+      "_optional": "any field present here will be diffed against the calc engine output; missing fields are tolerated",
+      "total_load_kW": "number — sum of all consumer heatLoad_w / 1000",
+      "max_velocity_m_s": "number",
+      "max_headloss_pa_per_m": "number",
+      "min_consumer_pressure_mpa": "number",
+      "pump": { "Q_m3h": "number", "H_m": "number" },
+      "per_section_flow_m3h": {
+        "_keyed_by_pipe_id": "Q_m3h — for sections that have a printed field-test result"
+      }
+    }
+  }
+}
