@@ -75,6 +75,12 @@ export function SchemeEditor({ readOnly }: Props) {
   const removePipe = useHydraulicStore((s) => s.removePipe);
   const updateSettings = useHydraulicStore((s) => s.updateSettings);
   const select = useHydraulicStore((s) => s.select);
+  // Phase 6.5.1 — multi-selection actions
+  const selectToggle = useHydraulicStore((s) => s.selectToggle);
+  const selectExtend = useHydraulicStore((s) => s.selectExtend);
+  const selectMany = useHydraulicStore((s) => s.selectMany);
+  const clearSelection = useHydraulicStore((s) => s.clearSelection);
+  const multiSelection = useHydraulicStore((s) => s.multiSelection);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<Mode>("select");
@@ -138,6 +144,14 @@ export function SchemeEditor({ readOnly }: Props) {
    *  with it). We can't use Leaflet's built-in drag because the SVG sits on
    *  top — instead we capture the gesture here and call map.panBy(). */
   const [mapPanDrag, setMapPanDrag] = useState<{ startX: number; startY: number } | null>(null);
+  /** Phase 6.5.1 — Rubber-band drag state. Records SVG-space start
+   *  point (so it survives pan/zoom) + the moving end point. When
+   *  defined, the canvas renders a translucent rectangle. On
+   *  mouseup we hit-test all nodes/pipes and populate multiSelection. */
+  const [rubberBand, setRubberBand] = useState<{
+    startSvg: Point;
+    endSvg: Point;
+  } | null>(null);
   /** OSM Overpass API loading flag — shows a spinner while fetching building. */
   const [osmLoading, setOsmLoading] = useState(false);
   /** Stable reference for the onMapView callback — passing an arrow function
@@ -593,6 +607,18 @@ export function SchemeEditor({ readOnly }: Props) {
           setMode("select");
         }
       } else {
+        // Phase 6.5.1 — modifier-click semantics:
+        //   - Ctrl/Cmd+click → toggle in multi-selection (no drag)
+        //   - Shift+click    → extend multi-selection (no drag)
+        //   - Plain click    → single-select + start drag (legacy)
+        if (e.ctrlKey || e.metaKey) {
+          selectToggle({ kind: "node", id: node.id });
+          return;
+        }
+        if (e.shiftKey) {
+          selectExtend({ kind: "node", id: node.id });
+          return;
+        }
         select({ kind: "node", id: node.id });
         const pt = toSvg(e);
         setDrag({ nodeId: node.id, offX: pt.x - node.x, offY: pt.y - node.y });
@@ -602,15 +628,24 @@ export function SchemeEditor({ readOnly }: Props) {
     // it in deps, the closure captures the value at the time the user clicked
     // the FROM node — if they then typed in the L field BEFORE clicking the TO
     // node, the typed length was silently ignored. This was a real bug.
-    [mode, pipeFrom, nodes, addPipe, toSvg, select, readOnly, pendingCircuit, pipeLengthInput],
+    [mode, pipeFrom, nodes, addPipe, toSvg, select, selectToggle, selectExtend, readOnly, pendingCircuit, pipeLengthInput],
   );
 
   const onPipeClick = useCallback(
     (e: MouseEvent, pipe: SchemePipe) => {
       e.stopPropagation();
+      // Phase 6.5.1 — modifier-click on pipes mirrors node behavior.
+      if (e.ctrlKey || e.metaKey) {
+        selectToggle({ kind: "pipe", id: pipe.id });
+        return;
+      }
+      if (e.shiftKey) {
+        selectExtend({ kind: "pipe", id: pipe.id });
+        return;
+      }
       select({ kind: "pipe", id: pipe.id });
     },
-    [select],
+    [select, selectToggle, selectExtend],
   );
 
   /** Add a waypoint at the click position — bends the pipe through that point. */
@@ -677,6 +712,12 @@ export function SchemeEditor({ readOnly }: Props) {
     (e: MouseEvent<SVGSVGElement>) => {
       const pt = toSvg(e);
       setMousePos(pt);
+      // Phase 6.5.1 — rubber-band drag: update the end point so the
+      // visible rectangle follows the cursor live.
+      if (rubberBand) {
+        setRubberBand({ startSvg: rubberBand.startSvg, endSvg: pt });
+        return;
+      }
       // Map-pan drag — translate the underlying Leaflet map so geo-anchored
       // nodes track with it. Update startX/startY so each event represents a delta.
       if (mapPanDrag && leafletMapRef.current) {
@@ -709,28 +750,74 @@ export function SchemeEditor({ readOnly }: Props) {
         }
       }
     },
-    [drag, toSvg, updateNode, snap, mapAnchored, showMap, svgToLatLon, waypointDrag, pipes, updatePipe, mapPanDrag],
+    [drag, toSvg, updateNode, snap, mapAnchored, showMap, svgToLatLon, waypointDrag, pipes, updatePipe, mapPanDrag, rubberBand],
   );
 
   /** Mouse-down on the SVG. If user clicked empty canvas while map is shown,
    *  start a map-pan drag (we route this through Leaflet's panBy because the
    *  SVG sits on top and would normally swallow the drag). */
   const onCanvasMouseDown = useCallback((e: MouseEvent<SVGSVGElement>) => {
-    if (!showMap || !leafletMapRef.current) return;
+    if (readOnly) return;
     if (mode !== "select") return;
     const target = e.target as Element;
     const tag = target.tagName.toLowerCase();
     // Empty area = the SVG root or the background grid rect (which has no aria-label parent).
     const isEmpty = tag === "svg" || (tag === "rect" && !target.closest("g[aria-label]"));
     if (!isEmpty) return;
-    setMapPanDrag({ startX: e.clientX, startY: e.clientY });
-  }, [showMap, mode]);
+    // Phase 6.5.1 — empty-canvas drag routing:
+    //   - Map visible + no Shift  → existing map-pan
+    //   - Map visible + Shift     → rubber-band (override)
+    //   - No map                  → rubber-band always
+    const useRubberBand = !showMap || e.shiftKey;
+    if (useRubberBand) {
+      const svgPt = toSvg(e);
+      setRubberBand({ startSvg: svgPt, endSvg: svgPt });
+    } else if (showMap && leafletMapRef.current) {
+      setMapPanDrag({ startX: e.clientX, startY: e.clientY });
+    }
+  }, [readOnly, showMap, mode, toSvg]);
 
   const onMouseUp = useCallback(() => {
     setDrag(null);
     setWaypointDrag(null);
     setMapPanDrag(null);
-  }, []);
+    // Phase 6.5.1 — Resolve rubber-band on mouseup: hit-test all
+    // visible nodes + pipes, populate multiSelection.
+    if (rubberBand) {
+      const minX = Math.min(rubberBand.startSvg.x, rubberBand.endSvg.x);
+      const maxX = Math.max(rubberBand.startSvg.x, rubberBand.endSvg.x);
+      const minY = Math.min(rubberBand.startSvg.y, rubberBand.endSvg.y);
+      const maxY = Math.max(rubberBand.startSvg.y, rubberBand.endSvg.y);
+      // Distinguish "tiny click" (< 4 px diag) from a real drag.
+      // A click without drag is a deselect.
+      const diag = Math.hypot(maxX - minX, maxY - minY);
+      if (diag < 4) {
+        clearSelection();
+        setRubberBand(null);
+        return;
+      }
+      // Node hit-test: node centre inside rect (using displayPos).
+      const hitNodeIds: string[] = [];
+      for (const n of nodes) {
+        const dp = displayPos(n);
+        if (dp.x >= minX && dp.x <= maxX && dp.y >= minY && dp.y <= maxY) {
+          hitNodeIds.push(n.id);
+        }
+      }
+      // Pipe hit-test: BOTH endpoints inside rect (rather than line-
+      // intersection — engineering "lasso" semantics where the pipe
+      // is selected when its connection is fully inside the box).
+      const hitPipeIds: string[] = [];
+      const nodeIdSet = new Set(hitNodeIds);
+      for (const p of pipes) {
+        if (nodeIdSet.has(p.fromNodeId) && nodeIdSet.has(p.toNodeId)) {
+          hitPipeIds.push(p.id);
+        }
+      }
+      selectMany({ nodeIds: hitNodeIds, pipeIds: hitPipeIds });
+      setRubberBand(null);
+    }
+  }, [rubberBand, nodes, pipes, displayPos, selectMany, clearSelection]);
 
   const onWheel = useCallback((e: WheelEvent<SVGSVGElement>) => {
     if (Math.abs(e.deltaY) < 1) return;
@@ -757,9 +844,31 @@ export function SchemeEditor({ readOnly }: Props) {
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "select") return;
       if (e.key === "Delete" || e.key === "Backspace") {
+        // Phase 6.5.1 — Delete now removes ALL multi-selected objects
+        // in one shot, not just the legacy single-target. Engineers
+        // selecting 5 АОС-ы blocks and pressing Del expect all 5 gone.
+        const ms = useHydraulicStore.getState().multiSelection;
+        const hasMulti = ms.nodeIds.length + ms.pipeIds.length > 1;
+        if (hasMulti) {
+          // Snapshot first — removeNode cascades to pipes touching it
+          // and would mutate ms mid-iteration.
+          const pipeIds = [...ms.pipeIds];
+          const nodeIds = [...ms.nodeIds];
+          for (const pid of pipeIds) useHydraulicStore.getState().removePipe(pid);
+          for (const nid of nodeIds) useHydraulicStore.getState().removeNode(nid);
+          useHydraulicStore.getState().clearSelection();
+          return;
+        }
         if (!selection) return;
         if (selection.kind === "node") useHydraulicStore.getState().removeNode(selection.id);
         else useHydraulicStore.getState().removePipe(selection.id);
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+        // Phase 6.5.1 — Ctrl+A: select-all on the current network.
+        e.preventDefault();
+        useHydraulicStore.getState().selectMany({
+          nodeIds: useHydraulicStore.getState().nodes.map((n) => n.id),
+          pipeIds: useHydraulicStore.getState().pipes.map((p) => p.id),
+        });
       } else if (e.key === "Escape") {
         setMode("select");
         setShowPalette(null);
@@ -768,7 +877,8 @@ export function SchemeEditor({ readOnly }: Props) {
         setPendingFootprint(null);
         setMeasurePoints([]);
         setContextMenu(null);
-        setContextMenu(null);
+        // Phase 6.5.1 — Esc also clears multi-selection.
+        useHydraulicStore.getState().clearSelection();
       } else if (e.key === "Enter" && mode === "drawBuilding" && polygon.length >= 3) {
         setPendingFootprint([...polygon]);
         setPolygon([]);
@@ -1393,6 +1503,9 @@ export function SchemeEditor({ readOnly }: Props) {
                 return "hydra-pipe-flow";
               })();
               const violationClass = (isBad && animateErrors) ? "hydra-violation" : "";
+              // Phase 6.5.1 — multi-select dashed gold overlay shows
+              // whenever the pipe is in the multi-selection set.
+              const isPipeMultiSelected = multiSelection.pipeIds.includes(p.id);
               return (
                 <g key={p.id} className={violationClass}>
                   {/* Pickable hit area — wider than the visible stroke, transparent */}
@@ -1414,6 +1527,20 @@ export function SchemeEditor({ readOnly }: Props) {
                   />
                   {/* Underlay — static colored stroke */}
                   <path d={pathD} stroke={stroke} strokeWidth={sw} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray={circuit.dash} opacity={flowClass ? 0.45 : 1} pointerEvents="none" />
+                  {/* Phase 6.5.1 — multi-select dashed gold overlay along the pipe. */}
+                  {isPipeMultiSelected && (
+                    <path
+                      d={pathD}
+                      stroke="#FFB300"
+                      strokeWidth={sw + 1.5}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeDasharray="6 3"
+                      opacity={0.85}
+                      pointerEvents="none"
+                    />
+                  )}
                   {/* Animated flow overlay — only when results exist + flow > 0.1 m/s */}
                   {flowClass && (
                     <path
@@ -1550,6 +1677,11 @@ export function SchemeEditor({ readOnly }: Props) {
             {/* Point nodes (non-footprint) */}
             {nodes.filter((n) => !n.footprint || n.footprint.length < 3).map((n) => {
               const isSelected = selection?.kind === "node" && selection.id === n.id;
+              // Phase 6.5.1 — multi-select gold ring shows when the
+              // node is part of the multi-selection set. The legacy
+              // single-`isSelected` accent still drives the main
+              // color change (so InspectorPanel target is obvious).
+              const isMultiSelected = multiSelection.nodeIds.includes(n.id);
               const isPipeTarget = mode === "addPipe" && pipeFrom === n.id;
               const isBad = violatingNodeIds.has(n.id);
               const def = getNodeKind(n.kind) ?? NODE_KINDS[0]!;
@@ -1621,6 +1753,33 @@ export function SchemeEditor({ readOnly }: Props) {
                       <circle r={Math.max(12, isBuilding ? Math.min(wpx, hpx) / 2 : 12)} className="hydra-violation-ring" style={{ animationDelay: "0.6s" }} />
                     </>
                   )}
+                  {/* Phase 6.5.1 — multi-select gold ring overlay.
+                      Drawn under the symbol so it appears as a halo
+                      framing without obscuring the engineering icon. */}
+                  {isMultiSelected && (
+                    isBuilding ? (
+                      <rect
+                        x={-wpx / 2 - 4}
+                        y={-hpx / 2 - 4}
+                        width={wpx + 8}
+                        height={hpx + 8}
+                        fill="none"
+                        stroke="#FFB300"
+                        strokeWidth={2}
+                        strokeDasharray="4 2"
+                        pointerEvents="none"
+                      />
+                    ) : (
+                      <circle
+                        r={r + 4}
+                        fill="none"
+                        stroke="#FFB300"
+                        strokeWidth={2}
+                        strokeDasharray="3 2"
+                        pointerEvents="none"
+                      />
+                    )
+                  )}
                   {isBuilding ? (
                     <BuildingPlanShape
                       width={wpx}
@@ -1677,6 +1836,29 @@ export function SchemeEditor({ readOnly }: Props) {
                 </g>
               );
             })}
+            {/* Phase 6.5.1 — rubber-band selection rectangle, drawn
+                inside the zoom/pan group so it tracks the underlying
+                coordinates. Translucent gold fill + dashed gold border. */}
+            {rubberBand && (() => {
+              const x = Math.min(rubberBand.startSvg.x, rubberBand.endSvg.x);
+              const y = Math.min(rubberBand.startSvg.y, rubberBand.endSvg.y);
+              const w = Math.abs(rubberBand.endSvg.x - rubberBand.startSvg.x);
+              const h = Math.abs(rubberBand.endSvg.y - rubberBand.startSvg.y);
+              return (
+                <rect
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  fill="#FFB300"
+                  fillOpacity={0.08}
+                  stroke="#FFB300"
+                  strokeWidth={1.2}
+                  strokeDasharray="4 3"
+                  pointerEvents="none"
+                />
+              );
+            })()}
           </g>
         </g>
 
@@ -1688,6 +1870,35 @@ export function SchemeEditor({ readOnly }: Props) {
           </text>
         )}
       </svg>
+
+      {/* Phase 6.5.1 — Multi-selection counter HUD. Shows when 2+
+          objects selected (single-select is already obvious from the
+          accent colour + InspectorPanel). Bottom-left to stay clear
+          of the bottom-right results HUD. */}
+      {(multiSelection.nodeIds.length + multiSelection.pipeIds.length) > 1 && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 12,
+            left: 12,
+            background: "var(--bg-elev, #2a2a2a)",
+            border: "1px solid #FFB300",
+            color: "#FFB300",
+            padding: "0.4rem 0.7rem",
+            borderRadius: 8,
+            fontSize: 12,
+            fontFamily: "var(--font-mono, monospace)",
+            zIndex: 5,
+            pointerEvents: "none",
+          }}
+          data-testid="selection-counter"
+        >
+          {multiSelection.nodeIds.length > 0 && `${multiSelection.nodeIds.length} цэг`}
+          {multiSelection.nodeIds.length > 0 && multiSelection.pipeIds.length > 0 && ", "}
+          {multiSelection.pipeIds.length > 0 && `${multiSelection.pipeIds.length} хоолой`}
+          {" сонгогдсон"}
+        </div>
+      )}
 
       {/* HUD */}
       {results && (
@@ -1791,6 +2002,23 @@ export function SchemeEditor({ readOnly }: Props) {
             updatePipe(target.id, { waypoints: [] });
             setContextMenu(null);
           }}
+          groupSize={multiSelection.nodeIds.length + multiSelection.pipeIds.length}
+          onDeleteGroup={() => {
+            const ms = useHydraulicStore.getState().multiSelection;
+            const total = ms.nodeIds.length + ms.pipeIds.length;
+            if (total < 2) return;
+            if (!window.confirm(`${total} элементийг устгах уу?`)) return;
+            const pipeIds = [...ms.pipeIds];
+            const nodeIds = [...ms.nodeIds];
+            for (const pid of pipeIds) removePipe(pid);
+            for (const nid of nodeIds) removeNode(nid);
+            clearSelection();
+            setContextMenu(null);
+          }}
+          onDeselectAll={() => {
+            clearSelection();
+            setContextMenu(null);
+          }}
           isPipe={contextMenu.target.kind === "pipe"}
           hasWaypoints={
             contextMenu.target.kind === "pipe" &&
@@ -1809,6 +2037,7 @@ function ContextMenu({
   onAddWaypoint, onClearWaypoints,
   onClose,
   isPipe, hasWaypoints,
+  groupSize, onDeleteGroup, onDeselectAll,
 }: {
   x: number; y: number;
   target: { kind: "node" | "pipe"; id: string };
@@ -1820,6 +2049,11 @@ function ContextMenu({
   onClose: () => void;
   isPipe: boolean;
   hasWaypoints: boolean;
+  /** Phase 6.5.1 — total count in current multi-selection. When > 1,
+   *  group actions (delete-all / deselect-all) appear at the top. */
+  groupSize: number;
+  onDeleteGroup: () => void;
+  onDeselectAll: () => void;
 }) {
   // Click-outside dismissal
   useEffect(() => {
@@ -1846,8 +2080,22 @@ function ContextMenu({
       }}
     >
       <div style={{ padding: "6px 10px", fontSize: 11, color: "var(--bp-text-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-        {target.kind === "node" ? "Зангилаа" : "Хоолой"}
+        {groupSize > 1
+          ? `Группдээ ${groupSize} элемент`
+          : target.kind === "node" ? "Зангилаа" : "Хоолой"}
       </div>
+      {/* Phase 6.5.1 — group operations appear FIRST when 2+ selected. */}
+      {groupSize > 1 && (
+        <>
+          <CtxBtn icon="🗑" onClick={onDeleteGroup} danger kbd="Del">
+            Бүгдийг устгах ({groupSize})
+          </CtxBtn>
+          <CtxBtn icon="✕" onClick={onDeselectAll} kbd="Esc">
+            Сонголтоо цуцлах
+          </CtxBtn>
+          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
+        </>
+      )}
       {!isPipe && (
         <CtxBtn icon="✏" onClick={onRename}>Нэр өөрчлөх</CtxBtn>
       )}
