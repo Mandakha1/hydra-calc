@@ -265,8 +265,33 @@ export const PIPE_DB_PEHD: PipeSize[] = [
   { dn: 200, od_mm: 200, wall_mm: 18.2, id_mm: 163.6, mass_kg_per_m: 10.4 },
 ];
 
+/**
+ * Steel V-group (ГОСТ 10704-91 group V, thin-wall electric-welded) —
+ * the size convention used by Mongolian residential project paperwork
+ * (e.g. ГК-23/02 Songinokhairkhan). In V-group, DN equals the OUTER
+ * diameter and wall is a uniform 2.5 mm up through DN 100; ID = DN − 5 mm.
+ * That contrasts with the standard GOST table where DN is a nominal
+ * label and outer/wall vary (DN65 → OD 76 / ID 68, etc).
+ *
+ * If a project explicitly cites "V-group" or carries OD-uniform sizes,
+ * set ProjectSettings.primaryMaterialCategory = "steel_v_group" so the
+ * solver picks IDs from this table instead of PIPE_DB_STEEL.
+ */
+export const PIPE_DB_STEEL_V_GROUP: PipeSize[] = [
+  { dn: 20, od_mm: 20, wall_mm: 2.5, id_mm: 15, mass_kg_per_m: 1.10 },
+  { dn: 25, od_mm: 25, wall_mm: 2.5, id_mm: 20, mass_kg_per_m: 1.39 },
+  { dn: 32, od_mm: 32, wall_mm: 2.5, id_mm: 27, mass_kg_per_m: 1.82 },
+  { dn: 40, od_mm: 40, wall_mm: 2.5, id_mm: 35, mass_kg_per_m: 2.31 },
+  { dn: 50, od_mm: 50, wall_mm: 2.5, id_mm: 45, mass_kg_per_m: 2.92 },
+  { dn: 65, od_mm: 65, wall_mm: 2.5, id_mm: 60, mass_kg_per_m: 3.85 },
+  { dn: 80, od_mm: 80, wall_mm: 2.5, id_mm: 75, mass_kg_per_m: 4.78 },
+  { dn: 100, od_mm: 100, wall_mm: 2.5, id_mm: 95, mass_kg_per_m: 6.01 },
+  { dn: 150, od_mm: 150, wall_mm: 3.0, id_mm: 144, mass_kg_per_m: 10.88 },
+];
+
 export const PIPE_DB = {
   steel: PIPE_DB_STEEL,
+  steel_v_group: PIPE_DB_STEEL_V_GROUP,
   ppr: PIPE_DB_PPR,
   pehd: PIPE_DB_PEHD,
 } as const;

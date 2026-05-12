@@ -58,6 +58,7 @@ describe(`Real-world fixture — ${fixture.project_meta.project_id} (${fixture.p
 
     for (const consumer of fixture.consumers) {
       const exp = expected[consumer.id];
+      if (!exp) continue; // skip consumers missing from the expected map (none in this fixture)
       it(`${consumer.id}: ${consumer.load_total_W} W → G_theoretical = ${exp.value} kg/s (±${exp.tolerance_pct}%)`, () => {
         const G = massFlowFromHeat(consumer.load_total_W);
         const tol = exp.tolerance_pct / 100;

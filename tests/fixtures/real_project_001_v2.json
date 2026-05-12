@@ -1,0 +1,174 @@
+{
+  "_meta": {
+    "format_version": "2.0",
+    "generated_by": "scripts/build_fixture.py",
+    "purpose": "Expanded GK-23/02 fixture for Phase 4 full-network validation. Topology approximates real project with simplifications. Hydraulic values computed with Darcy-Weisbach (Colebrook-White) and should match program output within numerical tolerance.",
+    "constants": {
+      "cp_J_kgK": 4187.0,
+      "rho_kg_m3_at_82_5C": 970.6,
+      "mu_Pa_s_at_82_5C": 0.000345,
+      "roughness_m": 0.0001,
+      "g_m_s2": 9.81
+    }
+  },
+  "project_meta": {
+    "name": "Songinokhairkhan 34-r khoroo - amiin oron suuts heating connection",
+    "project_id": "GK-23/02",
+    "date": "2023-01",
+    "location": "Ulaanbaatar, Songinokhairkhan district, 34th khoroo",
+    "designer": "B.Nasantogtokh",
+    "checker": "B.Tsedendorj",
+    "company": "GAN-CAD LLC",
+    "standards": [
+      "BNbD 23-01-09",
+      "BNbD 41-02-13",
+      "BNbD 41-04-13",
+      "BNbD 12-03-04"
+    ],
+    "pipe_standard": "GOST 10704-91 V-group ST20 steel"
+  },
+  "climate": {
+    "design_outdoor_temp_C": -39,
+    "heating_season_avg_temp_C": -10.1,
+    "heating_season_days": 240
+  },
+  "temperature_graph": {
+    "supply_C": 95.0,
+    "return_C": 70.0,
+    "dT_C": 25.0
+  },
+  "nodes": [
+    { "id": "UDDT-8", "type": "source", "x": 0, "y": 0, "elevation_m": 1269.0, "supply_head_m": 50.0, "return_head_m": 20.0 },
+    { "id": "UHT-1", "type": "fixed_support", "x": 70, "y": 0, "elevation_m": 1268.8 },
+    { "id": "DH-1", "type": "well", "x": 120, "y": 0, "elevation_m": 1268.6, "dimensions_mm": { "width": 2500, "length": 2500, "depth": 2000 } },
+    { "id": "AOS-1", "type": "consumer", "x": 120, "y": 30, "elevation_m": 1269.5, "load_W": 15400, "load_kcal_h": 13241, "building_height_m": 6, "has_hw": false },
+    { "id": "UHT-2", "type": "fixed_support", "x": 170, "y": 0, "elevation_m": 1268.5 },
+    { "id": "EO-1", "type": "elbow", "x": 200, "y": 0, "elevation_m": 1268.4, "angle_deg": 104 },
+    { "id": "K-1", "type": "compensator", "x": 225, "y": 0, "elevation_m": 1268.4, "pretension_mm": { "supply": 33.2, "return_": 21.7 } },
+    { "id": "DH-2", "type": "well", "x": 255, "y": 0, "elevation_m": 1268.6, "dimensions_mm": { "width": 2000, "length": 2000, "depth": 2000 } },
+    { "id": "AOS-2", "type": "consumer", "x": 255, "y": 30, "elevation_m": 1269.0, "load_W": 13400, "load_kcal_h": 11522, "building_height_m": 6, "has_hw": false },
+    { "id": "UHT-3", "type": "fixed_support", "x": 295, "y": 0, "elevation_m": 1268.8 },
+    { "id": "AOS-3", "type": "consumer", "x": 295, "y": 30, "elevation_m": 1269.3, "load_W": 20120, "load_kcal_h": 17300, "building_height_m": 6, "has_hw": true, "load_heating_W": 15520, "load_hw_W": 4600 },
+    { "id": "EO-2", "type": "elbow", "x": 335, "y": 0, "elevation_m": 1268.9, "angle_deg": 90 },
+    { "id": "DH-3", "type": "well", "x": 355, "y": 15, "elevation_m": 1269.5, "dimensions_mm": { "width": 2500, "length": 2500, "depth": 2000 } },
+    { "id": "AOS-4", "type": "consumer", "x": 355, "y": 45, "elevation_m": 1270.0, "load_W": 12600, "load_kcal_h": 10834, "building_height_m": 6, "has_hw": false },
+    { "id": "AOS-5", "type": "consumer", "x": 380, "y": 15, "elevation_m": 1270.5, "load_W": 17810, "load_kcal_h": 15313, "building_height_m": 6, "has_hw": true, "load_heating_W": 14810, "load_hw_W": 3000 }
+  ],
+  "pipes": [
+    { "id": "P001-S", "to": "UHT-1", "dn": 65, "length_m": 70, "role": "supply", "from": "UDDT-8" },
+    { "id": "P002-S", "to": "DH-1", "dn": 65, "length_m": 50, "role": "supply", "from": "UHT-1" },
+    { "id": "P003-S", "to": "AOS-1", "dn": 32, "length_m": 30, "role": "supply", "from": "DH-1" },
+    { "id": "P004-S", "to": "UHT-2", "dn": 50, "length_m": 50, "role": "supply", "from": "DH-1" },
+    { "id": "P005-S", "to": "EO-1", "dn": 50, "length_m": 30, "role": "supply", "from": "UHT-2" },
+    { "id": "P006-S", "to": "K-1", "dn": 50, "length_m": 25, "role": "supply", "from": "EO-1" },
+    { "id": "P007-S", "to": "DH-2", "dn": 50, "length_m": 30, "role": "supply", "from": "K-1" },
+    { "id": "P008-S", "to": "AOS-2", "dn": 32, "length_m": 30, "role": "supply", "from": "DH-2" },
+    { "id": "P009-S", "to": "UHT-3", "dn": 40, "length_m": 40, "role": "supply", "from": "DH-2" },
+    { "id": "P010-S", "to": "AOS-3", "dn": 32, "length_m": 30, "role": "supply", "from": "UHT-3" },
+    { "id": "P011-S", "to": "EO-2", "dn": 40, "length_m": 40, "role": "supply", "from": "UHT-3" },
+    { "id": "P012-S", "to": "DH-3", "dn": 40, "length_m": 25, "role": "supply", "from": "EO-2" },
+    { "id": "P013-S", "to": "AOS-4", "dn": 32, "length_m": 30, "role": "supply", "from": "DH-3" },
+    { "id": "P014-S", "to": "AOS-5", "dn": 32, "length_m": 25, "role": "supply", "from": "DH-3" },
+    { "id": "P001-R", "to": "UDDT-8", "dn": 65, "length_m": 70, "role": "return", "from": "UHT-1" },
+    { "id": "P002-R", "to": "UHT-1", "dn": 65, "length_m": 50, "role": "return", "from": "DH-1" },
+    { "id": "P003-R", "to": "DH-1", "dn": 32, "length_m": 30, "role": "return", "from": "AOS-1" },
+    { "id": "P004-R", "to": "DH-1", "dn": 50, "length_m": 50, "role": "return", "from": "UHT-2" },
+    { "id": "P005-R", "to": "UHT-2", "dn": 50, "length_m": 30, "role": "return", "from": "EO-1" },
+    { "id": "P006-R", "to": "EO-1", "dn": 50, "length_m": 25, "role": "return", "from": "K-1" },
+    { "id": "P007-R", "to": "K-1", "dn": 50, "length_m": 30, "role": "return", "from": "DH-2" },
+    { "id": "P008-R", "to": "DH-2", "dn": 32, "length_m": 30, "role": "return", "from": "AOS-2" },
+    { "id": "P009-R", "to": "DH-2", "dn": 40, "length_m": 40, "role": "return", "from": "UHT-3" },
+    { "id": "P010-R", "to": "UHT-3", "dn": 32, "length_m": 30, "role": "return", "from": "AOS-3" },
+    { "id": "P011-R", "to": "UHT-3", "dn": 40, "length_m": 40, "role": "return", "from": "EO-2" },
+    { "id": "P012-R", "to": "EO-2", "dn": 40, "length_m": 25, "role": "return", "from": "DH-3" },
+    { "id": "P013-R", "to": "DH-3", "dn": 32, "length_m": 30, "role": "return", "from": "AOS-4" },
+    { "id": "P014-R", "to": "DH-3", "dn": 32, "length_m": 25, "role": "return", "from": "AOS-5" },
+    { "id": "P015-HW-S", "to": "AOS-3", "role": "hw_supply", "dn": 25, "length_m": 30, "from": "DH-2" },
+    { "id": "P015-HW-R", "to": "DH-2", "role": "hw_return", "dn": 25, "length_m": 30, "from": "AOS-3" },
+    { "id": "P016-HW-S", "to": "AOS-5", "role": "hw_supply", "dn": 25, "length_m": 25, "from": "DH-3" },
+    { "id": "P016-HW-R", "to": "DH-3", "role": "hw_return", "dn": 25, "length_m": 25, "from": "AOS-5" }
+  ],
+  "expected_results_full_network": {
+    "engineering_tolerance_pct": 1.0,
+    "comment": "Values computed with same Darcy-Weisbach + Colebrook-White (50 iter, 1e-8 tol) that the program uses. Tight tolerance expected.",
+    "totals": {
+      "consumer_count": 5,
+      "pipe_count": 32,
+      "node_count": 15,
+      "total_load_W": 79330,
+      "total_mass_flow_kg_s": 0.7579,
+      "total_mass_flow_t_h": 2.728,
+      "total_volume_flow_m3_h": 2.811
+    },
+    "longest_path": {
+      "from": "UDDT-8",
+      "to_consumer": "AOS-4",
+      "supply_pipe_ids": ["P001-S", "P002-S", "P004-S", "P005-S", "P006-S", "P007-S", "P009-S", "P011-S", "P012-S", "P013-S"],
+      "total_length_m": 390,
+      "supply_pressure_loss_pa": 15696.3,
+      "supply_pressure_loss_head_m": 1.648,
+      "total_loop_friction_head_m": 3.297
+    },
+    "pump": {
+      "Q_m3_h": 2.811,
+      "H_m": 20.3,
+      "H_m_minimum_required": 18.3,
+      "tolerance_pct": 5.0
+    },
+    "consumer_pressures": {
+      "AOS-1": { "available_dp_m_minimum": 15.0, "available_dp_mpa_minimum": 0.15, "tolerance_pct": 10.0 },
+      "AOS-2": { "available_dp_m_minimum": 15.0, "available_dp_mpa_minimum": 0.15, "tolerance_pct": 10.0 },
+      "AOS-3": { "available_dp_m_minimum": 15.0, "available_dp_mpa_minimum": 0.15, "tolerance_pct": 10.0 },
+      "AOS-4": { "available_dp_m_minimum": 15.0, "available_dp_mpa_minimum": 0.15, "tolerance_pct": 10.0 },
+      "AOS-5": { "available_dp_m_minimum": 15.0, "available_dp_mpa_minimum": 0.15, "tolerance_pct": 10.0 }
+    },
+    "norm_violations_expected": {
+      "velocity_above_3_5_ms_count": 0,
+      "headloss_above_80_pa_m_count": 2,
+      "consumer_dp_below_0_15_MPa_count": 0,
+      "total_violations": 2,
+      "v_violators": [],
+      "r_violators": ["P009-S", "P009-R"]
+    },
+    "per_pipe_expected": {
+      "P001-S": { "mass_flow_t_h": 2.728, "velocity_m_s": 0.276, "headloss_per_meter_pa": 15.99, "pressure_loss_pa": 1119.5, "reynolds": 46616.0, "tolerance_pct": 0.5 },
+      "P002-S": { "mass_flow_t_h": 2.728, "velocity_m_s": 0.276, "headloss_per_meter_pa": 15.99, "pressure_loss_pa": 799.7, "reynolds": 46616.0, "tolerance_pct": 0.5 },
+      "P003-S": { "mass_flow_t_h": 0.53, "velocity_m_s": 0.265, "headloss_per_meter_pa": 41.0, "pressure_loss_pa": 1230.1, "reynolds": 20110.0, "tolerance_pct": 0.5 },
+      "P004-S": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 2278.7, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P005-S": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 1367.2, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P006-S": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 1139.4, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P007-S": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 1367.2, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P008-S": { "mass_flow_t_h": 0.461, "velocity_m_s": 0.23, "headloss_per_meter_pa": 31.59, "pressure_loss_pa": 947.7, "reynolds": 17498.0, "tolerance_pct": 0.5 },
+      "P009-S": { "mass_flow_t_h": 1.738, "velocity_m_s": 0.517, "headloss_per_meter_pa": 104.84, "pressure_loss_pa": 4193.5, "reynolds": 50901.0, "tolerance_pct": 0.5 },
+      "P010-S": { "mass_flow_t_h": 0.692, "velocity_m_s": 0.346, "headloss_per_meter_pa": 67.94, "pressure_loss_pa": 2038.2, "reynolds": 26273.0, "tolerance_pct": 0.5 },
+      "P011-S": { "mass_flow_t_h": 1.046, "velocity_m_s": 0.311, "headloss_per_meter_pa": 39.79, "pressure_loss_pa": 1591.6, "reynolds": 30633.0, "tolerance_pct": 0.5 },
+      "P012-S": { "mass_flow_t_h": 1.046, "velocity_m_s": 0.311, "headloss_per_meter_pa": 39.79, "pressure_loss_pa": 994.7, "reynolds": 30633.0, "tolerance_pct": 0.5 },
+      "P013-S": { "mass_flow_t_h": 0.433, "velocity_m_s": 0.217, "headloss_per_meter_pa": 28.16, "pressure_loss_pa": 844.8, "reynolds": 16453.0, "tolerance_pct": 0.5 },
+      "P014-S": { "mass_flow_t_h": 0.613, "velocity_m_s": 0.306, "headloss_per_meter_pa": 53.93, "pressure_loss_pa": 1348.3, "reynolds": 23257.0, "tolerance_pct": 0.5 },
+      "P001-R": { "mass_flow_t_h": 2.728, "velocity_m_s": 0.276, "headloss_per_meter_pa": 15.99, "pressure_loss_pa": 1119.5, "reynolds": 46616.0, "tolerance_pct": 0.5 },
+      "P002-R": { "mass_flow_t_h": 2.728, "velocity_m_s": 0.276, "headloss_per_meter_pa": 15.99, "pressure_loss_pa": 799.7, "reynolds": 46616.0, "tolerance_pct": 0.5 },
+      "P003-R": { "mass_flow_t_h": 0.53, "velocity_m_s": 0.265, "headloss_per_meter_pa": 41.0, "pressure_loss_pa": 1230.1, "reynolds": 20110.0, "tolerance_pct": 0.5 },
+      "P004-R": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 2278.7, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P005-R": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 1367.2, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P006-R": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 1139.4, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P007-R": { "mass_flow_t_h": 2.199, "velocity_m_s": 0.396, "headloss_per_meter_pa": 45.57, "pressure_loss_pa": 1367.2, "reynolds": 50089.0, "tolerance_pct": 0.5 },
+      "P008-R": { "mass_flow_t_h": 0.461, "velocity_m_s": 0.23, "headloss_per_meter_pa": 31.59, "pressure_loss_pa": 947.7, "reynolds": 17498.0, "tolerance_pct": 0.5 },
+      "P009-R": { "mass_flow_t_h": 1.738, "velocity_m_s": 0.517, "headloss_per_meter_pa": 104.84, "pressure_loss_pa": 4193.5, "reynolds": 50901.0, "tolerance_pct": 0.5 },
+      "P010-R": { "mass_flow_t_h": 0.692, "velocity_m_s": 0.346, "headloss_per_meter_pa": 67.94, "pressure_loss_pa": 2038.2, "reynolds": 26273.0, "tolerance_pct": 0.5 },
+      "P011-R": { "mass_flow_t_h": 1.046, "velocity_m_s": 0.311, "headloss_per_meter_pa": 39.79, "pressure_loss_pa": 1591.6, "reynolds": 30633.0, "tolerance_pct": 0.5 },
+      "P012-R": { "mass_flow_t_h": 1.046, "velocity_m_s": 0.311, "headloss_per_meter_pa": 39.79, "pressure_loss_pa": 994.7, "reynolds": 30633.0, "tolerance_pct": 0.5 },
+      "P013-R": { "mass_flow_t_h": 0.433, "velocity_m_s": 0.217, "headloss_per_meter_pa": 28.16, "pressure_loss_pa": 844.8, "reynolds": 16453.0, "tolerance_pct": 0.5 },
+      "P014-R": { "mass_flow_t_h": 0.613, "velocity_m_s": 0.306, "headloss_per_meter_pa": 53.93, "pressure_loss_pa": 1348.3, "reynolds": 23257.0, "tolerance_pct": 0.5 },
+      "P015-HW-S": { "mass_flow_t_h": 0.158, "velocity_m_s": 0.144, "headloss_per_meter_pa": 19.61, "pressure_loss_pa": 588.4, "reynolds": 8109.0, "tolerance_pct": 0.5 },
+      "P015-HW-R": { "mass_flow_t_h": 0.158, "velocity_m_s": 0.144, "headloss_per_meter_pa": 19.61, "pressure_loss_pa": 588.4, "reynolds": 8109.0, "tolerance_pct": 0.5 },
+      "P016-HW-S": { "mass_flow_t_h": 0.103, "velocity_m_s": 0.094, "headloss_per_meter_pa": 9.03, "pressure_loss_pa": 225.8, "reynolds": 5289.0, "tolerance_pct": 0.5 },
+      "P016-HW-R": { "mass_flow_t_h": 0.103, "velocity_m_s": 0.094, "headloss_per_meter_pa": 9.03, "pressure_loss_pa": 225.8, "reynolds": 5289.0, "tolerance_pct": 0.5 }
+    }
+  },
+  "norm_thresholds": {
+    "max_velocity_m_s": 3.5,
+    "max_headloss_pa_m": 80,
+    "min_consumer_dp_mpa": 0.15,
+    "max_PN_bar_supply": 16
+  }
+}

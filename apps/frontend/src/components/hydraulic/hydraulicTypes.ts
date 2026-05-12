@@ -221,8 +221,12 @@ export interface ProjectSettings {
   designOutdoorTemp_c?: number;
   /** Aimag/city key used for climate lookup. */
   city: string;
-  /** Pipe material category: "steel" | "ppr" | "pehd" — drives PIPE_DB table. */
-  primaryMaterialCategory: "steel" | "ppr" | "pehd";
+  /** Pipe material category — drives PIPE_DB table selection.
+   *  - "steel": standard ГОСТ 10704-91 (DN65 → OD 76 / ID 68, etc)
+   *  - "steel_v_group": ГОСТ 10704-91 V-group thin-wall (DN65 → OD 65 / ID 60),
+   *    the convention used by Mongolian residential project paperwork.
+   *  - "ppr" / "pehd": polymer tables. */
+  primaryMaterialCategory: "steel" | "steel_v_group" | "ppr" | "pehd";
   /** Fraction of head loss added for local losses (default 0.3). */
   localLossesFraction: number;
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
