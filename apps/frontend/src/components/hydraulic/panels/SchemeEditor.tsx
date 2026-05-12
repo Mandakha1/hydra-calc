@@ -32,6 +32,12 @@ import {
 import { BuildingDialog } from "./BuildingDialog";
 import { MapBackground, MapControls } from "./MapBackground";
 import { AddressSearch } from "./AddressSearch";
+import {
+  computeSymbolRadiusPx,
+  computePipeStrokeWidthPx,
+  resolveEntityKind,
+  MIN_SYMBOL_PX,
+} from "../scheme/symbolSize";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
 
@@ -1270,7 +1276,17 @@ export function SchemeEditor({ readOnly }: Props) {
                 if (fromR) overlayColor = colorForValue(fromR.pressureAtNode_mpa * 102, PRESSURE_BANDS);
               }
               const stroke = isBad ? "var(--danger)" : isSelected ? "var(--accent)" : (overlayColor ?? circuit.color);
-              const sw = isSelected ? 5 : 3.5;
+              // Phase 6A — pipe stroke is now DN-aware on the map.
+              // DN200 magistral renders visibly thicker than DN32
+              // service, but tight clamps prevent "highway" effect
+              // at high zoom and "vanishing line" at low zoom.
+              // Falls back to legible 3.5 px in schematic-only mode.
+              const usingMapForPipe = showMap && !!a.geo && !!b.geo && !!mapPxPerMeter && mapPxPerMeter > 0;
+              const pxPerM_for_pipe = usingMapForPipe
+                ? mapPxPerMeter! / Math.max(zoom, 0.05)
+                : null;
+              const sw_base = computePipeStrokeWidthPx(p.dn, pxPerM_for_pipe);
+              const sw = isSelected ? sw_base + 1.5 : sw_base;
 
               const points: Point[] = [{ x: aPos.x, y: aPos.y }];
               if (p.waypoints?.length) points.push(...p.waypoints);
@@ -1452,7 +1468,23 @@ export function SchemeEditor({ readOnly }: Props) {
               const cat = CATEGORIES.find((c) => c.key === def.category);
               const baseColor = cat?.color ?? "var(--accent)";
               const color = isBad ? "var(--danger)" : isPipeTarget ? "var(--warning)" : isSelected ? "var(--accent)" : baseColor;
-              const r = isSelected ? 16 : 12;
+              // Phase 6A — point-node symbol radius is zoom-aware.
+              //   * When the leaflet map is visible AND we have a
+              //     valid mapPxPerMeter, scale by the entity's real-
+              //     world size and clamp to [MIN_SYMBOL_PX, MAX].
+              //   * Otherwise (schematic mode, no map) keep the
+              //     legible MIN_SYMBOL_PX default.
+              // The scaleFactor below already accounts for the SVG
+              // group's zoom transform, so dividing by zoom keeps
+              // visual size constant regardless of canvas zoom.
+              const entityKind = resolveEntityKind(n.kind, def.category);
+              const usingMapForSymbol = showMap && !!n.geo && !!mapPxPerMeter && mapPxPerMeter > 0;
+              const pxPerM_for_symbol = usingMapForSymbol
+                ? mapPxPerMeter! / Math.max(zoom, 0.05)
+                : null;
+              const computedR = computeSymbolRadiusPx(entityKind, pxPerM_for_symbol);
+              const r = isSelected ? computedR + 4 : computedR;
+              void MIN_SYMBOL_PX; // imported for downstream test-friendly access
               const isPump = def.category === "pump";
               const isActivePump = isPump && results && !isBad;
               const showErrorRings = isBad && animateErrors;
