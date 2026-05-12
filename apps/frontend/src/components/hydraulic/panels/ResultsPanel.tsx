@@ -122,10 +122,73 @@ export function ResultsPanel() {
         <section>
           <h3>Насосын тооцоо</h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-            <Stat label="Напор H" value={`${results.pump.H_m.toFixed(2)} м`} />
+            <Stat label="Напор H (минимум)" value={`${results.pump.H_m.toFixed(2)} м`} />
             <Stat label="Дебит Q" value={`${results.pump.Q_m3h.toFixed(2)} м³/ц`} />
             <Stat label="Чадал P" value={`${results.pump.P_kW.toFixed(2)} кВт`} />
+            {results.pump.breakdown && (
+              <Stat
+                label="Зөвлөсөн H (+нөөц)"
+                value={`${(
+                  results.pump.H_m + results.pump.breakdown.safetyMargin_m
+                ).toFixed(2)} м`}
+              />
+            )}
           </div>
+
+          {results.pump.breakdown && (
+            <div
+              style={{
+                marginTop: 12,
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-soft)",
+                borderRadius: 8,
+                padding: "0.75rem 1rem",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--fg-muted)",
+                  textTransform: "uppercase",
+                  marginBottom: 8,
+                }}
+              >
+                Напорын задаргаа (БНбД 41-01-2019 §6.3)
+              </div>
+              <table style={tableStyle}>
+                <tbody>
+                  <BreakdownRow
+                    label="Магистрал шугам — үрэлтийн алдагдал"
+                    value_m={results.pump.breakdown.supplyFriction_m}
+                  />
+                  <BreakdownRow
+                    label="Эргэх шугам — үрэлтийн алдагдал"
+                    value_m={results.pump.breakdown.returnFriction_m}
+                  />
+                  <BreakdownRow
+                    label="Хэрэглэгчийн нөөц (0.15 МПа)"
+                    value_m={results.pump.breakdown.consumerReserve_m}
+                  />
+                  <BreakdownRow
+                    label="Хамгийн бага H шаардлага"
+                    value_m={results.pump.H_m}
+                    bold
+                  />
+                  <BreakdownRow
+                    label="Дизайн нөөц"
+                    value_m={results.pump.breakdown.safetyMargin_m}
+                    muted
+                  />
+                  <BreakdownRow
+                    label="Зөвлөсөн H"
+                    value_m={results.pump.H_m + results.pump.breakdown.safetyMargin_m}
+                    bold
+                    accent
+                  />
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
     </div>
@@ -177,5 +240,52 @@ function Td({ children, red }: { children: ReactNode; red?: boolean }) {
     >
       {children}
     </td>
+  );
+}
+
+/** Single row in the pump-head breakdown table.
+ *  Surfaces each component of H_m in metres of water — engineers can
+ *  reconcile the solver's answer against БНбД 41-01 §6.3 hand-calc. */
+function BreakdownRow({
+  label,
+  value_m,
+  bold,
+  muted,
+  accent,
+}: {
+  label: string;
+  value_m: number;
+  bold?: boolean;
+  muted?: boolean;
+  accent?: boolean;
+}) {
+  const color = accent ? "var(--accent)" : muted ? "var(--fg-muted)" : "var(--fg)";
+  const fontWeight = bold ? 600 : 400;
+  return (
+    <tr>
+      <td
+        style={{
+          padding: "0.3rem 0.5rem",
+          color,
+          fontWeight,
+          fontSize: 13,
+          fontFamily: "inherit",
+        }}
+      >
+        {label}
+      </td>
+      <td
+        style={{
+          padding: "0.3rem 0.5rem",
+          color,
+          fontWeight,
+          fontFamily: "var(--font-mono)",
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value_m.toFixed(2)} м
+      </td>
+    </tr>
   );
 }
