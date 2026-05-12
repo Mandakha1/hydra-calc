@@ -43,6 +43,18 @@ export function exportToExcel(state: HydraulicState, filename = "hydra-calc.xlsx
         );
       }
     }
+    if (state.results.heatLoss) {
+      const hl = state.results.heatLoss;
+      summary.push(
+        [],
+        ["Дулааны алдагдал (БНбД 41-04-13)"],
+        ["  Нийт алдагдал (кВт)", (hl.totalHeatLoss_W / 1000).toFixed(2)],
+        ["  Нийт ачааллын %", (hl.fractionOfLoad * 100).toFixed(1)],
+        ["  Источникийн T (°C)", hl.sourceSupplyTemp_C.toFixed(1)],
+        ["  Алс хэрэглэгчийн T (°C)", hl.minConsumerSupplyTemp_C.toFixed(1)],
+        ["  БНбД §5.4 (≥80°C)", hl.minConsumerSupplyTemp_C >= 80 ? "✓" : "⚠"],
+      );
+    }
   }
   const wsSummary = XLSX.utils.aoa_to_sheet(summary);
   XLSX.utils.book_append_sheet(wb, wsSummary, "Тойм");

@@ -189,6 +189,72 @@ export function ResultsPanel() {
               </table>
             </div>
           )}
+
+          {results.heatLoss && (
+            <div
+              style={{
+                marginTop: 12,
+                background: "var(--bg-card)",
+                border: "1px solid var(--border-soft)",
+                borderRadius: 8,
+                padding: "0.75rem 1rem",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--fg-muted)",
+                  textTransform: "uppercase",
+                  marginBottom: 8,
+                }}
+              >
+                Дулааны алдагдал (БНбД 41-04-13)
+              </div>
+              <table style={tableStyle}>
+                <tbody>
+                  <HeatRow
+                    label="Нийт алдагдал"
+                    value={`${(results.heatLoss.totalHeatLoss_W / 1000).toFixed(2)} кВт`}
+                    bold
+                  />
+                  <HeatRow
+                    label="Нийт ачааллын"
+                    value={`${(results.heatLoss.fractionOfLoad * 100).toFixed(1)} %`}
+                    muted
+                  />
+                  <HeatRow
+                    label="Источникийн нийлүүлэх T"
+                    value={`${results.heatLoss.sourceSupplyTemp_C.toFixed(1)} °C`}
+                  />
+                  <HeatRow
+                    label="Алс хэрэглэгчийн T (min)"
+                    value={`${results.heatLoss.minConsumerSupplyTemp_C.toFixed(1)} °C`}
+                    bold
+                    accent={results.heatLoss.minConsumerSupplyTemp_C >= 80}
+                    warn={results.heatLoss.minConsumerSupplyTemp_C < 80}
+                  />
+                </tbody>
+              </table>
+              {results.heatLoss.minConsumerSupplyTemp_C >= 80 ? (
+                <div style={{ marginTop: 6, fontSize: 11, color: "var(--fg-muted)" }}>
+                  ✓ БНбД 41-01-2019 §5.4 биелэв (≥ 80 °C). Хэрэглэгчийн ИТП-д
+                  зориулсан температурын марж хангалттай.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    marginTop: 6,
+                    fontSize: 11,
+                    color: "var(--danger, #c33)",
+                    fontWeight: 600,
+                  }}
+                >
+                  ⚠ БНбД 41-01-2019 §5.4 зөрчигдөв. Магистралын дулаалгыг
+                  нэмэх / DN-ийг өсгөх шаардлагатай.
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
     </div>
@@ -240,6 +306,62 @@ function Td({ children, red }: { children: ReactNode; red?: boolean }) {
     >
       {children}
     </td>
+  );
+}
+
+/** Phase 5D.5 — single row in the heat-loss summary table.
+ *  Accepts an already-formatted value string (the heat-loss numbers
+ *  span W / kW / % / °C, so we let the caller format). Same visual
+ *  family as BreakdownRow. */
+function HeatRow({
+  label,
+  value,
+  bold,
+  muted,
+  accent,
+  warn,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+  muted?: boolean;
+  accent?: boolean;
+  warn?: boolean;
+}) {
+  const color = warn
+    ? "var(--danger, #c33)"
+    : accent
+      ? "var(--accent)"
+      : muted
+        ? "var(--fg-muted)"
+        : "var(--fg)";
+  const fontWeight = bold ? 600 : 400;
+  return (
+    <tr>
+      <td
+        style={{
+          padding: "0.3rem 0.5rem",
+          color,
+          fontWeight,
+          fontSize: 13,
+          fontFamily: "inherit",
+        }}
+      >
+        {label}
+      </td>
+      <td
+        style={{
+          padding: "0.3rem 0.5rem",
+          color,
+          fontWeight,
+          fontFamily: "var(--font-mono)",
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value}
+      </td>
+    </tr>
   );
 }
 
