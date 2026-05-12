@@ -82,8 +82,6 @@ describe(`Real-world fixture — ${fixture.project_meta.project_id} (${fixture.p
     for (const section of fixture.expected_results.pipe_sections_to_validate) {
       const G_kg_s = (section.theoretical_mass_flow_t_h * 1000) / 3600;
       const v_expected = section.expected_program_velocity_m_s ?? section.theoretical_velocity_m_s;
-      // theoretical_velocity_m_s isn't supplied on every section in this fixture;
-      // when missing, we compute it from the physics identity for reporting.
       const tol = section.tolerance_pct / 100;
 
       it(
@@ -95,14 +93,38 @@ describe(`Real-world fixture — ${fixture.project_meta.project_id} (${fixture.p
             expect(v).toBeGreaterThan(v_expected * (1 - tol));
             expect(v).toBeLessThan(v_expected * (1 + tol));
           } else {
-            // No printed expected velocity — verify the section computes to a
-            // reasonable value (between norm bounds 0.2 and 3.5 m/s) and
-            // log it for the discrepancy doc.
+            // No printed expected velocity — verify the section is within
+            // norm bounds (0.05 m/s floor avoids divide-by-zero edge cases,
+            // 3.5 m/s ceiling from BNbD 41-01 §6.3 main-line limit).
             expect(v).toBeGreaterThan(0.05);
             expect(v).toBeLessThan(3.5);
           }
         },
       );
+    }
+  });
+
+  describe("Pipe-section velocity at DOCUMENT flow — back-check fixture arithmetic", () => {
+    // Parallel assertion: when the fixture also documents the velocity
+    // that the design G (with reserve) would produce, verify that math
+    // too. This is a back-check on the original paperwork, not on our
+    // solver — but agreement here gives confidence that the paperwork's
+    // G/v columns are internally consistent before we use any of its
+    // numbers as design references in later phases.
+    for (const section of fixture.expected_results.pipe_sections_to_validate) {
+      const doc_v = (section as { velocity_at_document_flow_m_s?: number }).velocity_at_document_flow_m_s;
+      const doc_tol_pct = (section as { velocity_at_document_flow_tolerance_pct?: number })
+        .velocity_at_document_flow_tolerance_pct;
+      if (doc_v === undefined) continue;
+
+      const G_doc_kg_s = (section.document_mass_flow_t_h * 1000) / 3600;
+      const tol = (doc_tol_pct ?? 5) / 100;
+
+      it(`${section.section_id}: at document G=${section.document_mass_flow_t_h} t/h → v ≈ ${doc_v} m/s (±${doc_tol_pct}%)`, () => {
+        const v = velocity_m_s(G_doc_kg_s, section.dn);
+        expect(v).toBeGreaterThan(doc_v * (1 - tol));
+        expect(v).toBeLessThan(doc_v * (1 + tol));
+      });
     }
   });
 

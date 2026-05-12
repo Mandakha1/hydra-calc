@@ -7,7 +7,33 @@
 
 ---
 
-## DISCREPANCY-001 — GK-23/02 UDDT8→UHT1 velocity
+## DISCREPANCY-001 — GK-23/02 UDDT8→UHT1 velocity  **[RESOLVED 2026-05-12]**
+
+> Resolution applied: Option 1 + Option 2 combined.
+>
+> 1. Fixture corrected: `expected_program_velocity_m_s = 0.365` → `0.249`
+>    (matches the physics identity G/(ρ·A) at the theoretical mass flow).
+> 2. Parallel assertion added: `velocity_at_document_flow_m_s = 0.365`
+>    + `velocity_at_document_flow_tolerance_pct = 2` — back-checks that
+>    the original paperwork's G/v columns are internally self-consistent
+>    when document G (3.59 t/h, with reserve) is used.
+>
+> Both assertions now pass on the same v = G/(ρ·A) solver math — no
+> solver change. Test count rose from 10 → 11 (9 pass / 1 fail) →
+> 11 pass / 0 fail.
+>
+> Commit: `fix(fixture): correct theoretical_velocity_m_s + add document-flow parallel check`
+>
+> Diagnostic value retained: the resolution proves the solver is
+> robust to the same physical pipe being queried at two different
+> mass flows. This is the property Phase 3 will lean on when it walks
+> a piezometric profile section by section.
+
+---
+
+### Original report (kept for traceability)
+
+## DISCREPANCY-001 — GK-23/02 UDDT8→UHT1 velocity (original)
 
 **Test**: `apps/backend/src/__tests__/real_project_GK_23_02.test.ts`
 **Section**: `UDDT8_to_UHT1` (DN65, ID 60 mm, length 194 m)
