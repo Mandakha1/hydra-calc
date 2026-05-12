@@ -70,12 +70,21 @@ export function loadGKFixtureV2(): LoadedFixture {
     else kind = "chamber"; // well, fixed_support, elbow, compensator → pass-through
 
     const loadW = (n as { load_W?: number }).load_W;
+    const geoRaw = n as { lat?: number; lon?: number };
     return {
       id: n.id,
       kind,
       label: n.id,
       x: n.x,
       y: n.y,
+      // Phase 5B.1d — fixture nodes carry lat/lon derived from a fixed
+      // Songinokhairkhan-centre origin (see _meta.geo_origin). The
+      // adapter surfaces them as `geo` so Haversine can sanity-check
+      // pipe length_m against the great-circle distance.
+      geo:
+        typeof geoRaw.lat === "number" && typeof geoRaw.lon === "number"
+          ? { lat: geoRaw.lat, lon: geoRaw.lon }
+          : undefined,
       heatLoad_w: loadW,
       requiredPressure_mpa: kind === "consumer" ? 0.15 : kind === "source" ? 0.6 : undefined,
       elevation_m: n.elevation_m,
