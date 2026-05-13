@@ -66,11 +66,28 @@ export interface MultiSelection {
  *  selectExtend, selectMany) and the legacy `selection` field
  *  reference the same type — adding a future kind ("leader", …) is a
  *  single-line edit.
- *  Phase 6.6.3 — extended with "annotation". */
+ *  Phase 6.6.3 — extended with "annotation".
+ *  Phase 6.7.3 — extended with "northArrow" (singleton — no
+ *    MultiSelection entry; the action handlers short-circuit
+ *    multi-select semantics for this kind). */
 export type SelectionTarget = {
-  kind: "node" | "pipe" | "dimension" | "constructionLine" | "annotation";
+  kind:
+    | "node"
+    | "pipe"
+    | "dimension"
+    | "constructionLine"
+    | "annotation"
+    | "northArrow";
   id: string;
 };
+
+/** Project-level singleton features (Phase 6.7.3) that participate in
+ *  the legacy `selection` field but have no MultiSelection list —
+ *  there's only ever one north arrow per project. Used by the action
+ *  handlers to short-circuit toggle/extend/many. */
+const SINGLETON_KINDS: ReadonlySet<SelectionTarget["kind"]> = new Set([
+  "northArrow",
+] as const);
 
 interface StoreActions {
   reset(state?: HydraulicState): void;
@@ -228,8 +245,12 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
     select: (target) =>
       set({
         selection: target,
+        // Phase 6.7.3 — singleton kinds (northArrow) don't have a
+        // multiSelection list. Picking one CLEARS the existing
+        // multi-selection so the inspector switches cleanly to the
+        // singleton's view.
         multiSelection: emptyMs(
-          target
+          target && !SINGLETON_KINDS.has(target.kind)
             ? target.kind === "node"
               ? { nodeIds: [target.id] }
               : target.kind === "pipe"
@@ -245,6 +266,16 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
 
     selectToggle: (target) =>
       set((s) => {
+        // Phase 6.7.3 — singleton kinds (northArrow) bypass the
+        // list-toggle logic: clicking again with modifier toggles
+        // selection on/off WITHOUT touching multiSelection.
+        if (SINGLETON_KINDS.has(target.kind)) {
+          const isCurrent = s.selection?.kind === target.kind;
+          return {
+            selection: isCurrent ? null : target,
+            multiSelection: s.multiSelection,
+          };
+        }
         // Phase 6.6.3 — unified toggle logic handling all 5 kinds.
         // Pull out the relevant list, toggle the target, then
         // figure out where the legacy `selection` should point.
@@ -260,7 +291,10 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           constructionLine: clIds,
           annotation: anIds,
         } as const;
-        const currentList = kindToList[target.kind];
+        // Singleton kinds already handled above; the narrow cast
+        // keeps TS happy without adding a sentinel northArrow list.
+        const listKind = target.kind as keyof typeof kindToList;
+        const currentList = kindToList[listKind];
         const has = currentList.includes(target.id);
         const nextList = has
           ? currentList.filter((x) => x !== target.id)
@@ -307,6 +341,16 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
 
     selectExtend: (target) =>
       set((s) => {
+        // Phase 6.7.3 — singleton kinds: extending with Shift+click
+        // just promotes them to legacy selection (no multi-select
+        // semantics). Don't disturb the existing multiSelection.
+        if (SINGLETON_KINDS.has(target.kind)) {
+          if (s.selection?.kind === target.kind) return {}; // idempotent
+          return {
+            selection: target,
+            multiSelection: s.multiSelection,
+          };
+        }
         const ms = s.multiSelection;
         const dimIds = ms.dimensionIds ?? [];
         const clIds = ms.constructionLineIds ?? [];

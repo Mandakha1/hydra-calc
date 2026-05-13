@@ -30,6 +30,7 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   const nodes = useHydraulicStore((s) => s.nodes);
   const pipes = useHydraulicStore((s) => s.pipes);
   const settings = useHydraulicStore((s) => s.settings);
+  const updateSettings = useHydraulicStore((s) => s.updateSettings);
   const dimensions = useHydraulicStore((s) => s.dimensions);
   const constructionLines = useHydraulicStore((s) => s.constructionLines);
   const annotations = useHydraulicStore((s) => s.annotations);
@@ -210,6 +211,97 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
           >
             Туслах шугамыг устгах
           </button>
+        )}
+      </aside>
+    );
+  }
+
+  // Phase 6.7.3 — north-arrow inspector branch (singleton, no
+  // applier — fields persist via updateSettings on the store).
+  if (selection.kind === "northArrow") {
+    const na = settings.northArrow ?? {};
+    // Stored values (may be undefined). When undefined, the canvas
+    // renderer applies its default. We show "—" so the engineer
+    // knows the field is at its automatic value.
+    const xLabel =
+      na.x_px === undefined ? "автомат" : `${Math.round(na.x_px)}`;
+    const yLabel =
+      na.y_px === undefined ? "автомат" : `${Math.round(na.y_px)}`;
+    const rotation = na.rotation_deg ?? 0;
+    const patch = (delta: Partial<typeof na>) =>
+      updateSettings({ northArrow: { ...na, ...delta } });
+    return (
+      <aside style={sidebarStyle}>
+        <h3>Хойт сум</h3>
+        <Field label={`X — viewport-px (${xLabel})`}>
+          <input
+            type="number"
+            value={na.x_px ?? ""}
+            placeholder="автомат"
+            disabled={readOnly}
+            onChange={(e) =>
+              patch({
+                x_px: e.target.value === "" ? undefined : Number(e.target.value),
+              })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label={`Y — viewport-px (${yLabel})`}>
+          <input
+            type="number"
+            value={na.y_px ?? ""}
+            placeholder="автомат"
+            disabled={readOnly}
+            onChange={(e) =>
+              patch({
+                y_px: e.target.value === "" ? undefined : Number(e.target.value),
+              })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label={`Эргүүлэлт (${rotation.toFixed(0)}°)`}>
+          <input
+            type="range"
+            min={0}
+            max={359}
+            step={1}
+            value={rotation}
+            disabled={readOnly}
+            onChange={(e) => patch({ rotation_deg: Number(e.target.value) })}
+            style={inputStyle}
+          />
+        </Field>
+        {!readOnly && (
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                patch({ x_px: undefined, y_px: undefined })
+              }
+              title="Хойт суманг автомат байрлал (баруун дээд) руу буцаах"
+              style={{
+                ...inputStyle,
+                cursor: "pointer",
+                marginTop: 6,
+              }}
+            >
+              ↺ Анхдагч байрлал
+            </button>
+            <button
+              type="button"
+              onClick={() => patch({ rotation_deg: 0 })}
+              title="Эргүүлэлтийг 0° (жинхэнэ хойт) руу буцаах"
+              style={{
+                ...inputStyle,
+                cursor: "pointer",
+                marginTop: 4,
+              }}
+            >
+              ⇧ Жинхэнэ хойт (0°)
+            </button>
+          </>
         )}
       </aside>
     );

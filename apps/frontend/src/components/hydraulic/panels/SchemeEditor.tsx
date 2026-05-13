@@ -85,6 +85,12 @@ import {
 } from "../scheme/scales";
 import { TitleBlock } from "../scheme/TitleBlock";
 import { titleBlockDimensionsMm } from "../scheme/titleBlockMeta";
+import { NorthArrow } from "../scheme/NorthArrow";
+import {
+  applyNorthArrowDefaults,
+  clampNorthArrowPosition,
+  NORTH_ARROW_CANVAS_MMTOPX,
+} from "../scheme/northArrowMeta";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
@@ -227,6 +233,13 @@ export function SchemeEditor({ readOnly }: Props) {
    *  the pan/zoom transform. Tracked via ResizeObserver in an effect
    *  below so it stays in sync with window resize / sidebar toggle. */
   const [svgViewport, setSvgViewport] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  /** Phase 6.7.3 — north-arrow drag state. Records the click anchor
+   *  in viewport coords + the arrow's starting position so mousemove
+   *  can compute the new position. */
+  const [northArrowDrag, setNorthArrowDrag] = useState<{
+    startMouse: { x: number; y: number };
+    startArrow: { x: number; y: number };
+  } | null>(null);
   /** OSM Overpass API loading flag — shows a spinner while fetching building. */
   const [osmLoading, setOsmLoading] = useState(false);
   /** Stable reference for the onMapView callback — passing an arrow function
@@ -967,6 +980,32 @@ export function SchemeEditor({ readOnly }: Props) {
     (e: MouseEvent<SVGSVGElement>) => {
       const pt = toSvg(e);
       setMousePos(pt);
+      // Phase 6.7.3 — north-arrow drag. Position is in VIEWPORT
+      // coords (the arrow lives outside the pan/zoom group) so we
+      // don't pass through `toSvg`. Clamp so the marker can't be
+      // dragged off-screen.
+      if (northArrowDrag && svgRef.current) {
+        const rect = svgRef.current.getBoundingClientRect();
+        const mouseVx = e.clientX - rect.left;
+        const mouseVy = e.clientY - rect.top;
+        const dx = mouseVx - northArrowDrag.startMouse.x;
+        const dy = mouseVy - northArrowDrag.startMouse.y;
+        const clamped = clampNorthArrowPosition(
+          northArrowDrag.startArrow.x + dx,
+          northArrowDrag.startArrow.y + dy,
+          svgViewport.width,
+          svgViewport.height,
+          NORTH_ARROW_CANVAS_MMTOPX,
+        );
+        updateSettings({
+          northArrow: {
+            ...(settings.northArrow ?? {}),
+            x_px: Math.round(clamped.x_px),
+            y_px: Math.round(clamped.y_px),
+          },
+        });
+        return;
+      }
       // Phase 6.5.1 — rubber-band drag: update the end point so the
       // visible rectangle follows the cursor live.
       if (rubberBand) {
@@ -1005,7 +1044,24 @@ export function SchemeEditor({ readOnly }: Props) {
         }
       }
     },
-    [drag, toSvg, updateNode, snap, mapAnchored, showMap, svgToLatLon, waypointDrag, pipes, updatePipe, mapPanDrag, rubberBand],
+    [
+      drag,
+      toSvg,
+      updateNode,
+      snap,
+      mapAnchored,
+      showMap,
+      svgToLatLon,
+      waypointDrag,
+      pipes,
+      updatePipe,
+      mapPanDrag,
+      rubberBand,
+      northArrowDrag,
+      svgViewport,
+      settings.northArrow,
+      updateSettings,
+    ],
   );
 
   /** Mouse-down on the SVG. If user clicked empty canvas while map is shown,
@@ -1036,6 +1092,7 @@ export function SchemeEditor({ readOnly }: Props) {
     setDrag(null);
     setWaypointDrag(null);
     setMapPanDrag(null);
+    setNorthArrowDrag(null);
     // Phase 6.5.1 — Resolve rubber-band on mouseup: hit-test all
     // visible nodes + pipes, populate multiSelection.
     if (rubberBand) {
@@ -2763,6 +2820,45 @@ export function SchemeEditor({ readOnly }: Props) {
               x={svgViewport.width - tbWidthPx - 16}
               y={svgViewport.height - tbHeightPx - 16}
               mmToPx={mmToPx}
+            />
+          );
+        })()}
+
+        {/* Phase 6.7.3 — North arrow (viewport-anchored singleton).
+            Default position is computed top-right; engineer can drag
+            it anywhere on the viewport and rotate via the Inspector. */}
+        {svgViewport.width > 0 && svgViewport.height > 0 && (() => {
+          const def = applyNorthArrowDefaults(
+            settings.northArrow,
+            svgViewport.width,
+            svgViewport.height,
+            NORTH_ARROW_CANVAS_MMTOPX,
+          );
+          const isNaSelected = selection?.kind === "northArrow";
+          return (
+            <NorthArrow
+              x_px={def.x_px}
+              y_px={def.y_px}
+              rotation_deg={def.rotation_deg}
+              mmToPx={NORTH_ARROW_CANVAS_MMTOPX}
+              isSelected={isNaSelected}
+              onMouseDown={(e) => {
+                if (readOnly) return;
+                if (mode !== "select") return;
+                e.stopPropagation();
+                e.preventDefault();
+                // Select the arrow + begin drag.
+                select({ kind: "northArrow", id: "" });
+                const rect = svgRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                setNorthArrowDrag({
+                  startMouse: {
+                    x: e.clientX - rect.left,
+                    y: e.clientY - rect.top,
+                  },
+                  startArrow: { x: def.x_px, y: def.y_px },
+                });
+              }}
             />
           );
         })()}
