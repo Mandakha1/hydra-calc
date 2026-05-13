@@ -81,7 +81,10 @@ import {
   DEFAULT_SCALE,
   DEFAULT_PAPER_SIZE,
   DEFAULT_PAPER_ORIENTATION,
+  paperDimensionsMm,
 } from "../scheme/scales";
+import { TitleBlock } from "../scheme/TitleBlock";
+import { titleBlockDimensionsMm } from "../scheme/titleBlockMeta";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
@@ -2734,6 +2737,35 @@ export function SchemeEditor({ readOnly }: Props) {
             }
           />
         )}
+
+        {/* Phase 6.7.2 — Title block preview (viewport-anchored, outside
+            pan/zoom). Renders bottom-right. mmToPx kept at 1.5 so the
+            corner widget is roughly 280×105 px on A3 landscape — a
+            useful preview without dominating the canvas. The PDF
+            exporter (Phase 6.7.4) will call <TitleBlock> with the real
+            paper-mm-to-PDF-pt conversion for true 1:1 print output. */}
+        {svgViewport.height > 0 && svgViewport.width > 0 && (() => {
+          const paperSize = settings.printPaperSize ?? DEFAULT_PAPER_SIZE;
+          const orientation = settings.printOrientation ?? DEFAULT_PAPER_ORIENTATION;
+          const tbDims = titleBlockDimensionsMm(paperSize, orientation);
+          // paperDimensionsMm import kept so this preview can later be
+          // upgraded to "page rect outline" without a re-import.
+          void paperDimensionsMm;
+          const mmToPx = 1.5;
+          const tbWidthPx = tbDims.width * mmToPx;
+          const tbHeightPx = tbDims.height * mmToPx;
+          return (
+            <TitleBlock
+              meta={settings.titleBlock}
+              scale={settings.printScale ?? DEFAULT_SCALE}
+              paperSize={paperSize}
+              orientation={orientation}
+              x={svgViewport.width - tbWidthPx - 16}
+              y={svgViewport.height - tbHeightPx - 16}
+              mmToPx={mmToPx}
+            />
+          );
+        })()}
       </svg>
 
       {/* Phase 6.5 batch-ops toolbar — rotate / mirror / array. Mounted

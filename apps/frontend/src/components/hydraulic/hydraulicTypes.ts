@@ -212,6 +212,50 @@ export interface SchemePipe {
   result_dp_pod_pa?: number; result_dp_obr_pa?: number;
 }
 
+/**
+ * Phase 6.7.2 — Title-block metadata.
+ *
+ * The engineer-facing "Зургийн тамга" rendered bottom-right of the
+ * canvas as a preview of how the printed page will look. Field set
+ * follows ГОСТ 21.501 + Mongolian engineering practice — 11
+ * editable rows + a derived scale row that follows
+ * `ProjectSettings.printScale` (so changing the scale dropdown
+ * keeps the title block in sync without a manual edit).
+ *
+ * Signature boxes for engineer / checker / approver are RENDERED
+ * empty so the engineer can hand-sign after print. Digital
+ * signatures are out of scope for Phase 6.7.
+ */
+export interface TitleBlockMeta {
+  /** "Зургийн нэр" — drawing title. Default
+   *  "Дулааны магистрал шугам — план". */
+  drawingTitle?: string;
+  /** "Төслийн код" — project / object code (e.g. "TS-2026-014"). */
+  projectCode?: string;
+  /** "Зурсан" — engineer who drew the plan. */
+  engineer?: string;
+  /** "Шалгасан" — engineer who checked it. */
+  checker?: string;
+  /** "Бат. зөвш." — approver. Empty rows still render (so the
+   *  signature box is present) but the name above stays blank. */
+  approver?: string;
+  /** "Фирм" — design firm / company name. */
+  company?: string;
+  /** "Хаяг" — construction site / project address. Multi-line OK. */
+  address?: string;
+  /** "Огноо" — ISO YYYY-MM-DD. Renderer falls back to today when
+   *  unset; SettingsPanel exposes a "Өнөөдөр" preset button. */
+  date?: string;
+  /** "Сэргээлт" — revision number / letter (e.g. "0", "A", "2.1"). */
+  revision?: string;
+  /** "Хуудас" — sheet number string (e.g. "1/1", "2/3"). */
+  sheetNumber?: string;
+  /** "Стандарт" — standards footer. Editable so the engineer can
+   *  add firm-specific or project-specific standards alongside the
+   *  national defaults. */
+  standardsFooter?: string;
+}
+
 export interface ProjectSettings {
   /** Network type — informational. */
   networkType: "two_pipe_closed" | "two_pipe_open" | "four_pipe";
@@ -251,6 +295,14 @@ export interface ProjectSettings {
   /** Paper orientation. Default "landscape" (the Mongolian convention
    *  for hydraulic plans). */
   printOrientation?: "portrait" | "landscape";
+
+  /** Title-block metadata (Phase 6.7.2) — the engineer-facing
+   *  "Зургийн тамга" stamp rendered bottom-right of the canvas and
+   *  reproduced on the printed page. All fields optional; the
+   *  renderer applies sensible defaults (today's date for `date`,
+   *  the canonical Mongolian standards string for `standardsFooter`,
+   *  etc.) at read time so legacy projects load cleanly. */
+  titleBlock?: TitleBlockMeta;
 
   /* ===== Layer system (Phase 6E + 6.6) ===== */
   /** Per-layer visibility / lock / colour overrides. Sparse — any
