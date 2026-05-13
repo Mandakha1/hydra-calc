@@ -1317,6 +1317,16 @@ export function SchemeEditor({ readOnly }: Props) {
             key: Date.now(),
             tone: "success",
           });
+        } else {
+          // Phase 6.8.1 BUG #5 fix — was silent before, leaving the
+          // engineer wondering whether Ctrl+C even fired. Surface
+          // the empty-selection case explicitly so the engineer
+          // knows the handler ran but had nothing to copy.
+          setToast({
+            text: "Сонгогдсон зүйл алга — copy хийх боломжгүй",
+            key: Date.now(),
+            tone: "neutral",
+          });
         }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "x" || e.key === "X")) {
         // Phase 6.5.2 — Ctrl+X: cut (copy + delete in one step).
@@ -1327,6 +1337,13 @@ export function SchemeEditor({ readOnly }: Props) {
             text: `${r.nodes} цэг, ${r.pipes} хоолой устгасан, clipboard-д хадгалсан`,
             key: Date.now(),
             tone: "success",
+          });
+        } else {
+          // Phase 6.8.1 BUG #5 fix — same as Ctrl+C above.
+          setToast({
+            text: "Сонгогдсон зүйл алга — cut хийх боломжгүй",
+            key: Date.now(),
+            tone: "neutral",
           });
         }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
@@ -1818,7 +1835,13 @@ export function SchemeEditor({ readOnly }: Props) {
           display: "block",
           cursor: mapPanDrag ? "grabbing"
             : drag ? "grabbing"
-            : (mode === "drawBuilding" || mode === "measure" ? "crosshair"
+            // Phase 6.8.1 BUG #1 fix — crosshair in pipe-draw mode so
+            // the engineer aims precisely at a node center. The bug
+            // report's reproduction was "clicked ЦТП but pipeFrom
+            // didn't set"; investigation hypothesis is engineer-
+            // missing-the-hit-zone due to ambiguous cursor + Leaflet
+            // pointer-events handoff. Crosshair narrows the target.
+            : (mode === "drawBuilding" || mode === "measure" || mode === "addPipe" ? "crosshair"
             : showMap && mode === "select" ? "grab"
             : "default"),
           position: "relative",
@@ -1925,7 +1948,8 @@ export function SchemeEditor({ readOnly }: Props) {
                   key={`fp-${n.id}`}
                   onMouseDown={(e) => onNodeMouseDown(e, n)}
                   onContextMenu={(e) => onContextMenuTarget(e, { kind: "node", id: n.id })}
-                  style={{ cursor: "move", color: fillColor }}
+                  // Phase 6.8.1 BUG #1 fix — defensive `pointerEvents: all`.
+                  style={{ cursor: "move", color: fillColor, pointerEvents: "all" }}
                 >
                   {/* Hatch background — Zulu/AutoCAD style. Drawn first so polygon outline is on top. */}
                   {n.hatchPattern && n.hatchPattern !== "none" && n.hatchPattern !== "solid" && (
@@ -2648,7 +2672,11 @@ export function SchemeEditor({ readOnly }: Props) {
                   transform={`translate(${dp.x}, ${dp.y})`}
                   onMouseDown={(e) => onNodeMouseDown(e, n)}
                   onContextMenu={(e) => onContextMenuTarget(e, { kind: "node", id: n.id })}
-                  style={{ cursor: readOnly ? "pointer" : "move" }}
+                  // Phase 6.8.1 BUG #1 fix — defensive `pointerEvents: all`
+                  // so the FULL group bounding box captures clicks, not just
+                  // the painted SVG primitives inside. Helps when Leaflet
+                  // sits below + the engineer clicks the symbol's edge.
+                  style={{ cursor: readOnly ? "pointer" : "move", pointerEvents: "all" }}
                   tabIndex={0}
                   aria-label={`${n.label} (${def.name})`}
                   className={isBad && animateErrors ? "hydra-violation" : ""}

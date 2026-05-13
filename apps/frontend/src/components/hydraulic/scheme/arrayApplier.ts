@@ -108,24 +108,33 @@ function insertCopies(
   }>,
 ): { nodes: number; pipes: number } {
   if (copies.length === 0) return { nodes: 0, pipes: 0 };
-  const st = useHydraulicStore.getState();
-  // Add nodes first, then pipes (pipes reference nodes by id).
-  let nodeCount = 0;
-  let pipeCount = 0;
+  // Phase 6.8.1 — use a single batched setState instead of N
+  // addNode/addPipe calls. The wrapping action (applyLinearArrayTo*
+  // / applyRadialArrayTo*) already pushed ONE undo snapshot
+  // labelled "Шугаман массив" / "Радиал массив"; calling addNode/
+  // addPipe in a loop would push N+1 snapshots and bury the batch
+  // label under "Цэг нэмсэн" entries. Same idea as pasteClipboard.
+  const allNewNodes: Array<import("../hydraulicTypes").SchemeNode> = [];
+  const allNewPipes: Array<import("../hydraulicTypes").SchemePipe> = [];
   const newNodeIds: string[] = [];
   const newPipeIds: string[] = [];
   for (const c of copies) {
     for (const n of c.nodes) {
-      st.addNode(n);
-      nodeCount += 1;
+      allNewNodes.push(n);
       newNodeIds.push(n.id);
     }
     for (const p of c.pipes) {
-      st.addPipe(p);
-      pipeCount += 1;
+      allNewPipes.push(p);
       newPipeIds.push(p.id);
     }
   }
+  useHydraulicStore.setState((s) => ({
+    nodes: [...s.nodes, ...allNewNodes],
+    pipes: [...s.pipes, ...allNewPipes],
+  }));
+  const st = useHydraulicStore.getState();
+  const nodeCount = allNewNodes.length;
+  const pipeCount = allNewPipes.length;
   // Auto-select the newly-inserted clones so the engineer can keep
   // working with them (drag, copy, delete, etc).
   st.selectMany({ nodeIds: newNodeIds, pipeIds: newPipeIds });
