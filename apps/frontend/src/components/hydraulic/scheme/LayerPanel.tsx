@@ -25,7 +25,10 @@ export function LayerPanel() {
   const updateSettings = useHydraulicStore((s) => s.updateSettings);
   const [open, setOpen] = useState(true);
 
-  const setLayer = (key: LayerKey, patch: { visible?: boolean; locked?: boolean }) => {
+  const setLayer = (
+    key: LayerKey,
+    patch: { visible?: boolean; locked?: boolean; printVisible?: boolean },
+  ) => {
     const existing = settings.layers ?? {};
     const current = existing[key] ?? {};
     updateSettings({
@@ -55,6 +58,7 @@ export function LayerPanel() {
             const visible = override.visible ?? def.visible;
             const locked = override.locked ?? def.locked;
             const color = override.color ?? def.color;
+            const printVisible = override.printVisible ?? def.printVisible;
             return (
               <div key={key} style={row}>
                 <span
@@ -71,7 +75,7 @@ export function LayerPanel() {
                 <button
                   type="button"
                   onClick={() => setLayer(key, { visible: !visible })}
-                  title={visible ? "Нуух" : "Харуулах"}
+                  title={visible ? "Дэлгэцэнд нуух" : "Дэлгэцэнд харуулах"}
                   style={{
                     ...iconBtn,
                     color: visible ? "var(--fg)" : "var(--fg-muted)",
@@ -79,6 +83,18 @@ export function LayerPanel() {
                   data-testid={`layer-visibility-${key}`}
                 >
                   {visible ? "👁" : "—"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLayer(key, { printVisible: !printVisible })}
+                  title={printVisible ? "Хэвлэхэд нуух" : "Хэвлэхэд харуулах"}
+                  style={{
+                    ...iconBtn,
+                    color: printVisible ? "var(--fg)" : "var(--fg-muted)",
+                  }}
+                  data-testid={`layer-print-visibility-${key}`}
+                >
+                  {printVisible ? "🖨" : "—"}
                 </button>
                 <button
                   type="button"
