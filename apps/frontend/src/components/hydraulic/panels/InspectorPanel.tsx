@@ -599,6 +599,38 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
           </Field>
         )}
 
+        {/* Phase 6.8.3 — per-entity size override. Multiplies the
+            project-wide preset; default 1.0 means "no override".
+            Range deliberately wide (0.3..2.5) so the engineer can
+            both tame a misclassified large source (0.5×) and
+            highlight a landmark consumer (2×). The renderer still
+            clamps the final radius to MIN/MAX, so extreme values
+            saturate rather than break the layout. */}
+        <Field label="Хэмжээний хувь (size scale)">
+          <input
+            type="number"
+            min={0.3}
+            max={2.5}
+            step={0.1}
+            value={node.size_scale ?? 1.0}
+            disabled={readOnly}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isNaN(v)) return;
+              // Treat "1" as "no override" — strip the field so
+              // legacy save/load round-trips don't accumulate
+              // `size_scale: 1` everywhere.
+              if (Math.abs(v - 1.0) < 0.001) {
+                updateNode(node.id, { size_scale: undefined });
+              } else {
+                updateNode(node.id, { size_scale: v });
+              }
+            }}
+            style={inputStyle}
+            title="0.3..2.5; 1.0 = preset-ийг өөрчилөхгүй"
+          />
+        </Field>
+
         <Field label="Тэмдэглэл">
           <textarea
             value={node.notes ?? ""}

@@ -1,10 +1,10 @@
 /**
- * Phase 6A — symbol-size + pipe-stroke clamping tests.
+ * Phase 6A + 6.8.3 — symbol-size + pipe-stroke clamping tests.
  *
  * What we lock down:
- *   1. Mongolian residential АОС (consumer ~8 m real) is clipped to
- *      MIN_SYMBOL_PX at street-level + below (zoom 14) so it never
- *      disappears to a sub-pixel dot.
+ *   1. Mongolian residential АОС (consumer, ~35 m real after the
+ *      Phase 6.8.3 calibration) is clipped to MIN_SYMBOL_PX at
+ *      low zoom (zoom 12) so it never disappears to a sub-pixel dot.
  *   2. At extreme close zoom (zoom 20), the same consumer is clipped
  *      to MAX_SYMBOL_PX so it doesn't "blob" out to cover the canvas.
  *   3. DN50 pipe stroke at sensible zoom lands in the engineering-
@@ -17,6 +17,9 @@
  *      grained kinds in nodeCatalog ("source_chp", "consumer_apartment",
  *      "well_chamber", "fixed_support_steel", etc) plus the legacy
  *      bare-category strings.
+ *   6. Phase 6.8.3 — symbol-size preset (small/medium/large) +
+ *      per-entity `size_scale` override compose multiplicatively
+ *      and still clamp to MIN/MAX.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -29,40 +32,49 @@ import {
   MIN_PIPE_PX,
   MAX_PIPE_PX,
   ENTITY_REAL_SIZE_M,
+  SYMBOL_SIZE_PRESETS,
+  DEFAULT_SYMBOL_SIZE_PRESET,
 } from "../symbolSize";
 
-describe("computeSymbolRadiusPx — Phase 6A", () => {
-  it("at zoom 14 (px/m ≈ 0.38), АОС consumer clamps to MIN_SYMBOL_PX (no blob, no dot)", () => {
-    const pxPerM = pxPerMeterAtZoom(14);
+describe("computeSymbolRadiusPx — Phase 6A / 6.8.3", () => {
+  it("at zoom 12 (px/m ≈ 0.095), АОС consumer clamps to MIN_SYMBOL_PX (no sub-pixel dot)", () => {
+    const pxPerM = pxPerMeterAtZoom(12);
     const r = computeSymbolRadiusPx("consumer", pxPerM);
-    // Real: 8 m × 0.38 px/m ÷ 2 = 1.52 px → would be sub-pixel. Clamp.
+    // Real: 35 m × 0.095 px/m ÷ 2 ≈ 1.66 px → would be sub-pixel. Clamp.
     expect(r).toBeGreaterThanOrEqual(MIN_SYMBOL_PX);
     expect(r).toBeLessThanOrEqual(MIN_SYMBOL_PX + 0.5); // floor reached
+  });
+
+  it("at zoom 16 (px/m ≈ 0.62), Phase 6.8.3 АОС lands IN BAND (not clamped)", () => {
+    // PRE-CALIBRATION (Phase 6A): consumer 8 m × 0.62 / 2 = 2.5 px →
+    // clamped to MIN. Every entity at zoom 16 looked the same size.
+    // POST-CALIBRATION (6.8.3): 35 m × 0.62 / 2 ≈ 10.9 px → no clamp,
+    // visibly bigger than a junction marker. This test pins the new
+    // calibration so a future shrink wouldn't silently regress.
+    const pxPerM = pxPerMeterAtZoom(16);
+    const r = computeSymbolRadiusPx("consumer", pxPerM);
+    expect(r).toBeGreaterThan(MIN_SYMBOL_PX);
+    expect(r).toBeLessThan(MAX_SYMBOL_PX);
+    expect(r).toBeCloseTo(10.9, 0);
   });
 
   it("at zoom 22 (px/m ≈ 20), АОС consumer clamps to MAX_SYMBOL_PX (no blob)", () => {
     const pxPerM = pxPerMeterAtZoom(22);
     const r = computeSymbolRadiusPx("consumer", pxPerM);
-    // Real: 8 m × 20 px/m ÷ 2 = 80 px → at cap; even larger zooms
-    // would overshoot. The clamp is the load-bearing guarantee.
+    // Real: 35 m × 20 px/m ÷ 2 = 350 px → would overshoot. Clamp.
     expect(r).toBeGreaterThanOrEqual(MAX_SYMBOL_PX - 0.5);
     expect(r).toBeLessThanOrEqual(MAX_SYMBOL_PX);
   });
 
-  it("at high zoom 19 (px/m ≈ 5), АОС lands inside both clamps (proportional band)", () => {
-    const pxPerM = pxPerMeterAtZoom(19);
-    const r = computeSymbolRadiusPx("consumer", pxPerM);
-    // Real: 8 m × 5 px/m ÷ 2 = 20 px. Inside [12, 80] band — no clamp.
-    expect(r).toBeGreaterThanOrEqual(MIN_SYMBOL_PX);
-    expect(r).toBeLessThanOrEqual(MAX_SYMBOL_PX);
-    expect(r).toBeCloseTo(20, 0); // proportional to real size, no clamp
-  });
-
-  it("УДДТ source (~12 m) is bigger than АОС consumer (~8 m) at proportional zoom", () => {
+  it("УДДТ source (18 m) is smaller than АОС consumer (35 m) at proportional zoom", () => {
+    // Engineering reality: a heat substation cabin sits inside a single
+    // building footprint while an apartment block stretches across one.
+    // The 6.8.3 calibration makes consumer > source — the opposite of
+    // the legacy 12 m / 8 m configuration.
     const pxPerM = pxPerMeterAtZoom(18);
     const rSource = computeSymbolRadiusPx("source", pxPerM);
     const rConsumer = computeSymbolRadiusPx("consumer", pxPerM);
-    expect(rSource).toBeGreaterThan(rConsumer);
+    expect(rConsumer).toBeGreaterThan(rSource);
   });
 
   it("junction (~0.3 m) always clamps to MIN_SYMBOL_PX at any reasonable zoom", () => {
@@ -70,12 +82,15 @@ describe("computeSymbolRadiusPx — Phase 6A", () => {
     // life but must be clickable. Clamp guarantees that.
     for (const zoom of [12, 15, 17, 19]) {
       const r = computeSymbolRadiusPx("junction", pxPerMeterAtZoom(zoom));
-      // Even at zoom 19 (px/m ≈ 12), 0.3 × 12 ÷ 2 = 1.8 → clamp to MIN.
+      // 0.3 × pxPerM / 2 saturates the MIN_SYMBOL_PX floor at every
+      // sane zoom — junctions look like junctions, never apartments.
       expect(r).toBeGreaterThanOrEqual(MIN_SYMBOL_PX);
     }
   });
 
-  it("returns MIN_SYMBOL_PX when px/m is null or zero (schematic mode)", () => {
+  it("schematic mode (null px/m) returns MIN_SYMBOL_PX scaled by the preset", () => {
+    // No map → fall back to MIN baseline. The 6.8.3 multiplier still
+    // applies so a Small-preset on a no-map project visibly shrinks.
     expect(computeSymbolRadiusPx("consumer", null)).toBe(MIN_SYMBOL_PX);
     expect(computeSymbolRadiusPx("consumer", 0)).toBe(MIN_SYMBOL_PX);
     expect(computeSymbolRadiusPx("consumer", -1)).toBe(MIN_SYMBOL_PX);
@@ -179,12 +194,106 @@ describe("resolveEntityKind — Politerm + legacy node-kind coverage", () => {
   });
 });
 
-describe("ENTITY_REAL_SIZE_M — engineering reality bracket", () => {
-  it("source > consumer > compensator > well > valve > junction (size ordering)", () => {
-    expect(ENTITY_REAL_SIZE_M.source).toBeGreaterThan(ENTITY_REAL_SIZE_M.consumer);
-    expect(ENTITY_REAL_SIZE_M.consumer).toBeGreaterThan(ENTITY_REAL_SIZE_M.well);
+describe("ENTITY_REAL_SIZE_M — engineering reality bracket (Phase 6.8.3 calibration)", () => {
+  it("consumer (АОС, 5-storey apartment) is the largest entity", () => {
+    // Apartment ~35 m wide > heat substation ~18 m > everything else.
+    expect(ENTITY_REAL_SIZE_M.consumer).toBeGreaterThan(ENTITY_REAL_SIZE_M.source);
+    expect(ENTITY_REAL_SIZE_M.source).toBeGreaterThan(ENTITY_REAL_SIZE_M.well);
     expect(ENTITY_REAL_SIZE_M.well).toBeGreaterThan(ENTITY_REAL_SIZE_M.compensator);
     expect(ENTITY_REAL_SIZE_M.compensator).toBeGreaterThan(ENTITY_REAL_SIZE_M.valve);
     expect(ENTITY_REAL_SIZE_M.valve).toBeGreaterThan(ENTITY_REAL_SIZE_M.junction);
+  });
+
+  it("АОС sits in the 30..40 m engineer-expected band", () => {
+    expect(ENTITY_REAL_SIZE_M.consumer).toBeGreaterThanOrEqual(30);
+    expect(ENTITY_REAL_SIZE_M.consumer).toBeLessThanOrEqual(40);
+  });
+
+  it("УДДТ / ЦТП sits in the 15..20 m engineer-expected band", () => {
+    expect(ENTITY_REAL_SIZE_M.source).toBeGreaterThanOrEqual(15);
+    expect(ENTITY_REAL_SIZE_M.source).toBeLessThanOrEqual(20);
+  });
+});
+
+describe("symbol-size preset multipliers (Phase 6.8.3)", () => {
+  it("SYMBOL_SIZE_PRESETS spans the engineer-requested range", () => {
+    expect(SYMBOL_SIZE_PRESETS.small).toBeCloseTo(0.7, 6);
+    expect(SYMBOL_SIZE_PRESETS.medium).toBeCloseTo(1.0, 6);
+    expect(SYMBOL_SIZE_PRESETS.large).toBeCloseTo(1.3, 6);
+  });
+
+  it("DEFAULT_SYMBOL_SIZE_PRESET is 'medium' (preserves Phase 6A behaviour)", () => {
+    expect(DEFAULT_SYMBOL_SIZE_PRESET).toBe("medium");
+    expect(SYMBOL_SIZE_PRESETS[DEFAULT_SYMBOL_SIZE_PRESET]).toBe(1.0);
+  });
+
+  it("Small preset shrinks consumer radius vs Medium (both unclamped)", () => {
+    const pxPerM = pxPerMeterAtZoom(17); // ~1.25 px/m at УБ — well inside the band
+    const medium = computeSymbolRadiusPx("consumer", pxPerM, SYMBOL_SIZE_PRESETS.medium);
+    const small = computeSymbolRadiusPx("consumer", pxPerM, SYMBOL_SIZE_PRESETS.small);
+    expect(small).toBeLessThan(medium);
+    expect(small / medium).toBeCloseTo(0.7, 1);
+  });
+
+  it("Large preset grows consumer radius vs Medium (both unclamped)", () => {
+    const pxPerM = pxPerMeterAtZoom(17);
+    const medium = computeSymbolRadiusPx("consumer", pxPerM, SYMBOL_SIZE_PRESETS.medium);
+    const large = computeSymbolRadiusPx("consumer", pxPerM, SYMBOL_SIZE_PRESETS.large);
+    expect(large).toBeGreaterThan(medium);
+    expect(large / medium).toBeCloseTo(1.3, 1);
+  });
+
+  it("per-entity size_scale composes multiplicatively with the preset", () => {
+    // Engineer dials Small preset (0.7) AND overrides this one node to
+    // 1.5 — the composite multiplier is 0.7 × 1.5 = 1.05, so this
+    // node ends up slightly larger than Medium-default + 1.0 override.
+    const pxPerM = pxPerMeterAtZoom(17);
+    const composite = SYMBOL_SIZE_PRESETS.small * 1.5;
+    const r = computeSymbolRadiusPx("consumer", pxPerM, composite);
+    const baselineMedium = computeSymbolRadiusPx("consumer", pxPerM, 1.0);
+    expect(composite).toBeCloseTo(1.05, 6);
+    expect(r).toBeCloseTo(baselineMedium * 1.05, 1);
+  });
+
+  it("preset still clamps to MAX_SYMBOL_PX at extreme close zoom", () => {
+    // Large preset (1.3×) × consumer 35 m × pxPerM at zoom 22 (20 px/m)
+    // / 2 = 455 px → would overshoot wildly. Clamp must hold.
+    const r = computeSymbolRadiusPx("consumer", pxPerMeterAtZoom(22), SYMBOL_SIZE_PRESETS.large);
+    expect(r).toBeLessThanOrEqual(MAX_SYMBOL_PX);
+    expect(r).toBeGreaterThanOrEqual(MAX_SYMBOL_PX - 0.5);
+  });
+
+  it("preset still clamps to MIN_SYMBOL_PX at far zoom-out", () => {
+    // Small preset (0.7×) × consumer 35 m × pxPerM at zoom 11 (0.05 px/m)
+    // / 2 = 0.6 px → would disappear. Clamp catches it.
+    const r = computeSymbolRadiusPx("consumer", pxPerMeterAtZoom(11), SYMBOL_SIZE_PRESETS.small);
+    expect(r).toBeGreaterThanOrEqual(MIN_SYMBOL_PX);
+  });
+
+  it("legacy callers (no scaleMultiplier arg) get the medium baseline", () => {
+    // Two-arg call signature must keep returning the same number as
+    // an explicit 1.0 multiplier — backward compat.
+    const pxPerM = pxPerMeterAtZoom(17);
+    const legacy = computeSymbolRadiusPx("consumer", pxPerM);
+    const explicit = computeSymbolRadiusPx("consumer", pxPerM, 1.0);
+    expect(legacy).toBeCloseTo(explicit, 9);
+  });
+
+  it("schematic-mode (null px/m) also honours the preset multiplier", () => {
+    // Engineer with the map off + Small preset SHOULD see smaller
+    // symbols than Medium. The schematic-floor logic respects the
+    // multiplier (but never below half the floor — keep it clickable).
+    const medium = computeSymbolRadiusPx("consumer", null, SYMBOL_SIZE_PRESETS.medium);
+    const small = computeSymbolRadiusPx("consumer", null, SYMBOL_SIZE_PRESETS.small);
+    const large = computeSymbolRadiusPx("consumer", null, SYMBOL_SIZE_PRESETS.large);
+    expect(small).toBeLessThan(medium);
+    expect(large).toBeGreaterThan(medium);
+  });
+
+  it("multiplier = 0 falls back gracefully (no NaN, returns floor)", () => {
+    // Defensive — a UI bug or typo could send 0; clamp must catch.
+    const pxPerM = pxPerMeterAtZoom(17);
+    const r = computeSymbolRadiusPx("consumer", pxPerM, 0);
+    expect(r).toBeGreaterThanOrEqual(MIN_SYMBOL_PX);
   });
 });

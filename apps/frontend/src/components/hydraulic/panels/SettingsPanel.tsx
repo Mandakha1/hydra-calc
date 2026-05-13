@@ -15,6 +15,11 @@ import {
   DEFAULT_SHEET_NUMBER,
   todayIsoDate,
 } from "../scheme/titleBlockMeta";
+import {
+  SYMBOL_SIZE_PRESETS,
+  DEFAULT_SYMBOL_SIZE_PRESET,
+  type SymbolSizePreset,
+} from "../scheme/symbolSize";
 import type { TitleBlockMeta } from "../hydraulicTypes";
 import { bbox } from "../geometry";
 
@@ -193,6 +198,31 @@ export function SettingsPanel({ readOnly }: { readOnly?: boolean }) {
           📐 Хуудас руу багтаах
         </button>
       )}
+
+      {/* Phase 6.8.3 — Symbol size preset. Project-wide multiplier on
+          every entity's computed radius. Engineers complained "ЦТП хэт
+          том" at the calibrated default; the preset gives a one-click
+          way to dial it down without touching per-entity overrides.
+          Per-entity `size_scale` (Inspector) compounds on top. */}
+      <hr style={{ margin: "1.5rem 0", border: 0, borderTop: "1px solid var(--border-soft)" }} />
+      <h3 style={{ marginTop: "1rem", marginBottom: "0.6rem", fontSize: 15 }}>Тэмдэглэгээний хэмжээ</h3>
+      <Field label="Тэмдэгийн хэмжээ (preset)">
+        <select
+          value={settings.symbolSizePreset ?? DEFAULT_SYMBOL_SIZE_PRESET}
+          disabled={readOnly}
+          onChange={(e) => update({ symbolSizePreset: e.target.value as SymbolSizePreset })}
+          style={inputStyle}
+        >
+          <option value="small">Жижиг — {Math.round(SYMBOL_SIZE_PRESETS.small * 100)}% (төслийн ерөнхий зураг)</option>
+          <option value="medium">Дунд — {Math.round(SYMBOL_SIZE_PRESETS.medium * 100)}% (default)</option>
+          <option value="large">Том — {Math.round(SYMBOL_SIZE_PRESETS.large * 100)}% (танилцуулга / гарын үсэгтэй хуулбар)</option>
+        </select>
+      </Field>
+      <p style={{ fontSize: 12, color: "var(--fg-muted)", margin: "0.3rem 0 0" }}>
+        Шинэ зурдаг тэмдэгүүдэд preset нь шууд хэрэглэгдэнэ. Аль хэдийн
+        зурсан тэмдгийн хэмжээг тус тусад нь өөрчилөхдөө Inspector-ын
+        {" «Хэмжээний хувь» "}талбарыг ашиглана.
+      </p>
 
       {/* Phase 6.7.2 — Title block (Зургийн тамга) metadata.
           Engineer fills these once per project; they appear on the
