@@ -582,6 +582,15 @@ export interface SchemeConstructionLine {
   /** Line stroke style — "dashed" (drafting default), "solid"
    *  (centre-line / heavy axis), "dotted" (alignment aid). */
   style?: "dashed" | "solid" | "dotted";
+  /** Phase 6.8.2 — optional geo anchors for the two endpoints.
+   *  Stamped at create time when the map is visible so the
+   *  construction line tracks the leaflet map view on pan / zoom
+   *  (same contract as `SchemeNode.geo`). The `from` / `to` pixel
+   *  coords remain the source of truth and the canvas-only
+   *  fallback; the `geo*` fields are the map-tracking overlay.
+   *  Codebase convention: `lon`, not `lng`. */
+  geoFrom?: { lat: number; lon: number };
+  geoTo?: { lat: number; lon: number };
 }
 
 /**
@@ -617,6 +626,14 @@ export interface SchemeAnnotation {
   layerKey?: "D" | "C";
   /** Optional colour override. When undefined, layer colour is used. */
   color?: string;
+  /** Phase 6.8.2 — optional geo anchor for map-tracking.
+   *  Stamped at create time when the map is visible so the
+   *  annotation tracks the leaflet map view on pan / zoom (same
+   *  contract as `SchemeNode.geo`). The `x` / `y` pixel coords
+   *  remain the source of truth and the canvas-only fallback; the
+   *  `geo` field is the map-tracking overlay. Codebase convention:
+   *  `lon`, not `lng`. */
+  geo?: { lat: number; lon: number };
 }
 
 /** Phase 6.5.5 — single undo/redo snapshot.
