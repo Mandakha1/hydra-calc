@@ -100,14 +100,100 @@ function nearbyKey(x: number, y: number, tol: number): string {
   return `${Math.round(x / tol)}_${Math.round(y / tol)}`;
 }
 
-function classifyBlockName(name: string): string {
+/**
+ * Phase 7.2 — engineer-supplied block-name overrides. Keys are
+ * matched case-insensitively against the exact (trimmed) block
+ * name; values are NodeKind strings from `nodeCatalog`. Used by the
+ * future 7.4 review pane so engineers can lock in per-project
+ * mappings for non-standard symbol names.
+ */
+export type BlockAliasOverrides = Record<string, string>;
+
+/**
+ * Phase 7.2 — Cyrillic block-name alias table. Patterns are
+ * matched against the UPPER-CASED block name (Mongolian / Russian
+ * Cyrillic case-folds correctly under `String.toUpperCase()`).
+ *
+ * Mongolian engineering convention:
+ *   АОС — Айлын Орон Сууц (residential apartment)
+ *   АОЭ — Айлын Орон Эмнэлэг (medical / education facility)
+ *   АОБ — Айлын Орон Бэлдэц (industrial / production facility)
+ *   УДДТ / ЦТП — heat distribution center (Russian ЦТП cognate)
+ *   ҮХТ — Үндсэн Худаг Тэжээх (supply well)
+ *   ҮДТ — Үндсэн Дамжуулагч Тэжээх (return well — falls to
+ *         `chamber` since `well_return` doesn't exist as a NodeKind)
+ *   ЭӨ — Эргэлтийн Өргөтгөл (U-bend / bellow compensator)
+ *   К-ХАА / К-ЗАС / К-ШИЛ — Кран хаалт / засах / шилэн (gate valve)
+ *   КБ / КШ — Кран бөмбөг / шил (ball / butterfly valve)
+ *   БВЭ / БУХ — Бухгалтын / Эргэлтийн насос (circulation pump)
+ *   Зуух / Котёл — boiler
+ *
+ * Order matters: more specific patterns first (e.g. УДДТ before
+ * generic У* fall-through). Engineer-supplied overrides take
+ * precedence over both tiers (see `classifyBlockName`).
+ */
+export const CYRILLIC_BLOCK_ALIASES: ReadonlyArray<readonly [RegExp, string]> = [
+  // Consumer types
+  [/^АОС/, "consumer_apartment"],
+  [/^АОЭ/, "consumer_school"],
+  [/^АОБ/, "consumer_industrial"],
+  // Heat sources
+  [/^УДДТ|^ЦТП/, "source_substation"],
+  [/^ЗУУХ|^КОТЁЛ|^КОТЕЛ/, "source_boiler"],
+  // Wells
+  [/^ҮХТ/, "well_supply"],
+  [/^ҮДТ/, "chamber"], // No `well_return` NodeKind — chamber is the catchall
+  // Compensators (U-bend / bellow)
+  [/^ЭӨ/, "compensator_u"],
+  // Valves
+  [/^К-?(ХАА|ЗАС|ШИЛ)/, "valve_gate"],
+  [/^КБ|^КШ/, "valve_ball"],
+  // Pumps
+  [/^БВЭ|^БУХ/, "pump_circ"],
+];
+
+/**
+ * Classify an AutoCAD block name to a Hydra-Calc NodeKind.
+ *
+ * Resolution order (first match wins):
+ *   1. Engineer-supplied override (exact name, case-insensitive)
+ *   2. Cyrillic alias patterns (Mongolian engineering convention)
+ *   3. Legacy Latin patterns (bohir / hbh / nasos / zad / ctp / kotel)
+ *   4. Default `chamber`
+ *
+ * Exposed (vs the previous internal function) so the Phase 7.4
+ * review pane can call it directly for the live-preview recompute.
+ */
+export function classifyBlockName(
+  name: string,
+  overrides?: BlockAliasOverrides,
+): string {
+  const trimmedUpper = name.trim().toUpperCase();
+
+  // Tier 1 — engineer overrides win first
+  if (overrides) {
+    for (const key of Object.keys(overrides)) {
+      if (key.trim().toUpperCase() === trimmedUpper) {
+        return overrides[key]!;
+      }
+    }
+  }
+
+  // Tier 2 — Cyrillic alias patterns
+  for (const [pattern, kind] of CYRILLIC_BLOCK_ALIASES) {
+    if (pattern.test(trimmedUpper)) return kind;
+  }
+
+  // Tier 3 — legacy Latin classifier (unchanged from Phase 6 import)
   const n = name.toLowerCase();
-  if (n.includes("bohir")) return "well_drain";              // канализаци
-  if (n.includes("hbh") || n.includes("highv") || n.includes("dst")) return "chamber";  // камер
+  if (n.includes("bohir")) return "well_drain"; // канализаци
+  if (n.includes("hbh") || n.includes("highv") || n.includes("dst")) return "chamber";
   if (n.includes("nasos") || n.includes("pump")) return "pump_circ";
   if (n.includes("zad") || n.includes("valve")) return "valve_gate";
   if (n.includes("ctp") || n.includes("itp")) return "source_substation";
   if (n.includes("kotel") || n.includes("zuukh")) return "source_boiler";
+
+  // Tier 4 — default
   return "chamber";
 }
 
@@ -126,9 +212,14 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
   heatingOnly?: boolean;
   /** Default DN to assume on imported pipes. */
   defaultDn?: number;
+  /** Phase 7.2 — engineer-supplied per-project block-name → kind
+   *  overrides. Exact name match (case-insensitive). Highest priority
+   *  in the classifier — wins over both Cyrillic and Latin patterns. */
+  blockAliasOverrides?: BlockAliasOverrides;
 } = {}): DxfImportResult {
   const heatingOnly = opts.heatingOnly ?? true;
   const defaultDn = opts.defaultDn ?? 100;
+  const blockAliasOverrides = opts.blockAliasOverrides;
   const warnings: string[] = [];
 
   /* === 1. Collect candidate pipes === */
@@ -234,7 +325,7 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
   for (const ins of extracted.inserts) {
     const key = nearbyKey(ins.x, ins.y, POINT_TOL_M * 2);
     const pn = protoNodes.get(key);
-    const kind = classifyBlockName(ins.name);
+    const kind = classifyBlockName(ins.name, blockAliasOverrides);
     if (pn) {
       pn.kind = kind;
       pn.fromInsert = true;
@@ -363,6 +454,8 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
 export async function importDxfText(dxfText: string, opts: {
   heatingOnly?: boolean;
   defaultDn?: number;
+  /** Phase 7.2 — engineer-supplied per-project block-name overrides. */
+  blockAliasOverrides?: BlockAliasOverrides;
 } = {}): Promise<DxfImportResult> {
   const parser = new DxfParser();
   const dxf = parser.parseSync(dxfText);
@@ -495,6 +588,9 @@ export async function importDxfBytes(
     /** Override the encoding auto-detect — engineer-facing escape
      *  hatch when the 3-tier sniff misclassifies a file. */
     forceEncoding?: "utf-8" | "cp1251";
+    /** Phase 7.2 — engineer-supplied per-project block-name → kind
+     *  overrides. Threaded through to the classifier. */
+    blockAliasOverrides?: BlockAliasOverrides;
   } = {},
 ): Promise<DxfImportResultWithEncoding> {
   const decoded = decodeDxfBytes(buffer, { forceEncoding: opts.forceEncoding });
