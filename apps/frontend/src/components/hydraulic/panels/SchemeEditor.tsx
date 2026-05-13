@@ -76,6 +76,12 @@ import {
   addAnnotation,
   selectAnnotation,
 } from "../scheme/annotationApplier";
+import { ScaleBar } from "../scheme/ScaleBar";
+import {
+  DEFAULT_SCALE,
+  DEFAULT_PAPER_SIZE,
+  DEFAULT_PAPER_ORIENTATION,
+} from "../scheme/scales";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
@@ -213,6 +219,11 @@ export function SchemeEditor({ readOnly }: Props) {
    *  pixel space, second click anywhere commits the line. Esc
    *  cancels in-flight. */
   const [pendingConstructionAnchor, setPendingConstructionAnchor] = useState<{ x: number; y: number } | null>(null);
+  /** Phase 6.7.1 — viewport dimensions for placing fixed-position
+   *  widgets (ScaleBar bottom-left, future Title Block, etc.) outside
+   *  the pan/zoom transform. Tracked via ResizeObserver in an effect
+   *  below so it stays in sync with window resize / sidebar toggle. */
+  const [svgViewport, setSvgViewport] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   /** OSM Overpass API loading flag — shows a spinner while fetching building. */
   const [osmLoading, setOsmLoading] = useState(false);
   /** Stable reference for the onMapView callback — passing an arrow function
@@ -306,6 +317,23 @@ export function SchemeEditor({ readOnly }: Props) {
     }, 120);
     return () => clearTimeout(t);
   }, [nodes.length, fitToContent]);
+
+  /** Phase 6.7.1 — Track SVG viewport dimensions so we can pin the
+   *  ScaleBar (and future TitleBlock / NorthArrow widgets) at a fixed
+   *  bottom-left position outside the pan/zoom transform group. */
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return undefined;
+    const update = () => {
+      const r = svg.getBoundingClientRect();
+      setSvgViewport({ width: r.width, height: r.height });
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(update);
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, []);
   const GRID_PX = GRID_M * PX_PER_METER;
 
   const toSvg = useCallback(
@@ -2686,6 +2714,25 @@ export function SchemeEditor({ readOnly }: Props) {
           <text x={6} y={16} fontSize="11" fontFamily="var(--font-mono)" fill="var(--accent)">
             X={cursorM.x.toFixed(2)}м Y={cursorM.y.toFixed(2)}м
           </text>
+        )}
+
+        {/* Phase 6.7.1 — Scale bar (viewport-anchored, outside pan/zoom).
+            Tick spacing follows the active pxPerMeter so the engineer
+            can verify the canvas matches the declared print scale.
+            Placed last in the SVG so it renders on top of everything. */}
+        {svgViewport.height > 0 && (
+          <ScaleBar
+            scale={settings.printScale ?? DEFAULT_SCALE}
+            paperSize={settings.printPaperSize ?? DEFAULT_PAPER_SIZE}
+            orientation={settings.printOrientation ?? DEFAULT_PAPER_ORIENTATION}
+            x={16}
+            y={svgViewport.height - 36}
+            pxPerMeter={
+              showMap && mapPxPerMeter && mapPxPerMeter > 0
+                ? mapPxPerMeter
+                : PX_PER_METER * zoom
+            }
+          />
         )}
       </svg>
 

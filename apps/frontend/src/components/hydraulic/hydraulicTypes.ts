@@ -232,6 +232,26 @@ export interface ProjectSettings {
   /** Water supply pressure at source, MPa (typical 0.6 MPa). */
   sourcePressure_mpa: number;
 
+  /* ===== Print / scale (Phase 6.7.1) =====
+   *
+   *  These three settings drive the on-canvas scale bar (Phase 6.7.1)
+   *  and the PDF exporter (Phase 6.7.4). All optional with defaults
+   *  applied at the read sites so legacy projects load cleanly.
+   *
+   *  Engineering convention (БНбД / СП 41-101 drawings):
+   *    Residential plot networks → 1:200 or 1:500
+   *    District trunk networks   → 1:1000 or 1:2000
+   *  Mongolian engineers print on A3 most often; A4 is for ITP
+   *  sub-prints and approval copies. */
+  /** Drafting scale as displayed on the title block + scale bar.
+   *  Default "1:500". */
+  printScale?: "1:200" | "1:500" | "1:1000" | "1:2000";
+  /** Paper size — only A3 + A4 are supported in 6.7. */
+  printPaperSize?: "A3" | "A4";
+  /** Paper orientation. Default "landscape" (the Mongolian convention
+   *  for hydraulic plans). */
+  printOrientation?: "portrait" | "landscape";
+
   /* ===== Layer system (Phase 6E + 6.6) ===== */
   /** Per-layer visibility / lock / colour overrides. Sparse — any
    *  layer key not listed inherits its default from layers.ts.
