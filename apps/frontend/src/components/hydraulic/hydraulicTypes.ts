@@ -256,6 +256,32 @@ export interface TitleBlockMeta {
   standardsFooter?: string;
 }
 
+/**
+ * Phase 6.7.3 — North arrow metadata.
+ *
+ * Drafting-style north marker rendered viewport-anchored at the
+ * canvas top-right corner by default. The persisted position is in
+ * VIEWPORT pixels (not scheme-space) so the arrow stays in its
+ * corner regardless of canvas pan / zoom. Rotation is applied about
+ * the arrow's own centre — engineer aligns it with the project's
+ * grid when the site's local coordinates aren't oriented to true
+ * north (a common case in older Mongolian municipal surveys).
+ *
+ * All fields optional; `applyNorthArrowDefaults` fills missing
+ * fields using the viewport dimensions at render time.
+ */
+export interface NorthArrowMeta {
+  /** Anchor in viewport-px from the SVG's top-left. */
+  x_px?: number;
+  y_px?: number;
+  /** Rotation in degrees about the arrow centre. Default 0 = up.
+   *  Positive = clockwise (matches drafting convention; opposite of
+   *  the mathematical counter-clockwise sign used in transforms.ts
+   *  for nodes — the north arrow has a fixed engineering reading
+   *  direction). */
+  rotation_deg?: number;
+}
+
 export interface ProjectSettings {
   /** Network type — informational. */
   networkType: "two_pipe_closed" | "two_pipe_open" | "four_pipe";
@@ -303,6 +329,14 @@ export interface ProjectSettings {
    *  the canonical Mongolian standards string for `standardsFooter`,
    *  etc.) at read time so legacy projects load cleanly. */
   titleBlock?: TitleBlockMeta;
+
+  /** North-arrow metadata (Phase 6.7.3). Singleton-per-project
+   *  drafting marker rendered at viewport top-right by default.
+   *  Engineer drags it to reposition + uses an Inspector rotation
+   *  slider to align it with the project's grid (Mongolian site
+   *  coordinates occasionally deviate from true north). All fields
+   *  optional — `applyNorthArrowDefaults` fills them in at render. */
+  northArrow?: NorthArrowMeta;
 
   /* ===== Layer system (Phase 6E + 6.6) ===== */
   /** Per-layer visibility / lock / colour overrides. Sparse — any
@@ -597,8 +631,14 @@ export interface UndoSnapshot {
   pipes: SchemePipe[];
   /** Phase 6.6.1 — kind union extended with "dimension".
    *  Phase 6.6.2 — extended again with "constructionLine".
-   *  Phase 6.6.3 — extended again with "annotation". */
-  selection: { kind: "node" | "pipe" | "dimension" | "constructionLine" | "annotation"; id: string } | null;
+   *  Phase 6.6.3 — extended again with "annotation".
+   *  Phase 6.7.3 — extended with singleton "northArrow" (no
+   *    multiSelection list — there is only one north arrow per
+   *    project). */
+  selection: {
+    kind: "node" | "pipe" | "dimension" | "constructionLine" | "annotation" | "northArrow";
+    id: string;
+  } | null;
   multiSelection: {
     nodeIds: string[];
     pipeIds: string[];
