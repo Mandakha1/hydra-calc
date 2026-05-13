@@ -475,6 +475,41 @@ export interface SchemeConstructionLine {
   style?: "dashed" | "solid" | "dotted";
 }
 
+/**
+ * Phase 6.6.3 — Text annotation entity.
+ *
+ * Free-positioned drafting text — engineer-typed notes, axis labels,
+ * room names, callout markers ("УДДТ-1", "ХУУ ороход дугуй болгох",
+ * "Φ80 — 100м"). UNLIKE dimensions (anchor-bound) and construction
+ * lines (start/end coords), annotations are a single-anchor entity
+ * with rotation + alignment + font size as the engineer's primary
+ * controls.
+ *
+ * Default layer is "D" (Drafting — visible in print). Engineer can
+ * move to "C" (Construction — hidden in print) for working notes.
+ */
+export interface SchemeAnnotation {
+  id: string;
+  /** Anchor position in scheme-space pixels. */
+  x: number;
+  y: number;
+  /** Text content. Newlines split into multi-line SVG tspans on
+   *  render. May be empty briefly while engineer is typing. */
+  text: string;
+  /** Font size in SVG pixels. Default 12. */
+  fontSize_px?: number;
+  /** Rotation in degrees about the anchor. Default 0 (horizontal).
+   *  Positive = counter-clockwise (matches transforms.ts convention). */
+  rotation_deg?: number;
+  /** Text alignment relative to (x, y). Default "left". */
+  align?: "left" | "center" | "right";
+  /** Layer assignment. "D" (default, visible in print) or "C"
+   *  (hidden in print by default). */
+  layerKey?: "D" | "C";
+  /** Optional colour override. When undefined, layer colour is used. */
+  color?: string;
+}
+
 /** Phase 6.5.5 — single undo/redo snapshot.
  *  Captures the minimum state needed to roll back / replay a batch
  *  operation: nodes + pipes + the two selection surfaces. Settings
@@ -489,19 +524,24 @@ export interface UndoSnapshot {
   nodes: SchemeNode[];
   pipes: SchemePipe[];
   /** Phase 6.6.1 — kind union extended with "dimension".
-   *  Phase 6.6.2 — extended again with "constructionLine". */
-  selection: { kind: "node" | "pipe" | "dimension" | "constructionLine"; id: string } | null;
+   *  Phase 6.6.2 — extended again with "constructionLine".
+   *  Phase 6.6.3 — extended again with "annotation". */
+  selection: { kind: "node" | "pipe" | "dimension" | "constructionLine" | "annotation"; id: string } | null;
   multiSelection: {
     nodeIds: string[];
     pipeIds: string[];
     dimensionIds?: string[];
     /** Phase 6.6.2 — construction-line selection set. */
     constructionLineIds?: string[];
+    /** Phase 6.6.3 — annotation selection set. */
+    annotationIds?: string[];
   };
   /** Phase 6.6.1 — dimensions snapshot for batched op undo. */
   dimensions?: SchemeDimension[];
   /** Phase 6.6.2 — construction-lines snapshot for batched op undo. */
   constructionLines?: SchemeConstructionLine[];
+  /** Phase 6.6.3 — annotations snapshot for batched op undo. */
+  annotations?: SchemeAnnotation[];
 }
 
 export type HydraulicState = {
@@ -525,6 +565,9 @@ export type HydraulicState = {
   /** Phase 6.6.2 — construction-line entities. Optional so legacy
    *  projects without drafting aids load cleanly. */
   constructionLines?: SchemeConstructionLine[];
+  /** Phase 6.6.3 — text annotation entities. Optional so legacy
+   *  projects without drafting aids load cleanly. */
+  annotations?: SchemeAnnotation[];
 };
 
 /** Default state for a fresh project. */

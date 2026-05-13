@@ -66,6 +66,16 @@ import {
   addConstructionLine,
   selectConstructionLine,
 } from "../scheme/constructionLineApplier";
+import {
+  annotationBoundingBox,
+  annotationLines,
+  effectiveFontSize,
+  LINE_HEIGHT_MULTIPLIER,
+} from "../scheme/annotations";
+import {
+  addAnnotation,
+  selectAnnotation,
+} from "../scheme/annotationApplier";
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
@@ -80,7 +90,8 @@ type Mode =
   | "measure"
   | "pickBuilding"
   | "drawDimension"
-  | "drawConstruction";
+  | "drawConstruction"
+  | "drawAnnotation";
 type AngleMode = "free" | "ortho90" | "ortho45";
 
 interface Props {
@@ -116,6 +127,8 @@ export function SchemeEditor({ readOnly }: Props) {
   const dimensions = useHydraulicStore((s) => s.dimensions);
   // Phase 6.6.2 — construction-line entities
   const constructionLines = useHydraulicStore((s) => s.constructionLines);
+  // Phase 6.6.3 — annotation entities
+  const annotations = useHydraulicStore((s) => s.annotations);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<Mode>("select");
@@ -610,6 +623,36 @@ export function SchemeEditor({ readOnly }: Props) {
           key: Date.now(),
           tone: "neutral",
         });
+      } else if (mode === "drawAnnotation") {
+        // Phase 6.6.3 — single-click flow: prompt for text, then drop
+        // the annotation at the snapped click point. Returning to
+        // "select" mode after a commit matches the dimension flow.
+        // Empty input cancels (engineer can also press Esc inside the
+        // prompt).
+        // eslint-disable-next-line no-alert
+        const text = typeof window !== "undefined" ? window.prompt("Тэмдэглэгээний текст:") : null;
+        const trimmed = (text ?? "").trim();
+        if (trimmed.length > 0) {
+          addAnnotation({
+            id: uid("note"),
+            x: pt.x,
+            y: pt.y,
+            text: trimmed,
+            layerKey: "D",
+          });
+          setMode("select");
+          setToast({
+            text: "Тэмдэглэгээ үүсгэв",
+            key: Date.now(),
+            tone: "success",
+          });
+        } else {
+          setToast({
+            text: "Тэмдэглэгээ цуцлав",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        }
       } else if (mode === "drawConstruction") {
         // Phase 6.6.2 — free-placement (no node anchor required).
         // First click sets start; second click commits the line.
@@ -995,10 +1038,34 @@ export function SchemeEditor({ readOnly }: Props) {
           hitPipeIds.push(p.id);
         }
       }
-      selectMany({ nodeIds: hitNodeIds, pipeIds: hitPipeIds });
+      // Phase 6.6.2 — construction-line hit-test: midpoint inside
+      // rect (the engineering "lasso" semantics — a guide line is
+      // selected when its centre is inside the box; partial-overlap
+      // is not selection-worthy).
+      const hitConstructionLineIds: string[] = [];
+      for (const cl of constructionLines ?? []) {
+        const mx = (cl.from.x + cl.to.x) / 2;
+        const my = (cl.from.y + cl.to.y) / 2;
+        if (mx >= minX && mx <= maxX && my >= minY && my <= maxY) {
+          hitConstructionLineIds.push(cl.id);
+        }
+      }
+      // Phase 6.6.3 — annotation hit-test: anchor inside rect.
+      const hitAnnotationIds: string[] = [];
+      for (const a of annotations ?? []) {
+        if (a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) {
+          hitAnnotationIds.push(a.id);
+        }
+      }
+      selectMany({
+        nodeIds: hitNodeIds,
+        pipeIds: hitPipeIds,
+        constructionLineIds: hitConstructionLineIds,
+        annotationIds: hitAnnotationIds,
+      });
       setRubberBand(null);
     }
-  }, [rubberBand, nodes, pipes, displayPos, selectMany, clearSelection]);
+  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection]);
 
   const onWheel = useCallback((e: WheelEvent<SVGSVGElement>) => {
     if (Math.abs(e.deltaY) < 1) return;
@@ -1033,8 +1100,13 @@ export function SchemeEditor({ readOnly }: Props) {
         const ms = useHydraulicStore.getState().multiSelection;
         const dimIdsSel = ms.dimensionIds ?? [];
         const clIdsSel = ms.constructionLineIds ?? [];
+        const anIdsSel = ms.annotationIds ?? [];
         const totalSelected =
-          ms.nodeIds.length + ms.pipeIds.length + dimIdsSel.length + clIdsSel.length;
+          ms.nodeIds.length
+          + ms.pipeIds.length
+          + dimIdsSel.length
+          + clIdsSel.length
+          + anIdsSel.length;
         const hasMulti = totalSelected > 1;
         if (hasMulti) {
           // Phase 6.5.5 — snapshot before cascade-delete so Ctrl+Z
@@ -1046,15 +1118,17 @@ export function SchemeEditor({ readOnly }: Props) {
           const nodeIds = [...ms.nodeIds];
           const dimIds = [...dimIdsSel];
           const clIds = [...clIdsSel];
+          const annIds = [...anIdsSel];
           for (const pid of pipeIds) useHydraulicStore.getState().removePipe(pid);
           for (const nid of nodeIds) useHydraulicStore.getState().removeNode(nid);
           // Drafting aids — set-based delete inline so we don't push
           // N extra snapshots (the appliers each push one; this batch
           // already pushed its own).
-          if (dimIds.length > 0 || clIds.length > 0) {
+          if (dimIds.length > 0 || clIds.length > 0 || annIds.length > 0) {
             useHydraulicStore.setState((s) => ({
               dimensions: (s.dimensions ?? []).filter((d) => !dimIds.includes(d.id)),
               constructionLines: (s.constructionLines ?? []).filter((c) => !clIds.includes(c.id)),
+              annotations: (s.annotations ?? []).filter((a) => !annIds.includes(a.id)),
             }));
           }
           useHydraulicStore.getState().clearSelection();
@@ -1076,6 +1150,7 @@ export function SchemeEditor({ readOnly }: Props) {
               pipeIds: s.multiSelection.pipeIds,
               dimensionIds: (s.multiSelection.dimensionIds ?? []).filter((x) => x !== selection.id),
               constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+              annotationIds: s.multiSelection.annotationIds ?? [],
             },
           }));
         } else if (selection.kind === "constructionLine") {
@@ -1088,6 +1163,20 @@ export function SchemeEditor({ readOnly }: Props) {
               pipeIds: s.multiSelection.pipeIds,
               dimensionIds: s.multiSelection.dimensionIds ?? [],
               constructionLineIds: (s.multiSelection.constructionLineIds ?? []).filter((x) => x !== selection.id),
+              annotationIds: s.multiSelection.annotationIds ?? [],
+            },
+          }));
+        } else if (selection.kind === "annotation") {
+          // Phase 6.6.3 — same pattern for annotations.
+          useHydraulicStore.setState((s) => ({
+            annotations: (s.annotations ?? []).filter((a) => a.id !== selection.id),
+            selection: null,
+            multiSelection: {
+              nodeIds: s.multiSelection.nodeIds,
+              pipeIds: s.multiSelection.pipeIds,
+              dimensionIds: s.multiSelection.dimensionIds ?? [],
+              constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+              annotationIds: (s.multiSelection.annotationIds ?? []).filter((x) => x !== selection.id),
             },
           }));
         }
@@ -1422,6 +1511,16 @@ export function SchemeEditor({ readOnly }: Props) {
             icon="┄"
             label="Туслах"
             color="#888"
+          />
+          <SideBtn
+            active={mode === "drawAnnotation"}
+            onClick={() => {
+              setMode((m) => (m === "drawAnnotation" ? "select" : "drawAnnotation"));
+              setShowPalette(null);
+            }}
+            icon="A"
+            label="Тэмдэглэгээ"
+            color="#222"
           />
           <SideBtn
             active={mode === "pickBuilding"}
@@ -2034,6 +2133,128 @@ export function SchemeEditor({ readOnly }: Props) {
                   stroke="white"
                   strokeWidth={1.25}
                 />
+              </g>
+            )}
+
+            {/* Phase 6.6.3 — Annotations. Rendered before pipes so
+                pipes can hover above the text labels. Each annotation
+                renders as a multi-line rotated SVG <text> with a
+                white halo for legibility. Layer "D" by default
+                (visible in print). Multi-select gold rect overlay. */}
+            {(() => {
+              const annos = annotations ?? [];
+              if (annos.length === 0) return null;
+              return annos.map((a) => {
+                const lk = a.layerKey ?? "D";
+                const layer = resolveLayerByKey(lk, settings.layers);
+                if (!layer.visible) return null;
+                const isSelected = selection?.kind === "annotation" && selection.id === a.id;
+                const isMultiSelected = (multiSelection.annotationIds ?? []).includes(a.id);
+                const color = a.color ?? (isSelected ? "var(--accent)" : layer.color);
+                const fs = effectiveFontSize(a);
+                const rot = a.rotation_deg ?? 0;
+                const anchor =
+                  a.align === "center" ? "middle"
+                  : a.align === "right" ? "end"
+                  : "start";
+                const lines = annotationLines(a);
+                const bb = annotationBoundingBox(a);
+                return (
+                  <g
+                    key={a.id}
+                    data-testid={`annotation-${a.id}`}
+                    onMouseDown={(e) => {
+                      if (mode === "select" || mode === "drawAnnotation") {
+                        e.stopPropagation();
+                        if (e.ctrlKey || e.metaKey) {
+                          selectToggle({ kind: "annotation", id: a.id });
+                          return;
+                        }
+                        if (e.shiftKey) {
+                          selectExtend({ kind: "annotation", id: a.id });
+                          return;
+                        }
+                        selectAnnotation(a.id);
+                      }
+                    }}
+                    style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                  >
+                    {isMultiSelected && (
+                      <rect
+                        x={bb.minX - 4}
+                        y={bb.minY - 4}
+                        width={bb.maxX - bb.minX + 8}
+                        height={bb.maxY - bb.minY + 8}
+                        fill="none"
+                        stroke="#FFB300"
+                        strokeWidth={2}
+                        strokeDasharray="3 2"
+                        pointerEvents="none"
+                        transform={rot !== 0 ? `rotate(${rot} ${a.x} ${a.y})` : undefined}
+                      />
+                    )}
+                    {/* Invisible hit zone for easier clicking. */}
+                    <rect
+                      x={bb.minX - 2}
+                      y={bb.minY - 2}
+                      width={bb.maxX - bb.minX + 4}
+                      height={bb.maxY - bb.minY + 4}
+                      fill="transparent"
+                      pointerEvents="all"
+                      transform={rot !== 0 ? `rotate(${rot} ${a.x} ${a.y})` : undefined}
+                      style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                    />
+                    <text
+                      x={a.x}
+                      y={a.y}
+                      fontSize={fs}
+                      fontFamily="var(--font-mono)"
+                      fill={color}
+                      stroke="white"
+                      strokeWidth={3}
+                      paintOrder="stroke"
+                      textAnchor={anchor}
+                      transform={rot !== 0 ? `rotate(${rot} ${a.x} ${a.y})` : undefined}
+                      pointerEvents="none"
+                    >
+                      {lines.map((ln, i) => (
+                        <tspan
+                          key={i}
+                          x={a.x}
+                          dy={i === 0 ? 0 : fs * LINE_HEIGHT_MULTIPLIER}
+                        >
+                          {ln}
+                        </tspan>
+                      ))}
+                    </text>
+                  </g>
+                );
+              });
+            })()}
+
+            {/* Phase 6.6.3 — Annotation drawing preview marker. */}
+            {mode === "drawAnnotation" && mousePos && (
+              <g pointerEvents="none">
+                <circle
+                  cx={mousePos.x}
+                  cy={mousePos.y}
+                  r={5}
+                  fill="#222"
+                  fillOpacity={0.35}
+                  stroke="white"
+                  strokeWidth={1.25}
+                />
+                <text
+                  x={mousePos.x + 8}
+                  y={mousePos.y - 6}
+                  fontSize={10}
+                  fill="#222"
+                  stroke="white"
+                  strokeWidth={3}
+                  paintOrder="stroke"
+                >
+                  Click to place
+                </text>
               </g>
             )}
 

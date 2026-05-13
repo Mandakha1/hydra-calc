@@ -13,11 +13,16 @@ import {
   removeConstructionLine,
 } from "../scheme/constructionLineApplier";
 import { constructionLineLength } from "../scheme/constructionLines";
+import {
+  updateAnnotation,
+  removeAnnotation,
+} from "../scheme/annotationApplier";
 import type {
   BuildingEnvelope,
   EnvelopeSurface,
   SchemeDimension,
   SchemeConstructionLine,
+  SchemeAnnotation,
 } from "../hydraulicTypes";
 
 export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
@@ -27,6 +32,7 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   const settings = useHydraulicStore((s) => s.settings);
   const dimensions = useHydraulicStore((s) => s.dimensions);
   const constructionLines = useHydraulicStore((s) => s.constructionLines);
+  const annotations = useHydraulicStore((s) => s.annotations);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
@@ -203,6 +209,102 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             onClick={() => removeConstructionLine(cl.id)}
           >
             Туслах шугамыг устгах
+          </button>
+        )}
+      </aside>
+    );
+  }
+
+  // Phase 6.6.3 — annotation inspector branch.
+  if (selection.kind === "annotation") {
+    const annotation = (annotations ?? []).find(
+      (a: SchemeAnnotation) => a.id === selection.id,
+    );
+    if (!annotation) return null;
+    return (
+      <aside style={sidebarStyle}>
+        <h3>Тэмдэглэгээ</h3>
+        <Field label="Текст">
+          <textarea
+            rows={3}
+            value={annotation.text}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateAnnotation(annotation.id, { text: e.target.value })
+            }
+            style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }}
+          />
+        </Field>
+        <Field label={`Шрифт (${annotation.fontSize_px ?? 12}px)`}>
+          <input
+            type="range"
+            min={8}
+            max={32}
+            value={annotation.fontSize_px ?? 12}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateAnnotation(annotation.id, { fontSize_px: Number(e.target.value) })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label={`Эргүүлэлт (${(annotation.rotation_deg ?? 0).toFixed(0)}°)`}>
+          <input
+            type="range"
+            min={-180}
+            max={180}
+            step={5}
+            value={annotation.rotation_deg ?? 0}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateAnnotation(annotation.id, { rotation_deg: Number(e.target.value) })
+            }
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Текстийн зэрэгцүүлэлт">
+          <select
+            value={annotation.align ?? "left"}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateAnnotation(annotation.id, {
+                align: e.target.value as SchemeAnnotation["align"],
+              })
+            }
+            style={inputStyle}
+          >
+            <option value="left">Зүүн (left)</option>
+            <option value="center">Төв (center)</option>
+            <option value="right">Баруун (right)</option>
+          </select>
+        </Field>
+        <Field label="Давхрага">
+          <select
+            value={annotation.layerKey ?? "D"}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateAnnotation(annotation.id, {
+                layerKey: e.target.value as "D" | "C",
+              })
+            }
+            style={inputStyle}
+          >
+            <option value="D">D — Хэмжээс / Текст</option>
+            <option value="C">C — Туслах шугам</option>
+          </select>
+        </Field>
+        {!readOnly && (
+          <button
+            style={{
+              ...inputStyle,
+              color: "var(--danger)",
+              borderColor: "var(--danger)",
+              marginTop: 8,
+              cursor: "pointer",
+            }}
+            onClick={() => removeAnnotation(annotation.id)}
+          >
+            Тэмдэглэгээг устгах
           </button>
         )}
       </aside>

@@ -73,14 +73,17 @@ export function pushUndoSnapshot(label: string, affectedCount: number): void {
       pipeIds: [...s.multiSelection.pipeIds],
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
+      annotationIds: [...(s.multiSelection.annotationIds ?? [])],
     },
     // Phase 6.6.1 declared `dimensions?` on UndoSnapshot but didn't
     // wire the read/write paths, so Ctrl+Z after addDimension was a
     // silent no-op (the stack entry existed but undoing only touched
-    // nodes/pipes). Phase 6.6.2 fixes both at once — drafting aids
-    // now round-trip through undo/redo as expected.
+    // nodes/pipes). Phase 6.6.2 fixed both at once — drafting aids
+    // now round-trip through undo/redo as expected. Phase 6.6.3
+    // extends the same path to annotations.
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
+    annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
   };
   const existing = s.undoStack ?? [];
   const next = [...existing, snap];
@@ -120,15 +123,17 @@ export function undo(): { label: string; affectedCount: number } | null {
       pipeIds: [...s.multiSelection.pipeIds],
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
+      annotationIds: [...(s.multiSelection.annotationIds ?? [])],
     },
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
+    annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
   };
 
   // Apply the snapshot. Drafting aids restored only when the
-  // snapshot has them (older snapshots from pre-6.6.2 sessions
+  // snapshot has them (older snapshots from pre-6.6.x sessions
   // that somehow leaked in would be `undefined` — leave current
-  // dimensions/constructionLines alone in that case).
+  // arrays alone in that case).
   useHydraulicStore.setState({
     nodes: top.nodes,
     pipes: top.pipes,
@@ -136,6 +141,7 @@ export function undo(): { label: string; affectedCount: number } | null {
     multiSelection: top.multiSelection,
     ...(top.dimensions !== undefined ? { dimensions: top.dimensions } : {}),
     ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
+    ...(top.annotations !== undefined ? { annotations: top.annotations } : {}),
     undoStack: stack.slice(0, stack.length - 1),
     redoStack: [...(s.redoStack ?? []), currentSnap],
   });
@@ -167,9 +173,11 @@ export function redo(): { label: string; affectedCount: number } | null {
       pipeIds: [...s.multiSelection.pipeIds],
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
+      annotationIds: [...(s.multiSelection.annotationIds ?? [])],
     },
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
+    annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
   };
 
   useHydraulicStore.setState({
@@ -179,6 +187,7 @@ export function redo(): { label: string; affectedCount: number } | null {
     multiSelection: top.multiSelection,
     ...(top.dimensions !== undefined ? { dimensions: top.dimensions } : {}),
     ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
+    ...(top.annotations !== undefined ? { annotations: top.annotations } : {}),
     undoStack: [...(s.undoStack ?? []), currentSnap],
     redoStack: stack.slice(0, stack.length - 1),
   });
