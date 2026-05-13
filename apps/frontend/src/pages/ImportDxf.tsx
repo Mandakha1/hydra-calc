@@ -7,7 +7,7 @@
 import { useState, type DragEvent, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  importDxfText,
+  importDxfBytes,
   importBayangolSample,
   type DxfImportResult,
 } from "../lib/dxfImport";
@@ -33,8 +33,11 @@ export function ImportDxf() {
     setResult(null);
     setFilename(file.name);
     try {
-      const text = await file.text();
-      const r = await importDxfText(text, { heatingOnly, defaultDn });
+      // Phase 7.1 — use the bytes path so the CP1251 sniffer can run.
+      // Mongolian / older Russian AutoCAD output is frequently CP1251
+      // and would mojibake through plain `file.text()`.
+      const buffer = await file.arrayBuffer();
+      const r = await importDxfBytes(buffer, { heatingOnly, defaultDn });
       setResult(r);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Импорт амжилтгүй");
