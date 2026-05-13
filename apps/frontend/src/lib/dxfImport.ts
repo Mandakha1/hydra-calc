@@ -19,6 +19,10 @@
 import DxfParser from "dxf-parser";
 import type { SchemeNode, SchemePipe, ProjectSettings } from "../components/hydraulic/hydraulicTypes";
 import { PX_PER_METER } from "../components/hydraulic/nodeCatalog";
+// Phase 7.1 — Mongolian / Russian Cyrillic in older AutoCAD output is
+// often Windows-1251, not UTF-8. The shared encoding module sniffs
+// `$DWGCODEPAGE` + does a byte-density heuristic before deciding.
+import { decodeDxfBytes, type DxfDecodeResult } from "./encoding";
 
 /* ============================================================================
  *  PUBLIC TYPES — what an importer call returns
@@ -459,4 +463,53 @@ export async function importBayangolSample(): Promise<DxfImportResult> {
   if (!res.ok) throw new Error("Жишээ файл татагдсангүй");
   const json = (await res.json()) as ExtractedDxf;
   return importDxfJson(json, { heatingOnly: true });
+}
+
+/* ============================================================================
+ *  IMPORT — raw bytes (Phase 7.1) — handles CP1251 / UTF-8 auto-detect
+ * ========================================================================== */
+
+/**
+ * Phase 7.1 — modern entry point that takes raw bytes (from
+ * `File.arrayBuffer()`) and runs the 3-tier encoding sniff before
+ * handing the decoded string to `importDxfText`.
+ *
+ * Use this in preference to `importDxfText` for browser-uploaded
+ * files: it correctly handles older Mongolian / Russian DXFs whose
+ * Cyrillic content is Windows-1251 rather than UTF-8.
+ *
+ * The result carries an extra `encodingDiagnostic` field so the
+ * engineer-facing import UI can surface "Encoding: CP1251 (auto-
+ * detected)" — and mojibake-count warnings flag misclassified files
+ * before commit.
+ */
+export interface DxfImportResultWithEncoding extends DxfImportResult {
+  encodingDiagnostic: DxfDecodeResult;
+}
+
+export async function importDxfBytes(
+  buffer: ArrayBuffer,
+  opts: {
+    heatingOnly?: boolean;
+    defaultDn?: number;
+    /** Override the encoding auto-detect — engineer-facing escape
+     *  hatch when the 3-tier sniff misclassifies a file. */
+    forceEncoding?: "utf-8" | "cp1251";
+  } = {},
+): Promise<DxfImportResultWithEncoding> {
+  const decoded = decodeDxfBytes(buffer, { forceEncoding: opts.forceEncoding });
+  const result = await importDxfText(decoded.text, opts);
+  // Mojibake warning is engineer-visible — if the decoder dropped
+  // replacement characters into the text, prepend a warning so the
+  // import-page banner surfaces it before commit.
+  if (decoded.replacementCharCount > 0) {
+    result.warnings = [
+      `Кодлогдол алдаа: ${decoded.replacementCharCount} тэмдэгт сольсон ` +
+        `(тооцоолсон кодлогдол: ${decoded.encoding}${
+          decoded.codepageHeader ? ` / $DWGCODEPAGE=${decoded.codepageHeader}` : ""
+        }). Файл буруу кодлогдсон бол "Force encoding" сонгоно уу.`,
+      ...result.warnings,
+    ];
+  }
+  return { ...result, encodingDiagnostic: decoded };
 }

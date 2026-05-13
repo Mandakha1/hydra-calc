@@ -12,6 +12,8 @@
 import initSqlJs, { type Database } from "sql.js";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import type { HydraulicState, SchemeNode, SchemePipe } from "../components/hydraulic/hydraulicTypes";
+// Phase 7.1 — CP1251 encoder lifted to shared module.
+import { encodeCP1251ToByteString } from "./encoding";
 
 let SQL: Awaited<ReturnType<typeof initSqlJs>> | null = null;
 async function getSql() {
@@ -19,31 +21,10 @@ async function getSql() {
   return SQL;
 }
 
-/* ---------------- cp1251 encoder (reverse of importer's decoder) ---------------- */
-const CP1251_REVERSE: Record<number, number> = (() => {
-  const map: Record<number, number> = {};
-  // ASCII passes through
-  for (let i = 0; i < 0x80; i += 1) map[i] = i;
-  // Cyrillic A-Я / а-я block
-  for (let i = 0; i < 64; i += 1) {
-    map[0x0410 + i] = 0xC0 + i; // А-Я → C0-FF (uppercase + lowercase)
-  }
-  map[0x0401] = 0xA8; // Ё
-  map[0x0451] = 0xB8; // ё
-  map[0x0490] = 0xA5; // Ґ
-  map[0x0491] = 0xB4; // ґ
-  return map;
-})();
-
-function encodeCp1251(s: string): string {
-  // Return JS string where each char-code IS the cp1251 byte (sql.js writes bytes through).
-  let out = "";
-  for (let i = 0; i < s.length; i += 1) {
-    const cp = s.charCodeAt(i);
-    out += String.fromCharCode(CP1251_REVERSE[cp] ?? (cp < 0x100 ? cp : 0x3F /* ? */));
-  }
-  return out;
-}
+// Phase 7.1 — CP1251 encoder lives in `./encoding.ts`. The Zulu
+// .sqlite path keeps using the byte-string variant since sql.js
+// writes JS strings as raw bytes one-char-per-byte.
+const encodeCp1251 = encodeCP1251ToByteString;
 
 /* ---------------- table DDL ---------------- */
 const DDL = {
