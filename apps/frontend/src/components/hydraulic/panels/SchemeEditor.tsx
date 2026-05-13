@@ -57,11 +57,7 @@ import {
   removeDimension,
   selectDimension,
 } from "../scheme/dimensionApplier";
-import {
-  strokeDasharrayForStyle,
-  constructionLineMidpoint,
-  constructionLineBoundingBox,
-} from "../scheme/constructionLines";
+import { strokeDasharrayForStyle } from "../scheme/constructionLines";
 import {
   addConstructionLine,
   selectConstructionLine,
@@ -94,8 +90,13 @@ import {
 import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
+import { projectGeoToSchemeXY } from "../scheme/projection";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
-import type { SchemeNode, SchemePipe } from "../hydraulicTypes";
+import type {
+  SchemeNode,
+  SchemePipe,
+  SchemeAnnotation,
+} from "../hydraulicTypes";
 
 type Mode =
   | "select"
@@ -180,8 +181,6 @@ export function SchemeEditor({ readOnly }: Props) {
   const [animateFlow, setAnimateFlow] = useState(true);
   /** Алдааны pulsation — violations байх үед автомат идэвхждэг. */
   const [animateErrors, setAnimateErrors] = useState(true);
-  /** Газрын зураг дээр шууд зурах горим — click дарахад lat/lon-д хадгалагдана. */
-  const [mapAnchored, setMapAnchored] = useState(false);
   /** Leaflet map ref — used to convert lat/lon ↔ container px. */
   const leafletMapRef = useRef<L.Map | null>(null);
   /** Bumped on map move/zoom to force a render so geo-anchored nodes reposition. */
@@ -226,8 +225,18 @@ export function SchemeEditor({ readOnly }: Props) {
   /** Phase 6.6.2 — construction-line drawing state. Free-coord
    *  (no node anchor) — first click sets the start point in scheme
    *  pixel space, second click anywhere commits the line. Esc
-   *  cancels in-flight. */
-  const [pendingConstructionAnchor, setPendingConstructionAnchor] = useState<{ x: number; y: number } | null>(null);
+   *  cancels in-flight.
+   *
+   *  Phase 6.8.2: anchor also carries an optional geo lat/lon
+   *  captured at first-click time. When the engineer pans/zooms the
+   *  map between clicks, the preview line + final committed
+   *  `geoFrom` track the original click in world space (rather than
+   *  drifting with the map). */
+  const [pendingConstructionAnchor, setPendingConstructionAnchor] = useState<{
+    x: number;
+    y: number;
+    geo?: { lat: number; lon: number };
+  } | null>(null);
   /** Phase 6.7.1 — viewport dimensions for placing fixed-position
    *  widgets (ScaleBar bottom-left, future Title Block, etc.) outside
    *  the pan/zoom transform. Tracked via ResizeObserver in an effect
@@ -383,25 +392,70 @@ export function SchemeEditor({ readOnly }: Props) {
 
   /** For a node with .geo, compute its current display SVG coords from leaflet map.
    *  IMPORTANT: as long as the map is visible AND the node has .geo, we follow
-   *  the map — regardless of the mapAnchored toggle (which only controls
-   *  whether NEW clicks save geo). This way a node that was created on the
-   *  map keeps tracking when the user pans/zooms even after they toggle the
-   *  pin off. */
+   *  the map. Phase 6.8.2 dropped the old "mapAnchored" opt-in toggle — now
+   *  every canvas click while the map is on captures geo, so the entity
+   *  always tracks pan/zoom from the moment it's drawn. Legacy nodes
+   *  without .geo (placed before the map was opened) keep their plain x/y.
+   *
+   *  Phase 6.8.2: math extracted to `scheme/projection.ts` so annotations
+   *  + construction-line endpoints can use the same projection (see
+   *  `displayPosAnnotation` and `displayPosConstructionEndpoint` below). */
   const displayPos = useCallback((n: SchemeNode): Point => {
-    const map = leafletMapRef.current;
-    const svg = svgRef.current;
-    if (!showMap || !n.geo || !map || !svg) return { x: n.x, y: n.y };
-    const containerPt = map.latLngToContainerPoint([n.geo.lat, n.geo.lon]);
-    const mapRect = map.getContainer().getBoundingClientRect();
-    const svgRect = svg.getBoundingClientRect();
-    const screenX = mapRect.left + containerPt.x;
-    const screenY = mapRect.top + containerPt.y;
-    return {
-      x: (screenX - svgRect.left - RULER_PX) / zoom - pan.x,
-      y: (screenY - svgRect.top - RULER_PX) / zoom - pan.y,
-    };
-    // mapTick is intentionally referenced via .current/closure; we depend on it
-    // as a render trigger in the effect that calls setMapTick.
+    if (!showMap || !n.geo) return { x: n.x, y: n.y };
+    const projected = projectGeoToSchemeXY(
+      n.geo,
+      leafletMapRef.current,
+      svgRef.current,
+      RULER_PX,
+      zoom,
+      pan,
+    );
+    return projected ?? { x: n.x, y: n.y };
+    // mapTick is intentionally referenced via the dep array as a render
+    // trigger — the math reads svg/map refs lazily, not from React state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showMap, pan, zoom, mapTick]);
+
+  /** Phase 6.8.2 — annotation display helper. Mirrors `displayPos` for
+   *  the new `SchemeAnnotation.geo` field so drafting text follows the
+   *  map view alongside nodes/pipes. Legacy annotations without geo
+   *  (drawn before Phase 6.8.2 or before the map was visible) fall
+   *  back to their stored pixel anchor. */
+  const displayPosAnnotation = useCallback((a: SchemeAnnotation): Point => {
+    if (!showMap || !a.geo) return { x: a.x, y: a.y };
+    const projected = projectGeoToSchemeXY(
+      a.geo,
+      leafletMapRef.current,
+      svgRef.current,
+      RULER_PX,
+      zoom,
+      pan,
+    );
+    return projected ?? { x: a.x, y: a.y };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showMap, pan, zoom, mapTick]);
+
+  /** Phase 6.8.2 — construction-line endpoint display helper. Construction
+   *  lines have two free endpoints (`from`, `to`) each with its own
+   *  optional geo anchor (`geoFrom`, `geoTo`). The renderer calls this
+   *  twice per line — once per endpoint — and feeds the two display
+   *  points into the line geometry. Fallback to pixel coords when geo
+   *  is missing keeps Phase 6.6.2 legacy lines rendering exactly as
+   *  before. */
+  const displayPosConstructionEndpoint = useCallback((
+    point: { x: number; y: number },
+    geo: { lat: number; lon: number } | undefined,
+  ): Point => {
+    if (!showMap || !geo) return { x: point.x, y: point.y };
+    const projected = projectGeoToSchemeXY(
+      geo,
+      leafletMapRef.current,
+      svgRef.current,
+      RULER_PX,
+      zoom,
+      pan,
+    );
+    return projected ?? { x: point.x, y: point.y };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMap, pan, zoom, mapTick]);
 
@@ -422,8 +476,9 @@ export function SchemeEditor({ readOnly }: Props) {
   );
 
   /**
-   * Place a new node at a canvas point (already snapped). Saves geo lat/lon
-   * if mapAnchored is on, OR if explicit geo is passed (used by map-click path).
+   * Place a new node at a canvas point (already snapped). Phase 6.8.2:
+   * captures geo lat/lon automatically whenever the map is visible (no
+   * opt-in toggle). Explicit `opts.geo` from the map-click path still wins.
    */
   const placeNodeAt = useCallback((pt: Point, opts?: { geo?: { lat: number; lon: number } }) => {
     if (readOnly) return;
@@ -450,7 +505,7 @@ export function SchemeEditor({ readOnly }: Props) {
     }
     const kindDef = getNodeKind(pendingKind);
     const id = uid(pendingKind.split("_")[0] ?? "n");
-    const geo = opts?.geo ?? (mapAnchored && showMap ? svgToLatLon(pt) : null);
+    const geo = opts?.geo ?? (showMap ? svgToLatLon(pt) : null);
     addNode({
       id,
       kind: pendingKind,
@@ -465,7 +520,7 @@ export function SchemeEditor({ readOnly }: Props) {
     // Reference the new-module grid helper so dead-code elimination
     // keeps it tree-shaken in for downstream callers (6D will use it).
     void snapPointToGridM;
-  }, [readOnly, pendingKind, mapAnchored, showMap, svgToLatLon, addNode, nodes, select, settings.snapEndpoint, displayPos]);
+  }, [readOnly, pendingKind, showMap, svgToLatLon, addNode, nodes, select, settings.snapEndpoint, displayPos]);
 
   /**
    * When the user clicks directly on the Leaflet map (not blocked by an SVG
@@ -677,12 +732,18 @@ export function SchemeEditor({ readOnly }: Props) {
         const text = typeof window !== "undefined" ? window.prompt("Тэмдэглэгээний текст:") : null;
         const trimmed = (text ?? "").trim();
         if (trimmed.length > 0) {
+          // Phase 6.8.2 — stamp geo lat/lon when the map is visible
+          // so the annotation follows pan/zoom (same pattern as
+          // placeNodeAt). Legacy non-map projects continue to drop
+          // the field and render off plain x/y.
+          const geo = showMap ? svgToLatLon(pt) : null;
           addAnnotation({
             id: uid("note"),
             x: pt.x,
             y: pt.y,
             text: trimmed,
             layerKey: "D",
+            ...(geo ? { geo: { lat: geo.lat, lon: geo.lon } } : {}),
           });
           setMode("select");
           setToast({
@@ -700,8 +761,17 @@ export function SchemeEditor({ readOnly }: Props) {
       } else if (mode === "drawConstruction") {
         // Phase 6.6.2 — free-placement (no node anchor required).
         // First click sets start; second click commits the line.
+        // Phase 6.8.2 — both clicks capture geo when the map is
+        // visible so each endpoint tracks the map independently
+        // (so an engineer can pan/zoom freely between the two
+        // clicks without the anchor "drifting").
         if (!pendingConstructionAnchor) {
-          setPendingConstructionAnchor(pt);
+          const anchorGeo = showMap ? svgToLatLon(pt) : null;
+          setPendingConstructionAnchor({
+            x: pt.x,
+            y: pt.y,
+            ...(anchorGeo ? { geo: { lat: anchorGeo.lat, lon: anchorGeo.lon } } : {}),
+          });
           setToast({
             text: "Эхний цэг тогтлоо. Дараагийн цэг рүү дарж туслах шугам үүсгэнэ.",
             key: Date.now(),
@@ -715,12 +785,17 @@ export function SchemeEditor({ readOnly }: Props) {
           // is applied for consistency with measure/polygon flows so
           // 90°/45° snap respects the engineer's setting.
           const endPt = snap(constrain(pendingConstructionAnchor, pt));
+          const endGeo = showMap ? svgToLatLon(endPt) : null;
           addConstructionLine({
             id: uid("cl"),
             from: { x: pendingConstructionAnchor.x, y: pendingConstructionAnchor.y },
             to: { x: endPt.x, y: endPt.y },
             layerKey: "C",
             style: "dashed",
+            ...(pendingConstructionAnchor.geo
+              ? { geoFrom: pendingConstructionAnchor.geo }
+              : {}),
+            ...(endGeo ? { geoTo: { lat: endGeo.lat, lon: endGeo.lon } } : {}),
           });
           setPendingConstructionAnchor(null);
           setMode("select");
@@ -750,6 +825,7 @@ export function SchemeEditor({ readOnly }: Props) {
       pickBuildingFromOsm,
       svgToLatLon,
       pendingConstructionAnchor,
+      showMap,
     ],
   );
 
@@ -809,8 +885,19 @@ export function SchemeEditor({ readOnly }: Props) {
       // is recorded — the construction line just stores the (x,y).
       if (mode === "drawConstruction") {
         const nodePt = { x: node.x, y: node.y };
+        // Phase 6.8.2 — when the construction line snaps to an
+        // existing node, inherit the node's geo (if any) so the
+        // endpoint keeps tracking the node's real-world position
+        // even if the engineer moves the node afterwards or the
+        // map pans. Falls back to a fresh svgToLatLon for un-geo
+        // nodes on a visible map.
+        const nodeGeo = node.geo ?? (showMap ? svgToLatLon(nodePt) : null);
         if (!pendingConstructionAnchor) {
-          setPendingConstructionAnchor(nodePt);
+          setPendingConstructionAnchor({
+            x: nodePt.x,
+            y: nodePt.y,
+            ...(nodeGeo ? { geo: { lat: nodeGeo.lat, lon: nodeGeo.lon } } : {}),
+          });
           setToast({
             text: "Эхний цэг тогтлоо. Дараагийн цэг рүү дарж туслах шугам үүсгэнэ.",
             key: Date.now(),
@@ -826,6 +913,10 @@ export function SchemeEditor({ readOnly }: Props) {
             to: nodePt,
             layerKey: "C",
             style: "dashed",
+            ...(pendingConstructionAnchor.geo
+              ? { geoFrom: pendingConstructionAnchor.geo }
+              : {}),
+            ...(nodeGeo ? { geoTo: { lat: nodeGeo.lat, lon: nodeGeo.lon } } : {}),
           });
           setPendingConstructionAnchor(null);
           setMode("select");
@@ -896,6 +987,8 @@ export function SchemeEditor({ readOnly }: Props) {
       pipeLengthInput,
       pendingDimAnchor,
       pendingConstructionAnchor,
+      showMap,
+      svgToLatLon,
     ],
   );
 
@@ -1026,9 +1119,11 @@ export function SchemeEditor({ readOnly }: Props) {
       if (drag) {
         const snapped = snap({ x: pt.x - drag.offX, y: pt.y - drag.offY });
         const patch: Partial<SchemeNode> = { x: Math.round(snapped.x), y: Math.round(snapped.y) };
-        // If we're in map-anchored mode, also update geo so the node stays
-        // pinned to that lat/lon when the user pans/zooms the map afterward.
-        if (mapAnchored && showMap) {
+        // Phase 6.8.2 — always re-stamp geo when the map is visible, so a
+        // node that already tracks the map keeps a fresh anchor after the
+        // engineer drags it, and a legacy non-geo node picks up an anchor
+        // as soon as it's moved on a visible map.
+        if (showMap) {
           const ll = svgToLatLon(snapped);
           if (ll) patch.geo = { lat: ll.lat, lon: ll.lon };
         }
@@ -1049,7 +1144,6 @@ export function SchemeEditor({ readOnly }: Props) {
       toSvg,
       updateNode,
       snap,
-      mapAnchored,
       showMap,
       svgToLatLon,
       waypointDrag,
@@ -1498,33 +1592,9 @@ export function SchemeEditor({ readOnly }: Props) {
           <LayerPanel />
         </div>
       )}
-      {showMap && !readOnly && (
-        <button
-          onClick={() => setMapAnchored((m) => !m)}
-          title={mapAnchored
-            ? "Газрын зурагт уях горим — асаалттай. Click дарахад lat/lon-д хадгалагдана."
-            : "Газрын зурагт уях горим — унтраалттай. Click нь зөвхөн pixel-д үүсгэнэ."}
-          style={{
-            position: "absolute",
-            top: 60,
-            right: 56,
-            zIndex: 6,
-            padding: "0.4rem 0.7rem",
-            fontSize: 12,
-            background: mapAnchored ? "var(--bp-blue)" : "var(--bp-bg-2)",
-            color: mapAnchored ? "var(--bp-bg-2)" : "var(--bp-text)",
-            border: `1px solid ${mapAnchored ? "var(--bp-blue)" : "var(--bp-line-2)"}`,
-            borderRadius: 6,
-            cursor: "pointer",
-            fontWeight: 600,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          📍 {mapAnchored ? "Газрын зурагт уясан" : "Газрын зурагт уях"}
-        </button>
-      )}
+      {/* Phase 6.8.2 — the old "📍 Газрын зурагт уях" toggle was dropped.
+          Geo-anchoring is now implicit: any entity drawn while the map is
+          visible captures lat/lon automatically and tracks pan/zoom. */}
 
       {/* Vertical category toolbar */}
       {!readOnly && !hideUi && (
@@ -2148,9 +2218,28 @@ export function SchemeEditor({ readOnly }: Props) {
                 const isMultiSelected = (multiSelection.constructionLineIds ?? []).includes(cl.id);
                 const color = isSelected ? "var(--accent)" : layer.color;
                 const dash = strokeDasharrayForStyle(cl.style);
-                const mid = constructionLineMidpoint(cl);
-                const angle_deg = (Math.atan2(cl.to.y - cl.from.y, cl.to.x - cl.from.x) * 180) / Math.PI;
-                const bb = constructionLineBoundingBox(cl);
+                // Phase 6.8.2 — each endpoint may carry an
+                // independent geo anchor (geoFrom / geoTo). The
+                // display helper falls back to the stored x/y when
+                // the map isn't visible or the line is a legacy
+                // Phase 6.6.2 entity without geo — so the rendered
+                // line matches old behaviour exactly when nothing
+                // has changed.
+                const fromDp = displayPosConstructionEndpoint(cl.from, cl.geoFrom);
+                const toDp = displayPosConstructionEndpoint(cl.to, cl.geoTo);
+                const mid = { x: (fromDp.x + toDp.x) / 2, y: (fromDp.y + toDp.y) / 2 };
+                const angle_deg = (Math.atan2(toDp.y - fromDp.y, toDp.x - fromDp.x) * 180) / Math.PI;
+                // Recompute the bounding box from the DISPLAYED
+                // endpoints so the multi-select highlight follows
+                // the map view. Inline (vs constructionLineBoundingBox)
+                // because the helper takes the stored entity, not
+                // free-form points.
+                const bb = {
+                  minX: Math.min(fromDp.x, toDp.x),
+                  minY: Math.min(fromDp.y, toDp.y),
+                  maxX: Math.max(fromDp.x, toDp.x),
+                  maxY: Math.max(fromDp.y, toDp.y),
+                };
                 return (
                   <g
                     key={cl.id}
@@ -2180,10 +2269,10 @@ export function SchemeEditor({ readOnly }: Props) {
                     {/* Wider invisible hit zone for easier clicking on
                         a thin dashed/dotted stroke. */}
                     <line
-                      x1={cl.from.x}
-                      y1={cl.from.y}
-                      x2={cl.to.x}
-                      y2={cl.to.y}
+                      x1={fromDp.x}
+                      y1={fromDp.y}
+                      x2={toDp.x}
+                      y2={toDp.y}
                       stroke="transparent"
                       strokeWidth={10}
                       pointerEvents="stroke"
@@ -2191,10 +2280,10 @@ export function SchemeEditor({ readOnly }: Props) {
                     />
                     {/* Visible line */}
                     <line
-                      x1={cl.from.x}
-                      y1={cl.from.y}
-                      x2={cl.to.x}
-                      y2={cl.to.y}
+                      x1={fromDp.x}
+                      y1={fromDp.y}
+                      x2={toDp.x}
+                      y2={toDp.y}
                       stroke={color}
                       strokeWidth={1.25}
                       strokeDasharray={dash}
@@ -2226,28 +2315,38 @@ export function SchemeEditor({ readOnly }: Props) {
               });
             })()}
 
-            {/* Phase 6.6.2 — Construction-line drawing preview. */}
-            {mode === "drawConstruction" && pendingConstructionAnchor && mousePos && (
-              <g pointerEvents="none">
-                <line
-                  x1={pendingConstructionAnchor.x}
-                  y1={pendingConstructionAnchor.y}
-                  x2={mousePos.x}
-                  y2={mousePos.y}
-                  stroke="#888"
-                  strokeWidth={1.25}
-                  strokeDasharray="6 4"
-                />
-                <circle
-                  cx={pendingConstructionAnchor.x}
-                  cy={pendingConstructionAnchor.y}
-                  r={4}
-                  fill="#888"
-                  stroke="white"
-                  strokeWidth={1.25}
-                />
-              </g>
-            )}
+            {/* Phase 6.6.2 — Construction-line drawing preview.
+                Phase 6.8.2 — when the anchor carries geo, the
+                preview tracks the map between the two clicks (so
+                the engineer can pan/zoom freely without losing
+                their start point). */}
+            {mode === "drawConstruction" && pendingConstructionAnchor && mousePos && (() => {
+              const anchorDp = displayPosConstructionEndpoint(
+                { x: pendingConstructionAnchor.x, y: pendingConstructionAnchor.y },
+                pendingConstructionAnchor.geo,
+              );
+              return (
+                <g pointerEvents="none">
+                  <line
+                    x1={anchorDp.x}
+                    y1={anchorDp.y}
+                    x2={mousePos.x}
+                    y2={mousePos.y}
+                    stroke="#888"
+                    strokeWidth={1.25}
+                    strokeDasharray="6 4"
+                  />
+                  <circle
+                    cx={anchorDp.x}
+                    cy={anchorDp.y}
+                    r={4}
+                    fill="#888"
+                    stroke="white"
+                    strokeWidth={1.25}
+                  />
+                </g>
+              );
+            })()}
 
             {/* Phase 6.6.3 — Annotations. Rendered before pipes so
                 pipes can hover above the text labels. Each annotation
@@ -2272,6 +2371,18 @@ export function SchemeEditor({ readOnly }: Props) {
                   : "start";
                 const lines = annotationLines(a);
                 const bb = annotationBoundingBox(a);
+                // Phase 6.8.2 — when the annotation carries geo and
+                // the map is visible, project to the live display
+                // position and wrap the inner draw in a translate.
+                // The wrap (rather than substituting every x/y)
+                // keeps the rotation transforms intact: rotating
+                // around (a.x, a.y) inside the translate is
+                // mathematically identical to rotating around
+                // (dp.x, dp.y) in outer coords.
+                const dp = displayPosAnnotation(a);
+                const dx = dp.x - a.x;
+                const dy = dp.y - a.y;
+                const wrapTransform = dx !== 0 || dy !== 0 ? `translate(${dx} ${dy})` : undefined;
                 return (
                   <g
                     key={a.id}
@@ -2290,6 +2401,7 @@ export function SchemeEditor({ readOnly }: Props) {
                         selectAnnotation(a.id);
                       }
                     }}
+                    transform={wrapTransform}
                     style={{ cursor: mode === "select" ? "pointer" : undefined }}
                   >
                     {isMultiSelected && (
