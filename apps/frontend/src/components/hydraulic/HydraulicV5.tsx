@@ -8,6 +8,11 @@ import { hasLoops } from "./calc/loopSolver";
 import { writeBackResults } from "./calc/writeBack";
 import { SchemeEditor } from "./panels/SchemeEditor";
 import { InspectorPanel } from "./panels/InspectorPanel";
+import {
+  DEFAULT_SCALE,
+  DEFAULT_PAPER_SIZE,
+  DEFAULT_PAPER_ORIENTATION,
+} from "./scheme/scales";
 import { api, HttpError } from "../../lib/api";
 import { useAuthStore } from "../../lib/authStore";
 import { storage } from "../../lib/storage";
@@ -165,6 +170,52 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
     }
   }, [projectName]);
 
+  // Phase 6.7.4 — PDF export (headline feature). Dynamic-imported
+  // so the jspdf + svg2pdf + Roboto Cyrillic font stack (~120 KB gz)
+  // sits in a lazy chunk that's downloaded only on first PDF click.
+  const exportPdf = useCallback(async () => {
+    try {
+      const svgEl = document.querySelector<SVGSVGElement>(
+        '[data-testid="scheme-canvas"]',
+      );
+      if (!svgEl) {
+        alert("PDF үүсгэх боломжгүй — Схем таб дээр шилжээд дахин оролдоно уу.");
+        return;
+      }
+      const { exportToPdf } = await import("./export/pdfExport");
+      const s = useHydraulicStore.getState();
+      const blob = await exportToPdf({
+        state: s,
+        settings: s.settings,
+        paperSize: s.settings.printPaperSize ?? DEFAULT_PAPER_SIZE,
+        orientation: s.settings.printOrientation ?? DEFAULT_PAPER_ORIENTATION,
+        scale: s.settings.printScale ?? DEFAULT_SCALE,
+        svgElement: svgEl,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${projectName || "hydra"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Free the blob URL after the click has triggered. Some
+      // browsers need a brief tick before revoke is safe.
+      setTimeout(() => URL.revokeObjectURL(url), 250);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`PDF үүсгэж чадсангүй: ${msg}`);
+    }
+  }, [projectName]);
+
+  /** Phase 6.7.4 — "Quick preview" via the browser's native print
+   *  dialog. Engineer can save-to-PDF via the OS dialog if they
+   *  don't want the in-app PDF export. CSS in <style> below hides
+   *  the UI chrome during print. */
+  const quickPrintPreview = useCallback(() => {
+    window.print();
+  }, []);
+
   const share = useCallback(async () => {
     if (demoMode) {
       alert("Demo горимд хуваалцах байхгүй — жинхэнэ нэвтрэлт хийнэ үү.");
@@ -186,6 +237,27 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Phase 6.7.4 — @media print CSS. When the engineer triggers
+          "Preview" the OS print dialog opens; we want only the
+          scheme canvas (no toolbar / no tabs / no panels) on the
+          printed page. The PDF export path (🖨 PDF) bypasses this
+          entirely — it renders straight into a jsPDF Blob. */}
+      <style>{`
+        @media print {
+          @page { margin: 10mm; }
+          body { background: white !important; }
+          header,
+          aside,
+          [data-testid="layer-panel"],
+          [data-testid="batch-ops-toolbar"] {
+            display: none !important;
+          }
+          [data-testid="scheme-canvas"] {
+            width: 100% !important;
+            height: auto !important;
+          }
+        }
+      `}</style>
       {/* Top toolbar */}
       <header
         style={{
@@ -264,6 +336,8 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <button onClick={() => setShowItpPicker(true)} style={btn} title="СП 41-101 ИТП схем сонгох">⊕ ИТП схем</button>
         <button onClick={exportXlsx} style={btn}>📊 Excel</button>
         <button onClick={exportDxf} style={btn}>📐 DXF</button>
+        <button onClick={exportPdf} style={btn} title="A3 / A4 PDF татах (Inter-Cyrillic шрифттэй)">🖨 PDF</button>
+        <button onClick={quickPrintPreview} style={btn} title="Browser-ийн хэвлэх dialog — OS Print to PDF боломжтой">👁 Preview</button>
         <button onClick={exportZulu} style={btn} title="Hydro .sqlite — Zulu Thermo desktop-тэй нийцтэй формат">⊕ Hydro .sqlite</button>
         {!readOnly && loadedId && (
           <button onClick={share} style={btn}>🔗 Хуваалцах</button>

@@ -1804,6 +1804,7 @@ export function SchemeEditor({ readOnly }: Props) {
           calls leafletMap.panBy(). Wheel-on-empty area zooms the map. */}
       <svg
         ref={svgRef}
+        data-testid="scheme-canvas"
         onClick={onCanvasClick}
         onDoubleClick={onCanvasDoubleClick}
         onMouseDown={onCanvasMouseDown}

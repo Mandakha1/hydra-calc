@@ -30,7 +30,7 @@ import type { PipeCircuit } from "../nodeCatalog";
 export type LayerKey = "D2.1" | "D2.2" | "D3" | "D4" | "U1" | "D" | "C";
 
 export interface LayerConfig {
-  /** Hidden when false. */
+  /** Hidden on the canvas when false. */
   visible: boolean;
   /** Read-only when true (no selection / drag / delete). */
   locked: boolean;
@@ -38,6 +38,12 @@ export interface LayerConfig {
   color: string;
   /** Human-readable Mongolian label for the LayerPanel. */
   label: string;
+  /** Phase 6.7.4 — Hidden on the PRINT output (PDF) when false.
+   *  Separate from `visible` so engineer can review WITH construction
+   *  guides on screen but print WITHOUT them. Default mirrors
+   *  drafting convention: pipe roles + drafting layer D = true,
+   *  construction layer C = false. */
+  printVisible: boolean;
 }
 
 /** Default configuration — visibility on, lock off, professional
@@ -49,30 +55,35 @@ export const DEFAULT_LAYERS: Record<LayerKey, LayerConfig> = {
     locked: false,
     color: "#A32D2D",
     label: "Дулаан нийлүүлэх (магистрал)",
+    printVisible: true,
   },
   "D2.2": {
     visible: true,
     locked: false,
     color: "#185FA5",
     label: "Дулаан эргэх (магистрал)",
+    printVisible: true,
   },
   D3: {
     visible: true,
     locked: false,
     color: "#E6914F",
     label: "Халуун ус нийлүүлэх",
+    printVisible: true,
   },
   D4: {
     visible: true,
     locked: false,
     color: "#378ADD",
     label: "Халуун ус эргэх",
+    printVisible: true,
   },
   U1: {
     visible: true,
     locked: false,
     color: "#5A8C3F",
     label: "Хүйтэн ус",
+    printVisible: true,
   },
   // Phase 6.6 — drafting-aid layers (NOT pipe roles).
   D: {
@@ -80,12 +91,18 @@ export const DEFAULT_LAYERS: Record<LayerKey, LayerConfig> = {
     locked: false,
     color: "#222222",
     label: "Хэмжээс / Текст",
+    // Drafting layer — visible in print so dimensions + annotations
+    // appear on the engineer's approved drawing.
+    printVisible: true,
   },
   C: {
     visible: true,
     locked: false,
     color: "#999999",
     label: "Туслах шугам",
+    // Construction layer — hidden in print by drafting convention.
+    // Engineer reviews WITH guides on screen, prints WITHOUT.
+    printVisible: false,
   },
 };
 
@@ -121,6 +138,7 @@ export function resolveLayer(
     locked: override?.locked ?? base.locked,
     color: override?.color ?? base.color,
     label: override?.label ?? base.label,
+    printVisible: override?.printVisible ?? base.printVisible,
   };
 }
 
@@ -143,5 +161,6 @@ export function resolveLayerByKey(
     locked: override?.locked ?? base.locked,
     color: override?.color ?? base.color,
     label: override?.label ?? base.label,
+    printVisible: override?.printVisible ?? base.printVisible,
   };
 }

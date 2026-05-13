@@ -351,6 +351,9 @@ export interface ProjectSettings {
     locked?: boolean;
     color?: string;
     label?: string;
+    /** Phase 6.7.4 — separate flag for PDF output. Default mirrors
+     *  drafting convention (see DEFAULT_LAYERS in scheme/layers.ts). */
+    printVisible?: boolean;
   }>>;
 
   /* ===== Snap engine (Phase 6B) ===== */
