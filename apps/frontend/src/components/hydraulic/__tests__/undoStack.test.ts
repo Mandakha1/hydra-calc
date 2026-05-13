@@ -34,6 +34,9 @@ describe("pushUndoSnapshot — Phase 6.5.5", () => {
   it("captures the current state into undoStack and clears redoStack", () => {
     const st = useHydraulicStore.getState();
     st.addNode({ id: "a", kind: "consumer_apartment", label: "A", x: 10, y: 20 });
+    // Phase 6.8.1 — addNode now pushes its own "Цэг нэмсэн" snapshot.
+    // Clear before testing pushUndoSnapshot's isolated behaviour.
+    useHydraulicStore.setState({ undoStack: [] });
     pushUndoSnapshot("Тест", 1);
     const after = useHydraulicStore.getState();
     expect(after.undoStack).toBeDefined();
@@ -47,6 +50,9 @@ describe("pushUndoSnapshot — Phase 6.5.5", () => {
   it("snapshot is a deep clone (mutating store afterward doesn't affect snap)", () => {
     const st = useHydraulicStore.getState();
     st.addNode({ id: "a", kind: "consumer_apartment", label: "A", x: 10, y: 20 });
+    // Phase 6.8.1 — addNode now pushes its own "Цэг нэмсэн" snapshot.
+    // Clear before testing pushUndoSnapshot's isolated behaviour.
+    useHydraulicStore.setState({ undoStack: [] });
     pushUndoSnapshot("Тест", 1);
     // Mutate the original.
     st.updateNode("a", { x: 999, y: 999 });
@@ -92,6 +98,7 @@ describe("undo / redo — Phase 6.5.5", () => {
   it("undo restores nodes + pipes + selection from the snapshot", () => {
     const st = useHydraulicStore.getState();
     st.addNode({ id: "a", kind: "consumer_apartment", label: "A", x: 0, y: 0 });
+    useHydraulicStore.setState({ undoStack: [] });
     pushUndoSnapshot("Тест", 1);
     st.updateNode("a", { x: 100, y: 100 });
     // Snapshot the post-mutation state for assertion.
@@ -105,6 +112,7 @@ describe("undo / redo — Phase 6.5.5", () => {
   it("undo pushes the current state to redoStack so redo can return", () => {
     const st = useHydraulicStore.getState();
     st.addNode({ id: "a", kind: "consumer_apartment", label: "A", x: 0, y: 0 });
+    useHydraulicStore.setState({ undoStack: [] });
     pushUndoSnapshot("T", 1);
     st.updateNode("a", { x: 50, y: 50 });
     undo();
@@ -128,6 +136,7 @@ describe("undo / redo — Phase 6.5.5", () => {
   it("multi-step undo walks back through the stack", () => {
     const st = useHydraulicStore.getState();
     st.addNode({ id: "a", kind: "consumer_apartment", label: "A", x: 0, y: 0 });
+    useHydraulicStore.setState({ undoStack: [] });
     pushUndoSnapshot("Step 1", 1);
     st.updateNode("a", { x: 10, y: 0 });
     pushUndoSnapshot("Step 2", 1);

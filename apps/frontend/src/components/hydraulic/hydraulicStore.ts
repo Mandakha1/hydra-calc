@@ -180,15 +180,36 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         annotations: [],
       }),
 
-    addNode: (node) =>
-      set((s) => ({ nodes: [...s.nodes, node] })),
+    addNode: (node) => {
+      // Phase 6.8.1 — BUG #3 fix. The Phase 6.5.5 undo stack only
+      // captured batch operations (Del / transform / clipboard). Plain
+      // node placement was silently un-undoable. Push a snapshot
+      // BEFORE the mutation so Ctrl+Z restores the prior state.
+      _pushUndoSnapshotInline("Цэг нэмсэн", 1);
+      set((s) => ({ nodes: [...s.nodes, node] }));
+    },
 
     updateNode: (id, patch) =>
+      // Phase 6.8.1 — DELIBERATELY no snapshot push here. updateNode
+      // is the inner loop for engineer node drags AND for the
+      // transform applier (rotate/mirror calls updateNode per
+      // affected node). Pushing per call would explode the undo
+      // stack — engineer Ctrl+Z would peel off one node at a time
+      // instead of reverting the whole drag/rotation. The CALLER
+      // (drag-start handler / Inspector / transform applier) is
+      // responsible for pushing one batched snapshot before the
+      // sequence of updateNode invocations.
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
       })),
 
     removeNode: (id) =>
+      // Phase 6.8.1 — same rationale as updateNode: removeNode is
+      // called from batch contexts (SchemeEditor Del handler,
+      // cutSelection cascade) that ALREADY push one snapshot for
+      // the whole batch. Pushing here would create N+1 snapshots
+      // and break the single-Ctrl+Z-restores-batch invariant.
+      // Single-target Del also pushes from the caller.
       set((s) => ({
         nodes: s.nodes.filter((n) => n.id !== id),
         pipes: s.pipes.filter((p) => p.fromNodeId !== id && p.toNodeId !== id),
@@ -214,15 +235,21 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         },
       })),
 
-    addPipe: (pipe) =>
-      set((s) => ({ pipes: [...s.pipes, pipe] })),
+    addPipe: (pipe) => {
+      _pushUndoSnapshotInline("Хоолой нэмсэн", 1);
+      set((s) => ({ pipes: [...s.pipes, pipe] }));
+    },
 
     updatePipe: (id, patch) =>
+      // Phase 6.8.1 — same rationale as updateNode: pushing here
+      // would break the transform applier's single-snapshot
+      // semantics. Caller responsibility.
       set((s) => ({
         pipes: s.pipes.map((p) => (p.id === id ? { ...p, ...patch } : p)),
       })),
 
     removePipe: (id) =>
+      // Phase 6.8.1 — caller-pushed (cutSelection / Del handler).
       set((s) => ({
         pipes: s.pipes.filter((p) => p.id !== id),
         selection: s.selection?.id === id ? null : s.selection,
