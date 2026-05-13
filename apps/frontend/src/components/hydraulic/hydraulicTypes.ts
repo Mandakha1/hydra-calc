@@ -58,6 +58,13 @@ export interface SchemeNode {
   height_m?: number;
   /** Specific heat load (W/m³) — used to auto-compute heatLoad_w from volume. */
   specificLoad_w_per_m3?: number;
+  /** Phase 6.8.3 — per-entity symbol-size override.
+   *  Multiplies the project-wide `symbolSizePreset` so an engineer can
+   *  shrink ONE oversized ЦТП (`0.7`) or enlarge ONE landmark АОС (`1.5`)
+   *  without touching the global preset. Expected range 0.3..2.5; the
+   *  result still clamps to [MIN_SYMBOL_PX, MAX_SYMBOL_PX]. Default 1.0
+   *  (no override) — undefined behaves identically. */
+  size_scale?: number;
   /** Hatch fill pattern for building footprint / plan-view rectangle. AutoCAD-style.
    *  - "solid"     — semi-transparent fill (default)
    *  - "diag45"    — 45° parallel lines (concrete / standard)
@@ -316,6 +323,16 @@ export interface ProjectSettings {
   /** Drafting scale as displayed on the title block + scale bar.
    *  Default "1:500". */
   printScale?: "1:200" | "1:500" | "1:1000" | "1:2000";
+
+  /** Phase 6.8.3 — project-wide symbol-size preset.
+   *  Multiplies every entity's computed radius:
+   *    - "small"  → 0.7×  (overview / dense cluster diagrams)
+   *    - "medium" → 1.0×  (default — calibrated for typical UB
+   *                        residential plans at zoom 16)
+   *    - "large"  → 1.3×  (presentation / hand-signed prints)
+   *  Per-entity `size_scale` multiplies on top, so a single oversized
+   *  ЦТП can still be tamed without dragging the whole project. */
+  symbolSizePreset?: "small" | "medium" | "large";
   /** Paper size — only A3 + A4 are supported in 6.7. */
   printPaperSize?: "A3" | "A4";
   /** Paper orientation. Default "landscape" (the Mongolian convention

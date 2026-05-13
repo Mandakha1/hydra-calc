@@ -32,17 +32,26 @@ import type { NodeCategory } from "../nodeCatalog";
  * Real-world reference size in metres for each entity type. This is
  * what gets multiplied by px-per-metre and then clamped.
  *
- * Numbers come from Mongolian residential project paperwork (ГК-23/02
- * AOS-1...5 measure 6×6 to 12×8 m, source plot is 12 m, fixed-support
- * pad is 0.5 m, ИТП chamber ≈ 2.5 m). The "junction" / generic node
- * is the smallest — it's a hydraulic abstraction, not a physical
- * object, so we give it 0.3 m (1 ft) just so it has a stable
- * footprint at street-level zoom.
+ * Phase 6.8.3 calibration (engineer feedback "ЦТП хэт том"):
+ *   Previous values (source 12m, consumer 8m) bumped into MIN_SYMBOL_PX
+ *   at every common engineering zoom (14–17 on UB scale), so all
+ *   symbols rendered at the same 24-px diameter — too big next to an
+ *   actual 5-storey apartment footprint on OSM.
+ *
+ *   New baseline matches Mongolian residential project paperwork at
+ *   true scale (ГК-23/02 АОС-1...5 measure ~30–40 m on the building
+ *   plan, УДДТ / ЦТП cabin is 15–20 m at street level). MIN/MAX clamps
+ *   relax accordingly so at zoom 16 the symbols now sit IN BAND
+ *   instead of all clamping to the floor.
+ *
+ * Junction / fittings stay tiny — they're hydraulic abstractions, not
+ * physical objects, so we keep them at sub-metre scale and let
+ * MIN_SYMBOL_PX guarantee they stay clickable.
  */
 export const ENTITY_REAL_SIZE_M: Record<EntityKind, number> = {
-  source: 12,
-  consumer: 8,
-  well: 2.5,
+  source: 18,       // ЦТП / УДДТ cabin — typical heat substation 15–20 m
+  consumer: 35,     // АОС — typical 5-storey apartment width 30–40 m
+  well: 4,          // ИТП chamber / well cover
   fixedSupport: 0.5,
   elbow: 0.4,
   compensator: 1.5,
@@ -64,9 +73,15 @@ export type EntityKind =
   | "junction"
   | "pump";
 
-/** Clamping bounds in SVG pixels (Leaflet container pixels). */
-export const MIN_SYMBOL_PX = 12;
-export const MAX_SYMBOL_PX = 80;
+/** Clamping bounds in SVG pixels (Leaflet container pixels).
+ *
+ *  Phase 6.8.3 calibration: floor dropped 12 → 6 so an АОС at zoom 16
+ *  (where 35 m × 0.626 px/m / 2 ≈ 11 px) lands IN BAND rather than
+ *  clamping to the old 12 px floor and looking the same size as a
+ *  junction marker. Ceiling dropped 80 → 60 to keep close-zoom
+ *  symbols from dominating the OSM building footprints they sit on. */
+export const MIN_SYMBOL_PX = 6;
+export const MAX_SYMBOL_PX = 60;
 
 /** Stroke-width clamping for pipes (narrower band — pipes go from
  *  thin lines at far zoom-out to "highways" if not capped). */
@@ -118,25 +133,62 @@ export function resolveEntityKind(
 }
 
 /**
+ * Phase 6.8.3 — symbol-size preset multipliers.
+ *
+ * Engineers who want a bird's-eye schematic view dial down to Small
+ * so site-level overviews stay legible; engineers working on a
+ * dense apartment-cluster diagram dial up to Large so the same set
+ * of symbols dominates the cluttered map background. The multipliers
+ * are applied AT the final radius (so MIN/MAX clamps still bracket
+ * the result and the smallest entities can't disappear).
+ */
+export type SymbolSizePreset = "small" | "medium" | "large";
+export const SYMBOL_SIZE_PRESETS: Record<SymbolSizePreset, number> = {
+  small: 0.7,
+  medium: 1.0,
+  large: 1.3,
+};
+/** Default when ProjectSettings.symbolSizePreset is unset (legacy projects). */
+export const DEFAULT_SYMBOL_SIZE_PRESET: SymbolSizePreset = "medium";
+
+/**
  * Compute the visible symbol radius in SVG pixels for a given entity
  * type at the current map zoom (expressed as pixels per metre).
  *
- * @param entity      Entity kind (use `resolveEntityKind` if you only
- *                    have a SchemeNode.kind string).
- * @param pxPerMeter  Pixels per metre at the current Leaflet zoom.
- *                    Pass `null` / `0` to fall back to MIN_SYMBOL_PX
- *                    (used when the map isn't visible — schematic
- *                    mode keeps a fixed legible size).
- * @returns           Symbol radius (half-width) in pixels, clamped.
+ * @param entity            Entity kind (use `resolveEntityKind` if
+ *                          you only have a SchemeNode.kind string).
+ * @param pxPerMeter        Pixels per metre at the current Leaflet
+ *                          zoom. Pass `null` / `0` to fall back to
+ *                          MIN_SYMBOL_PX (used when the map isn't
+ *                          visible — schematic mode keeps a fixed
+ *                          legible size).
+ * @param scaleMultiplier   Phase 6.8.3 — composite factor that the
+ *                          caller derives from
+ *                          `SYMBOL_SIZE_PRESETS[settings.symbolSizePreset]
+ *                          × (node.size_scale ?? 1.0)`. Defaults to 1.0
+ *                          for legacy callers. Applied multiplicatively
+ *                          to the un-clamped radius BEFORE the MIN/MAX
+ *                          clamp so a "Small" preset can still bring
+ *                          a tiny junction marker below the floor
+ *                          (clamps step in) and a "Large" preset can
+ *                          push a source past the cap (clamps cap it).
+ * @returns                 Symbol radius (half-width) in pixels,
+ *                          clamped.
  */
 export function computeSymbolRadiusPx(
   entity: EntityKind,
   pxPerMeter: number | null,
+  scaleMultiplier: number = 1.0,
 ): number {
-  if (!pxPerMeter || pxPerMeter <= 0) return MIN_SYMBOL_PX;
+  if (!pxPerMeter || pxPerMeter <= 0) {
+    // Schematic-mode floor still respects the multiplier so a Small
+    // preset on a schematic-only project visibly shrinks every symbol
+    // (rather than ignoring the engineer's setting).
+    return clamp(MIN_SYMBOL_PX * scaleMultiplier, MIN_SYMBOL_PX * 0.5, MAX_SYMBOL_PX);
+  }
   const real_m = ENTITY_REAL_SIZE_M[entity];
   // Reference SIZE is a diameter, so divide by 2 for radius.
-  const radius_px = (real_m * pxPerMeter) / 2;
+  const radius_px = ((real_m * pxPerMeter) / 2) * scaleMultiplier;
   return clamp(radius_px, MIN_SYMBOL_PX, MAX_SYMBOL_PX);
 }
 

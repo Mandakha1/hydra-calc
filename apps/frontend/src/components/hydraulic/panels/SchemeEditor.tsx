@@ -37,6 +37,8 @@ import {
   computePipeStrokeWidthPx,
   resolveEntityKind,
   MIN_SYMBOL_PX,
+  SYMBOL_SIZE_PRESETS,
+  DEFAULT_SYMBOL_SIZE_PRESET,
 } from "../scheme/symbolSize";
 import {
   findEndpointSnap,
@@ -2745,7 +2747,15 @@ export function SchemeEditor({ readOnly }: Props) {
               const pxPerM_for_symbol = usingMapForSymbol
                 ? mapPxPerMeter! / Math.max(zoom, 0.05)
                 : null;
-              const computedR = computeSymbolRadiusPx(entityKind, pxPerM_for_symbol);
+              // Phase 6.8.3 — preset × per-entity override → final
+              // scale multiplier. Both factors default to 1.0 so
+              // legacy nodes and legacy projects render unchanged
+              // when neither is set.
+              const presetKey = settings.symbolSizePreset ?? DEFAULT_SYMBOL_SIZE_PRESET;
+              const presetMultiplier = SYMBOL_SIZE_PRESETS[presetKey];
+              const perNodeScale = n.size_scale ?? 1.0;
+              const sizeScaleFactor = presetMultiplier * perNodeScale;
+              const computedR = computeSymbolRadiusPx(entityKind, pxPerM_for_symbol, sizeScaleFactor);
               const r = isSelected ? computedR + 4 : computedR;
               void MIN_SYMBOL_PX; // imported for downstream test-friendly access
               const isPump = def.category === "pump";
