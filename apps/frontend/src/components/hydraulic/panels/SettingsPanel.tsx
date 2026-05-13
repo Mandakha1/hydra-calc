@@ -8,6 +8,14 @@ import {
   DEFAULT_PAPER_ORIENTATION,
   fitToPageScale,
 } from "../scheme/scales";
+import {
+  DEFAULT_DRAWING_TITLE,
+  DEFAULT_STANDARDS_FOOTER,
+  DEFAULT_REVISION,
+  DEFAULT_SHEET_NUMBER,
+  todayIsoDate,
+} from "../scheme/titleBlockMeta";
+import type { TitleBlockMeta } from "../hydraulicTypes";
 import { bbox } from "../geometry";
 
 export function SettingsPanel({ readOnly }: { readOnly?: boolean }) {
@@ -31,6 +39,16 @@ export function SettingsPanel({ readOnly }: { readOnly?: boolean }) {
     );
     update({ printScale: next });
   };
+
+  /** Phase 6.7.2 — small helper to merge-and-persist a title-block
+   *  field. Reads the current titleBlock object (or {}), spreads the
+   *  patch, writes back. Keeps the field-set sparse so unset fields
+   *  remain `undefined` and the renderer's default-applier fires. */
+  const tb = settings.titleBlock ?? {};
+  const updateTitleBlock = (patch: Partial<TitleBlockMeta>) => {
+    update({ titleBlock: { ...tb, ...patch } });
+  };
+  const setDateToday = () => updateTitleBlock({ date: todayIsoDate() });
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: 640, margin: "0 auto" }}>
@@ -175,6 +193,142 @@ export function SettingsPanel({ readOnly }: { readOnly?: boolean }) {
           📐 Хуудас руу багтаах
         </button>
       )}
+
+      {/* Phase 6.7.2 — Title block (Зургийн тамга) metadata.
+          Engineer fills these once per project; they appear on the
+          canvas preview and on the printed PDF. All optional —
+          unset rows render blank so signature boxes stay in place. */}
+      <hr style={{ margin: "1.5rem 0", border: 0, borderTop: "1px solid var(--border-soft)" }} />
+      <h3 style={{ marginTop: "1rem", marginBottom: "0.6rem", fontSize: 15 }}>Зургийн тамга</h3>
+
+      <Field label="Зургийн нэр">
+        <input
+          type="text"
+          value={tb.drawingTitle ?? ""}
+          placeholder={DEFAULT_DRAWING_TITLE}
+          disabled={readOnly}
+          onChange={(e) => updateTitleBlock({ drawingTitle: e.target.value })}
+          style={inputStyle}
+        />
+      </Field>
+
+      <div style={{ display: "flex", gap: 12 }}>
+        <Field label="Төслийн код">
+          <input
+            type="text"
+            value={tb.projectCode ?? ""}
+            placeholder="TS-2026-..."
+            disabled={readOnly}
+            onChange={(e) => updateTitleBlock({ projectCode: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Огноо">
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="date"
+              value={tb.date ?? ""}
+              disabled={readOnly}
+              onChange={(e) => updateTitleBlock({ date: e.target.value })}
+              style={inputStyle}
+            />
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={setDateToday}
+                title="Өнөөдрийн огноог автоматаар оруулах"
+                style={{ ...inputStyle, cursor: "pointer", width: "auto" }}
+              >
+                Өнөөдөр
+              </button>
+            )}
+          </div>
+        </Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 12 }}>
+        <Field label="Зурсан">
+          <input
+            type="text"
+            value={tb.engineer ?? ""}
+            disabled={readOnly}
+            onChange={(e) => updateTitleBlock({ engineer: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Шалгасан">
+          <input
+            type="text"
+            value={tb.checker ?? ""}
+            disabled={readOnly}
+            onChange={(e) => updateTitleBlock({ checker: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Бат. зөвш.">
+          <input
+            type="text"
+            value={tb.approver ?? ""}
+            disabled={readOnly}
+            onChange={(e) => updateTitleBlock({ approver: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+      </div>
+
+      <Field label="Фирм">
+        <input
+          type="text"
+          value={tb.company ?? ""}
+          disabled={readOnly}
+          onChange={(e) => updateTitleBlock({ company: e.target.value })}
+          style={inputStyle}
+        />
+      </Field>
+
+      <Field label="Хаяг">
+        <textarea
+          rows={2}
+          value={tb.address ?? ""}
+          disabled={readOnly}
+          onChange={(e) => updateTitleBlock({ address: e.target.value })}
+          style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }}
+        />
+      </Field>
+
+      <div style={{ display: "flex", gap: 12 }}>
+        <Field label="Сэргээлт">
+          <input
+            type="text"
+            value={tb.revision ?? ""}
+            placeholder={DEFAULT_REVISION}
+            disabled={readOnly}
+            onChange={(e) => updateTitleBlock({ revision: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Хуудас">
+          <input
+            type="text"
+            value={tb.sheetNumber ?? ""}
+            placeholder={DEFAULT_SHEET_NUMBER}
+            disabled={readOnly}
+            onChange={(e) => updateTitleBlock({ sheetNumber: e.target.value })}
+            style={inputStyle}
+          />
+        </Field>
+      </div>
+
+      <Field label="Стандарт (footer)">
+        <input
+          type="text"
+          value={tb.standardsFooter ?? ""}
+          placeholder={DEFAULT_STANDARDS_FOOTER}
+          disabled={readOnly}
+          onChange={(e) => updateTitleBlock({ standardsFooter: e.target.value })}
+          style={inputStyle}
+        />
+      </Field>
 
       <hr style={{ margin: "1.5rem 0", border: 0, borderTop: "1px solid var(--border-soft)" }} />
       <p style={{ fontSize: 13, color: "var(--fg-dim)" }}>
