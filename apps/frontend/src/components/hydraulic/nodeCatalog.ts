@@ -3,7 +3,7 @@
  * Drives the toolbar palette, inspector form selection, and scheme rendering.
  */
 
-export type NodeCategory = "source" | "consumer" | "valve" | "fitting" | "chamber" | "pump";
+export type NodeCategory = "source" | "consumer" | "valve" | "fitting" | "chamber" | "pump" | "sensor";
 
 export interface NodeKindDef {
   key: string;
@@ -376,6 +376,44 @@ export const NODE_KINDS: NodeKindDef[] = [
     description: "Сүлжээний усыг нөхөн дүүргэх насос (make-up pump)",
     formKey: "pump",
   },
+
+  // ========== SENSORS / INSTRUMENTS (Хэмжих хэрэгсэл) — Phase 8.5 ==========
+  {
+    key: "sensor_pressure",
+    category: "sensor",
+    name: "Даралтын мэдрэгч (PI)",
+    shortLabel: "P",
+    icon: "🅿",
+    description: "ISA / ГОСТ 21.404 даралт хэмжих хэрэгсэл (pressure indicator)",
+    formKey: "fitting",
+  },
+  {
+    key: "sensor_temperature",
+    category: "sensor",
+    name: "Температурын мэдрэгч (TI)",
+    shortLabel: "T",
+    icon: "🌡",
+    description: "Температур хэмжих хэрэгсэл (temperature indicator)",
+    formKey: "fitting",
+  },
+  {
+    key: "sensor_flow",
+    category: "sensor",
+    name: "Урсгал хэмжигч (FI)",
+    shortLabel: "F",
+    icon: "F",
+    description: "Усны урсгал хэмжих хэрэгсэл (flow indicator)",
+    formKey: "fitting",
+  },
+  {
+    key: "sensor_multipoint",
+    category: "sensor",
+    name: "Олон цэгийн термометр",
+    shortLabel: "MT",
+    icon: "🌡",
+    description: "Олон цэгийн температурын хяналт (multi-point thermometer)",
+    formKey: "fitting",
+  },
 ];
 
 export const NODE_BY_KIND = new Map(NODE_KINDS.map((n) => [n.key, n]));
@@ -391,6 +429,8 @@ export const CATEGORIES: { key: NodeCategory; label: string; color: string }[] =
   { key: "fitting", label: "Холбоос", color: "var(--fg-muted)" },
   { key: "chamber", label: "Камер/Худаг", color: "var(--success)" },
   { key: "pump", label: "Насос", color: "var(--accent-soft)" },
+  // Phase 8.5 — Хэмжих хэрэгсэл (sensors / instruments) for P&ID
+  { key: "sensor", label: "Хэмжих хэрэгсэл", color: "var(--bp-blue, #1F5FAA)" },
 ];
 
 /* -------------------------------------------------------------------------- */

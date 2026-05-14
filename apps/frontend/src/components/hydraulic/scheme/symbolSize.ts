@@ -125,8 +125,12 @@ export function resolveEntityKind(
       case "consumer": return "consumer";
       case "valve": return "valve";
       case "pump": return "pump";
+      // Phase 8.5 — sensors render at junction size (small marker).
+      // eslint-disable-next-line no-fallthrough
       case "fitting":
-      case "chamber": return "junction";
+      case "chamber":
+      case "sensor":
+        return "junction";
     }
   }
   return "junction";

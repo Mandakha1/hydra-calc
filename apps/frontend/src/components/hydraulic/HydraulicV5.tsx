@@ -42,6 +42,8 @@ const EnergySchemes = lazy(() => import("./panels/EnergySchemes").then((m) => ({
 const WellDetail = lazy(() => import("./panels/WellDetail").then((m) => ({ default: m.WellDetail })));
 // Phase 8.4 — Compensator detail.
 const CompensatorDetail = lazy(() => import("./panels/CompensatorDetail").then((m) => ({ default: m.CompensatorDetail })));
+// Phase 8.5 — УДДТ P&ID.
+const UddtPid = lazy(() => import("./panels/UddtPid").then((m) => ({ default: m.UddtPid })));
 
 interface Props {
   projectId?: string;
@@ -62,11 +64,12 @@ type Tab =
   //   8.2 ✓ "energy"        — energy / heat-balance scheme
   //   8.3 ✓ "well"          — ҮХТ chamber cross-section
   //   8.4 ✓ "compensator"   — compensator detail
-  //   8.5   "pid"           — УДДТ P&ID
+  //   8.5 ✓ "pid"           — УДДТ P&ID
   | "profile"
   | "energy"
   | "well"
-  | "compensator";
+  | "compensator"
+  | "pid";
 
 export function HydraulicV5(props: Props) {
   return (
@@ -365,6 +368,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <TabBtn active={tab === "energy"} onClick={() => setTab("energy")}>⚡ Энерги</TabBtn>
         <TabBtn active={tab === "well"} onClick={() => setTab("well")}>🛢 Худаг</TabBtn>
         <TabBtn active={tab === "compensator"} onClick={() => setTab("compensator")}>🔄 Компенсатор</TabBtn>
+        <TabBtn active={tab === "pid"} onClick={() => setTab("pid")}>🛠 P&amp;ID</TabBtn>
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
 
@@ -484,6 +488,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "energy" && <EnergySchemes />}
             {tab === "well" && <WellDetail />}
             {tab === "compensator" && <CompensatorDetail />}
+            {tab === "pid" && <UddtPid />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
           </Suspense>
         </main>
