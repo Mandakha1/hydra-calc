@@ -275,6 +275,62 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
     }
   }, [projectName]);
 
+  /** Phase 8.6 — Multi-page drawing set export.
+   *
+   *  Generates a 6-page A3 / A4 PDF: Plan (live SVG) → Profile →
+   *  Energy → Well → Compensator → P&ID. Each detail page is drawn
+   *  via jsPDF primitives — no DOM round-trip — so the engineer
+   *  doesn't need to visit every tab before exporting. The Plan page
+   *  still requires the Scheme tab's SVG to be mounted; if the
+   *  engineer is on a different tab when they hit Drawing Set, the
+   *  bundle just skips page 1 with a friendly warning. */
+  const exportDrawingSet = useCallback(async () => {
+    // eslint-disable-next-line no-console
+    console.info("[drawing-set] start");
+    try {
+      const svgEl = document.querySelector<SVGSVGElement>('[data-testid="scheme-canvas"]');
+      if (!svgEl) {
+        // eslint-disable-next-line no-console
+        console.warn("[drawing-set] scheme-canvas missing — proceeding without Plan page");
+      }
+      const { exportDrawingSetPdf } = await import("./export/pdfExport");
+      const s = useHydraulicStore.getState();
+      const blob = await exportDrawingSetPdf({
+        state: s,
+        settings: s.settings,
+        paperSize: s.settings.printPaperSize ?? DEFAULT_PAPER_SIZE,
+        orientation: s.settings.printOrientation ?? DEFAULT_PAPER_ORIENTATION,
+        scale: s.settings.printScale ?? DEFAULT_SCALE,
+        svgElement: svgEl,
+        results: s.results ?? undefined,
+        selection: s.selection ?? null,
+      });
+      if (!blob || blob.size === 0) {
+        // eslint-disable-next-line no-console
+        console.error("[drawing-set] blob empty");
+        alert("Drawing Set үүсгэж чадсангүй: гарсан файл хоосон байна.");
+        return;
+      }
+      const filename = `${projectName || "hydra"}-drawing-set.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 250);
+      // eslint-disable-next-line no-console
+      console.info(`[drawing-set] done → ${filename} (${blob.size} bytes)`);
+      alert(`Drawing Set татагдлаа: ${filename}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // eslint-disable-next-line no-console
+      console.error("[drawing-set] failed:", e);
+      alert(`Drawing Set үүсгэж чадсангүй: ${msg}`);
+    }
+  }, [projectName]);
+
   /** Phase 6.7.4 — "Quick preview" via the browser's native print
    *  dialog. Engineer can save-to-PDF via the OS dialog if they
    *  don't want the in-app PDF export. CSS in <style> below hides
@@ -414,6 +470,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <button onClick={exportXlsx} style={btn}>📊 Excel</button>
         <button onClick={exportDxf} style={btn}>📐 DXF</button>
         <button onClick={exportPdf} style={btn} title="A3 / A4 PDF татах (Inter-Cyrillic шрифттэй)">🖨 PDF</button>
+        <button onClick={exportDrawingSet} style={btn} title="План + Профиль + Эрчим хүч + Худаг + Компенсатор + P&ID — 6-хуудастай PDF">📚 Drawing Set</button>
         <button onClick={quickPrintPreview} style={btn} title="Browser-ийн хэвлэх dialog — OS Print to PDF боломжтой">👁 Preview</button>
         <button onClick={exportZulu} style={btn} title="Hydro .sqlite — Zulu Thermo desktop-тэй нийцтэй формат">⊕ Hydro .sqlite</button>
         {!readOnly && loadedId && (

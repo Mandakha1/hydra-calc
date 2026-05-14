@@ -31,7 +31,20 @@
 
 import { jsPDF } from "jspdf";
 import "svg2pdf.js";
-import type { HydraulicState, ProjectSettings } from "../hydraulicTypes";
+import type {
+  HydraulicState,
+  ProjectSettings,
+  CalculationResults,
+  TitleBlockMeta,
+} from "../hydraulicTypes";
+import {
+  renderProfilePage,
+  renderEnergyPage,
+  renderWellPage,
+  renderCompensatorPage,
+  renderPidPage,
+  type PageArea,
+} from "./pdfDetailPages";
 import {
   DEFAULT_LAYERS,
   type LayerKey,
@@ -368,7 +381,7 @@ function renderNorthArrow(
  *         load fails (network / asset URL issue).
  */
 export async function exportToPdf(inputs: PdfExportInputs): Promise<Blob> {
-  const { state, settings, paperSize, orientation, scale, svgElement } = inputs;
+  const { settings, paperSize, orientation, scale, svgElement } = inputs;
   if (!svgElement) {
     throw new Error("SVG element байхгүй — зургийн canvas ачаалагдаагүй байж магадгүй");
   }
@@ -383,16 +396,115 @@ export async function exportToPdf(inputs: PdfExportInputs): Promise<Blob> {
   // 2. Embed the Cyrillic font so Mongolian text renders correctly
   await loadFontIntoPdf(pdf);
 
-  // 3. Clone + strip non-print elements from the live SVG
+  // 3-5. Render the Plan page (shared with the multi-page export).
+  const area = drawingAreaMm(paperSize, orientation);
+  await renderPlanPage(pdf, inputs, area);
+
+  // 6. Overlay title block + scale bar + north arrow at paper mm
+  pdf.setFont(PDF_FONT_NAME);
+  renderTitleBlock(pdf, settings, scale, paperSize, orientation);
+  renderScaleBar(pdf, scale, paperSize, orientation);
+  renderNorthArrow(pdf, settings, paperSize, orientation);
+
+  return pdf.output("blob");
+}
+
+/* ─── Phase 8.6 — Multi-page drawing-set export ─────────────────── */
+
+/**
+ * Detail-page identifiers in the order they appear in the drawing set.
+ * The Plan page is always first and always present; the rest can be
+ * toggled by the caller. Defaults to ALL pages when `includePages` is
+ * omitted.
+ */
+export type DrawingSetPage =
+  | "plan"
+  | "profile"
+  | "energy"
+  | "well"
+  | "compensator"
+  | "pid";
+
+export const DEFAULT_DRAWING_SET_PAGES: DrawingSetPage[] = [
+  "plan",
+  "profile",
+  "energy",
+  "well",
+  "compensator",
+  "pid",
+];
+
+/** Engineer-facing label for a drawing-set page. */
+export function drawingSetPageLabel(page: DrawingSetPage): string {
+  switch (page) {
+    case "plan":
+      return "План — Магистрал шугам";
+    case "profile":
+      return "Уртын профиль";
+    case "energy":
+      return "Дулааны тэнцэл";
+    case "well":
+      return "Худагны зүсэлт";
+    case "compensator":
+      return "Компенсатор зүсэлт";
+    case "pid":
+      return "УДДТ — P&ID";
+  }
+}
+
+export interface DrawingSetPdfInputs extends PdfExportInputs {
+  /**
+   * Calculation results for the energy-balance sheet. When undefined
+   * the energy page falls back to a "Run Тооцоолох first" advisory.
+   */
+  results?: CalculationResults;
+  /**
+   * Current single-target selection. Drives which well / compensator
+   * the detail pages render. When null, detail pages fall back to
+   * the first well / compensator in the scene.
+   */
+  selection?: { kind: string; id: string } | null;
+  /**
+   * Pages to include in the bundle (defaults to all six). Useful for
+   * partial exports (e.g. just "plan + profile" for a quick review).
+   * `plan` is always anchored at position 1 if requested.
+   */
+  includePages?: DrawingSetPage[];
+}
+
+/**
+ * Build a temporary TitleBlockMeta that overrides the sheet number
+ * with the per-page index (e.g. "1/6", "2/6"). The engineer's other
+ * fields are passed through untouched.
+ */
+function withSheetNumber(
+  meta: TitleBlockMeta | undefined,
+  sheetIdx: number,
+  total: number,
+): TitleBlockMeta {
+  return {
+    ...(meta ?? {}),
+    sheetNumber: `${sheetIdx}/${total}`,
+  };
+}
+
+/**
+ * Plan-page renderer extracted from `exportToPdf` so the multi-page
+ * export can call it inside the page loop. Mutates the existing pdf
+ * instance; caller is responsible for `pdf.addPage()` between calls.
+ */
+async function renderPlanPage(
+  pdf: jsPDF,
+  inputs: PdfExportInputs,
+  area: ReturnType<typeof drawingAreaMm>,
+): Promise<void> {
+  const { state, settings, svgElement } = inputs;
+  if (!svgElement) {
+    throw new Error("SVG element байхгүй — зургийн canvas ачаалагдаагүй байж магадгүй");
+  }
   const clone = svgElement.cloneNode(true) as SVGSVGElement;
   const hidden = collectPrintHiddenIds(state, settings);
   stripNonPrintElements(clone, hidden);
-
-  // 4. Normalise the clone for svg2pdf — set explicit width/height
-  // attributes (svg2pdf uses these as the user-units) and a viewBox
-  // tight to the content where possible. We use the existing
-  // getBoundingClientRect via a temporary append to the DOM body
-  // ONLY when the live element doesn't already have explicit sizing.
   const r = svgElement.getBoundingClientRect();
   const liveW = Math.max(1, r.width || 1000);
   const liveH = Math.max(1, r.height || 700);
@@ -401,21 +513,95 @@ export async function exportToPdf(inputs: PdfExportInputs): Promise<Blob> {
   if (!clone.getAttribute("viewBox")) {
     clone.setAttribute("viewBox", `0 0 ${liveW} ${liveH}`);
   }
-
-  // 5. Render into the drawing area
-  const area = drawingAreaMm(paperSize, orientation);
   await pdf.svg(clone, {
     x: area.x,
     y: area.y,
     width: area.width,
     height: area.height,
   });
+}
 
-  // 6. Overlay title block + scale bar + north arrow at paper mm
-  pdf.setFont(PDF_FONT_NAME);
-  renderTitleBlock(pdf, settings, scale, paperSize, orientation);
-  renderScaleBar(pdf, scale, paperSize, orientation);
-  renderNorthArrow(pdf, settings, paperSize, orientation);
+/**
+ * Export the full A3 drawing set as a multi-page PDF.
+ *
+ * Page order (default):
+ *   1. План — Магистрал шугам      (SVG via svg2pdf)
+ *   2. Уртын профиль                (jsPDF primitives, СП 124 §7.4)
+ *   3. Дулааны тэнцэл               (jsPDF primitives, БНбД 41-01 §5)
+ *   4. Худагны зүсэлт               (jsPDF primitives, ГОСТ 21.605)
+ *   5. Компенсатор зүсэлт           (jsPDF primitives, СП 124 §11.3)
+ *   6. УДДТ — P&ID                  (jsPDF primitives, ГОСТ 21.404)
+ *
+ * Every page shares the same paper / orientation / title-block layout
+ * — the title block's "Хуудас" field is per-page injected as "N/M".
+ * Pages where a scale is meaningful (Plan + Profile + Well +
+ * Compensator) include the scale bar; pages where it isn't meaningful
+ * (Energy balance + P&ID) omit it.
+ */
+export async function exportDrawingSetPdf(inputs: DrawingSetPdfInputs): Promise<Blob> {
+  const {
+    state, settings, paperSize, orientation, scale, svgElement,
+    results, selection, includePages,
+  } = inputs;
+
+  const pages: DrawingSetPage[] = includePages && includePages.length > 0
+    ? [...includePages]
+    : [...DEFAULT_DRAWING_SET_PAGES];
+
+  // Plan page needs the live SVG. If not on the Plan tab, drop it
+  // gracefully so engineer can still get the detail bundle.
+  const finalPages = pages.filter((p) => p !== "plan" || svgElement);
+
+  if (finalPages.length === 0) {
+    throw new Error("Drawing set хоосон — оруулах хуудас сонгогдоогүй.");
+  }
+
+  const pdf = new jsPDF({
+    orientation,
+    unit: "mm",
+    format: paperSize.toLowerCase() as "a3" | "a4",
+  });
+  await loadFontIntoPdf(pdf);
+
+  const area = drawingAreaMm(paperSize, orientation);
+  const total = finalPages.length;
+
+  for (let i = 0; i < finalPages.length; i += 1) {
+    const page = finalPages[i]!;
+    if (i > 0) {
+      pdf.addPage(paperSize.toLowerCase() as "a3" | "a4", orientation);
+    }
+    pdf.setFont(PDF_FONT_NAME);
+
+    // Render the page body
+    if (page === "plan") {
+      await renderPlanPage(pdf, inputs, area);
+    } else if (page === "profile") {
+      renderProfilePage(pdf, area as PageArea, state);
+    } else if (page === "energy") {
+      renderEnergyPage(pdf, area as PageArea, state, results);
+    } else if (page === "well") {
+      renderWellPage(pdf, area as PageArea, state, selection ?? null);
+    } else if (page === "compensator") {
+      renderCompensatorPage(pdf, area as PageArea, state, selection ?? null);
+    } else if (page === "pid") {
+      renderPidPage(pdf, area as PageArea, state);
+    }
+
+    // Overlay title block + (optional) scale bar + (optional) north arrow.
+    // Inject per-page sheet number.
+    const perPageSettings: ProjectSettings = {
+      ...settings,
+      titleBlock: withSheetNumber(settings.titleBlock, i + 1, total),
+    };
+    renderTitleBlock(pdf, perPageSettings, scale, paperSize, orientation);
+    if (page === "plan" || page === "profile" || page === "well" || page === "compensator") {
+      renderScaleBar(pdf, scale, paperSize, orientation);
+    }
+    if (page === "plan") {
+      renderNorthArrow(pdf, perPageSettings, paperSize, orientation);
+    }
+  }
 
   return pdf.output("blob");
 }
