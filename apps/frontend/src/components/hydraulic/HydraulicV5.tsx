@@ -40,6 +40,8 @@ const LongitudinalProfile = lazy(() => import("./panels/LongitudinalProfile").th
 const EnergySchemes = lazy(() => import("./panels/EnergySchemes").then((m) => ({ default: m.EnergySchemes })));
 // Phase 8.3 — Well / chamber cross-section detail.
 const WellDetail = lazy(() => import("./panels/WellDetail").then((m) => ({ default: m.WellDetail })));
+// Phase 8.4 — Compensator detail.
+const CompensatorDetail = lazy(() => import("./panels/CompensatorDetail").then((m) => ({ default: m.CompensatorDetail })));
 
 interface Props {
   projectId?: string;
@@ -59,11 +61,12 @@ type Tab =
   //   8.1 ✓ "profile"       — longitudinal profile
   //   8.2 ✓ "energy"        — energy / heat-balance scheme
   //   8.3 ✓ "well"          — ҮХТ chamber cross-section
-  //   8.4   "compensator"   — compensator detail
+  //   8.4 ✓ "compensator"   — compensator detail
   //   8.5   "pid"           — УДДТ P&ID
   | "profile"
   | "energy"
-  | "well";
+  | "well"
+  | "compensator";
 
 export function HydraulicV5(props: Props) {
   return (
@@ -361,6 +364,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <TabBtn active={tab === "profile"} onClick={() => setTab("profile")}>📊 Профиль</TabBtn>
         <TabBtn active={tab === "energy"} onClick={() => setTab("energy")}>⚡ Энерги</TabBtn>
         <TabBtn active={tab === "well"} onClick={() => setTab("well")}>🛢 Худаг</TabBtn>
+        <TabBtn active={tab === "compensator"} onClick={() => setTab("compensator")}>🔄 Компенсатор</TabBtn>
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
 
@@ -479,6 +483,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "profile" && <LongitudinalProfile />}
             {tab === "energy" && <EnergySchemes />}
             {tab === "well" && <WellDetail />}
+            {tab === "compensator" && <CompensatorDetail />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
           </Suspense>
         </main>
