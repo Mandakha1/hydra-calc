@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useHydraulicStore } from "../hydraulicStore";
 import { PIPE_DB, PIPE_MATERIALS, CLIMATE, WALL_TYPES, GLAZING } from "shared";
+import { NODE_KINDS, CATEGORIES, getNodeKind } from "../nodeCatalog";
 import { calcHeatLoad } from "../calc/heatLoad";
 import { pipeLengthFromGeometry } from "../calc/haversine";
 import { updateDimension, removeDimension } from "../scheme/dimensionApplier";
@@ -417,18 +418,47 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             style={inputStyle}
           />
         </Field>
+        {/* Phase 6.8.5 (BUG A) — fine-grained node-kind dropdown.
+            Pre-fix the select had 5 hardcoded options (consumer /
+            source / junction / pump / well) using simplified
+            category names. But every node placed via the toolbar
+            palette carries a fine-grained kind like
+            `source_substation` (ЦТП), `consumer_apartment` (АОС),
+            `well_supply` (ДХ). Because none of those matched the
+            hardcoded options, the select rendered uncontrolled —
+            engineers saw "Хэрэглэгч" on a ЦТП node and assumed the
+            node was misclassified.
+            Also dropped Russian "Источник" → Mongolian "Эх үүсвэр"
+            per the codebase convention (see CLAUDE.md "Russian terms
+            forbidden" rule).
+            Options are grouped by category (optgroup) so the
+            dropdown stays scannable even with 30+ entries. */}
         <Field label="Төрөл">
           <select
             value={node.kind}
             disabled={readOnly}
             onChange={(e) => updateNode(node.id, { kind: e.target.value as typeof node.kind })}
             style={inputStyle}
+            data-testid="inspector-node-kind"
           >
-            <option value="consumer">Хэрэглэгч</option>
-            <option value="source">Источник</option>
-            <option value="junction">Салаалалт</option>
-            <option value="pump">Насос</option>
-            <option value="well">Худаг / ИТП</option>
+            {/* If the stored kind is unknown to nodeCatalog (e.g.
+                imported from a legacy Zulu file with a custom kind),
+                surface it as a one-off option so the select stays
+                controlled and the engineer can see the raw value. */}
+            {!getNodeKind(node.kind) && (
+              <option value={node.kind}>{`(танигдаагүй) ${node.kind}`}</option>
+            )}
+            {CATEGORIES.map((cat) => {
+              const kindsInCat = NODE_KINDS.filter((k) => k.category === cat.key);
+              if (kindsInCat.length === 0) return null;
+              return (
+                <optgroup key={cat.key} label={cat.label}>
+                  {kindsInCat.map((k) => (
+                    <option key={k.key} value={k.key}>{k.name}</option>
+                  ))}
+                </optgroup>
+              );
+            })}
           </select>
         </Field>
         <div style={{ display: "flex", gap: 8 }}>

@@ -1728,9 +1728,21 @@ export function SchemeEditor({ readOnly }: Props) {
         </div>
       )}
 
-      {/* Floating palette */}
+      {/* Floating palette
+          Phase 6.8.5 (BUG #2) — `key={showPalette}` forces React to
+          fully unmount + remount the palette div when the engineer
+          switches categories (e.g. Эх үүсвэр popup → Камер popup).
+          Without the key, React diffs the same `<div>` with new
+          children, but the BROWSER's native `title=` tooltip on the
+          previous category's button stayed visible because its
+          anchor DOM node was recycled. With a category-scoped key,
+          the entire subtree is torn down → tooltip anchor is gone →
+          OS dismisses the tooltip. Cheaper + simpler than a custom
+          Tooltip component for a 1-line fix. */}
       {showPalette && (
         <div
+          key={showPalette}
+          data-testid="scheme-palette"
           style={{
             position: "absolute",
             left: 70,
