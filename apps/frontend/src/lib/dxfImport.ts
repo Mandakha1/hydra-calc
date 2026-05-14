@@ -19,6 +19,12 @@
 import DxfParser from "dxf-parser";
 import type { SchemeNode, SchemePipe, ProjectSettings } from "../components/hydraulic/hydraulicTypes";
 import { PX_PER_METER } from "../components/hydraulic/nodeCatalog";
+import {
+  mapCadLayerToCircuit,
+  detectCircuitConflict,
+  type LayerHint,
+  type PipeCircuitFinal,
+} from "./dxfLayerMapper";
 // Phase 7.1 — Mongolian / Russian Cyrillic in older AutoCAD output is
 // often Windows-1251, not UTF-8. The shared encoding module sniffs
 // `$DWGCODEPAGE` + does a byte-density heuristic before deciding.
@@ -44,6 +50,11 @@ export interface DxfImportResult {
     sources: number;
     totalLength_m: number;
     layers: number;
+    /** Phase 7.3 — pipe count per detected circuit. Engineer sees
+     *  this in the review pane. Keys are PipeCircuit values. */
+    circuitCounts?: Record<string, number>;
+    /** Phase 7.3 — number of pipes whose multi-signal vote disagreed. */
+    circuitConflicts?: number;
   };
   warnings: string[];
   /** Real-world bbox in meters (used to compute geo-anchor if needed). */
@@ -69,6 +80,13 @@ export interface ExtractedDxf {
     h: boolean;
     /** Polyline points [[x,y], ...]. */
     pts: [number, number][];
+    /** Phase 7.3 — AutoCAD Color Index (ACI 1-255). Optional;
+     *  undefined when the entity inherits BYLAYER. Used by the
+     *  pipe-role detector (Tier 2 signal). */
+    color?: number;
+    /** Phase 7.3 — AutoCAD linetype name. Optional. Used by the
+     *  pipe-role detector (Tier 3 signal). */
+    lineType?: string;
   }>;
   circles: Array<{ l: string; cx: number; cy: number; r: number }>;
   inserts: Array<{ l: string; name: string; x: number; y: number; rot: number }>;
@@ -216,10 +234,16 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
    *  overrides. Exact name match (case-insensitive). Highest priority
    *  in the classifier — wins over both Cyrillic and Latin patterns. */
   blockAliasOverrides?: BlockAliasOverrides;
+  /** Phase 7.3 — engineer-supplied per-CAD-layer → circuit overrides.
+   *  Wins over the multi-signal mapper. Key is the AutoCAD layer
+   *  name (case-sensitive — DXF layer names are case-sensitive).
+   *  Value is a SchemePipe-compatible circuit (no `"unknown"`). */
+  layerCircuitOverrides?: Record<string, PipeCircuitFinal>;
 } = {}): DxfImportResult {
   const heatingOnly = opts.heatingOnly ?? true;
   const defaultDn = opts.defaultDn ?? 100;
   const blockAliasOverrides = opts.blockAliasOverrides;
+  const layerCircuitOverrides = opts.layerCircuitOverrides;
   const warnings: string[] = [];
 
   /* === 1. Collect candidate pipes === */
@@ -270,6 +294,9 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
     length_m: number;
     layer: string;
     isHeat: boolean;
+    /** Phase 7.3 — pass-through CAD metadata for the layer mapper. */
+    colorIndex?: number;
+    lineStyle?: string;
   }> = [];
 
   let pipeId = 1;
@@ -299,6 +326,8 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
         length_m: Math.round(len_m * 10) / 10,
         layer: ln.l,
         isHeat: ln.h,
+        ...(typeof ln.color === "number" ? { colorIndex: ln.color } : {}),
+        ...(typeof ln.lineType === "string" ? { lineStyle: ln.lineType } : {}),
       });
       void aN; void bN;
     }
@@ -394,12 +423,42 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
     });
   }
 
+  /* === 9b. Phase 7.3 — Pipe-circuit classification via multi-signal
+   * voting. Replaces the legacy blanket `heating_supply` default. */
+  const circuitCounts: Record<string, number> = {};
+  let conflictCount = 0;
+  let unknownCount = 0;
+
   const pipes: SchemePipe[] = [];
   let totalLen_m = 0;
   for (const pp of protoPipes) {
     const fromId = protoToFinalId.get(pp.fromKey);
     const toId = protoToFinalId.get(pp.toKey);
     if (!fromId || !toId) continue;
+    const hint: LayerHint = {
+      name: pp.layer,
+      ...(typeof pp.colorIndex === "number" ? { colorIndex: pp.colorIndex } : {}),
+      ...(typeof pp.lineStyle === "string" ? { lineStyle: pp.lineStyle } : {}),
+    };
+    const overrideCircuit = layerCircuitOverrides?.[pp.layer];
+    let circuit: PipeCircuitFinal;
+    if (overrideCircuit) {
+      circuit = overrideCircuit;
+    } else {
+      const raw = mapCadLayerToCircuit(hint);
+      if (raw === "unknown") {
+        unknownCount += 1;
+        // Fall back to heating_supply per engineering convention so
+        // downstream calc doesn't bail on a missing circuit.
+        circuit = "heating_supply";
+      } else {
+        circuit = raw;
+      }
+      if (detectCircuitConflict(hint)) {
+        conflictCount += 1;
+      }
+    }
+    circuitCounts[circuit] = (circuitCounts[circuit] ?? 0) + 1;
     pipes.push({
       id: pp.id,
       fromNodeId: fromId,
@@ -407,9 +466,19 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
       materialKey: "steel_aged",
       dn: defaultDn,
       length_m: pp.length_m,
-      circuit: "heating_supply",
+      circuit,
     });
     totalLen_m += pp.length_m;
+  }
+  if (unknownCount > 0) {
+    warnings.push(
+      `${unknownCount} хоолой circuit тодорхойгүй (default: heating_supply). Review pane дээр overrride хийнэ үү.`,
+    );
+  }
+  if (conflictCount > 0) {
+    warnings.push(
+      `${conflictCount} хоолой давхар signal зөрчилтэй (layer / өнгө / шугам стиль). Layer mapping шалгана уу.`,
+    );
   }
 
   /* === 10. Build settings === */
@@ -436,6 +505,11 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
     sources: nodes.filter((n) => typeof n.kind === "string" && n.kind.startsWith("source_")).length,
     totalLength_m: Math.round(totalLen_m * 10) / 10,
     layers: allLayers.size,
+    /** Phase 7.3 — pipe count per circuit. Engineer eyeballs this to
+     *  confirm the multi-signal classifier picked up at least one
+     *  return / DHW circuit (otherwise the import is suspicious). */
+    circuitCounts,
+    circuitConflicts: conflictCount,
   };
 
   return {
@@ -456,6 +530,8 @@ export async function importDxfText(dxfText: string, opts: {
   defaultDn?: number;
   /** Phase 7.2 — engineer-supplied per-project block-name overrides. */
   blockAliasOverrides?: BlockAliasOverrides;
+  /** Phase 7.3 — engineer-supplied per-CAD-layer → circuit overrides. */
+  layerCircuitOverrides?: Record<string, PipeCircuitFinal>;
 } = {}): Promise<DxfImportResult> {
   const parser = new DxfParser();
   const dxf = parser.parseSync(dxfText);
@@ -494,20 +570,41 @@ export async function importDxfText(dxfText: string, opts: {
       startPoint?: { x: number; y: number };
       text?: string;
       textHeight?: number;
+      /** Phase 7.3 — AutoCAD Color Index (when explicitly set). */
+      color?: number;
+      colorIndex?: number;
+      /** Phase 7.3 — AutoCAD linetype name. */
+      lineType?: string;
+      lineTypeName?: string;
     };
     const layer = String(e.layer ?? "0");
     const isHeat = /dulan|heat|халаа/i.test(layer);
+    // Phase 7.3 — extract CAD metadata for the pipe-role mapper.
+    const colorIdx = typeof e.color === "number"
+      ? e.color
+      : (typeof e.colorIndex === "number" ? e.colorIndex : undefined);
+    const lineTypeName = typeof e.lineType === "string"
+      ? e.lineType
+      : (typeof e.lineTypeName === "string" ? e.lineTypeName : undefined);
     if (e.type === "LINE") {
       const a = e.vertices?.[0];
       const b = e.vertices?.[1];
       if (a && b) {
-        lines.push({ l: layer, h: isHeat, pts: [[a.x, a.y], [b.x, b.y]] });
+        lines.push({
+          l: layer, h: isHeat, pts: [[a.x, a.y], [b.x, b.y]],
+          ...(typeof colorIdx === "number" ? { color: colorIdx } : {}),
+          ...(typeof lineTypeName === "string" ? { lineType: lineTypeName } : {}),
+        });
         ext(a.x, a.y); ext(b.x, b.y);
       }
     } else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
       const pts: [number, number][] = (e.vertices ?? []).map((v) => [v.x, v.y]);
       if (pts.length >= 2) {
-        lines.push({ l: layer, h: isHeat, pts });
+        lines.push({
+          l: layer, h: isHeat, pts,
+          ...(typeof colorIdx === "number" ? { color: colorIdx } : {}),
+          ...(typeof lineTypeName === "string" ? { lineType: lineTypeName } : {}),
+        });
         for (const [x, y] of pts) ext(x, y);
       }
     } else if (e.type === "CIRCLE") {
@@ -591,6 +688,8 @@ export async function importDxfBytes(
     /** Phase 7.2 — engineer-supplied per-project block-name → kind
      *  overrides. Threaded through to the classifier. */
     blockAliasOverrides?: BlockAliasOverrides;
+    /** Phase 7.3 — engineer-supplied per-CAD-layer → circuit overrides. */
+    layerCircuitOverrides?: Record<string, PipeCircuitFinal>;
   } = {},
 ): Promise<DxfImportResultWithEncoding> {
   const decoded = decodeDxfBytes(buffer, { forceEncoding: opts.forceEncoding });
