@@ -581,6 +581,69 @@ export function SchemeEditor({ readOnly }: Props) {
   }, [readOnly]);
 
   /**
+   * Phase 6.8.7 — Quick-fill "standard apartment" building template.
+   *
+   * Drops a 5-storey 20×30 m polygon at the engineer's current
+   * viewport centre, fully filled with defaults (label "Барилга-N",
+   * floors=5, building_type="apartment"). When the map is visible,
+   * each vertex carries lat/lon so the new building tracks the map
+   * view via the Phase 6.8.2 mechanism. The new building is
+   * auto-selected so the Inspector opens immediately for fine-
+   * tuning floors / heat-load / colour.
+   *
+   * Engineering rationale: drawing the same 4-vertex rectangle
+   * over and over for each АОС on a plan is a recurring time-sink.
+   * One click puts a known starting shape on the canvas; the
+   * engineer drags vertices / edits metadata to suit.
+   */
+  const placeBuildingTemplate = useCallback(() => {
+    if (readOnly) return;
+    // Viewport centre → scheme coords. Falls back to (0, 0) when
+    // svgViewport is still 0 (very rare — only on first mount).
+    const cx = svgViewport.width > 0
+      ? (svgViewport.width / 2 - RULER_PX) / zoom - pan.x
+      : 0;
+    const cy = svgViewport.height > 0
+      ? (svgViewport.height / 2 - RULER_PX) / zoom - pan.y
+      : 0;
+    // 20 m × 30 m at PX_PER_METER (20 px/m schematic-mode fallback,
+    // which is also a reasonable default building footprint scale
+    // when the map IS on — the polygon can be dragged to true scale
+    // afterwards). Half-extents: 200 × 300 px.
+    const halfW = 200;
+    const halfH = 300;
+    const corners: Array<Point> = [
+      { x: Math.round(cx - halfW), y: Math.round(cy - halfH) },
+      { x: Math.round(cx + halfW), y: Math.round(cy - halfH) },
+      { x: Math.round(cx + halfW), y: Math.round(cy + halfH) },
+      { x: Math.round(cx - halfW), y: Math.round(cy + halfH) },
+    ];
+    // Stamp geo onto each vertex when the map is visible so the
+    // template tracks pan/zoom like a drawn polygon.
+    const vertices = corners.map((c) => {
+      const ll = showMap ? svgToLatLon(c) : null;
+      return ll ? { ...c, lat: ll.lat, lon: ll.lon } : c;
+    });
+    const cur = useHydraulicStore.getState();
+    const buildingsCount = (cur.buildings ?? []).length;
+    const id = uid("bld");
+    addBuilding({
+      id,
+      polygon: vertices,
+      label: `Барилга-${buildingsCount + 1}`,
+      floors: 5,
+      building_type: "apartment",
+      layerKey: "D",
+    });
+    selectBuilding(id);
+    setToast({
+      text: "Темплейт барилга үүсгэв",
+      key: Date.now(),
+      tone: "success",
+    });
+  }, [readOnly, svgViewport.width, svgViewport.height, zoom, pan, showMap, svgToLatLon]);
+
+  /**
    * When the user clicks directly on the Leaflet map (not blocked by an SVG
    * node/pipe), place the currently-selected category at that lat/lon.
    * This is how map-overlay drawing works: map gets the click first, then
@@ -1744,6 +1807,21 @@ export function SchemeEditor({ readOnly }: Props) {
             icon="▱"
             label="Барилга"
             color="var(--success)"
+          />
+          {/* Phase 6.8.7 — quick-fill "standard apartment" template.
+              One click places a 5-storey 20×30 m polygon at the
+              current viewport centre with default metadata, so the
+              engineer can iterate from a known starting point
+              instead of always drawing fresh polygons. Inspector
+              opens with the new building selected so floors / load
+              fields are immediately editable. */}
+          <SideBtn
+            active={false}
+            onClick={placeBuildingTemplate}
+            icon="🏠"
+            label="Темплейт"
+            color="var(--success)"
+            title="Стандарт 5-давхар 20×30м блок зурагт байрлуулна"
           />
           <SideBtn
             active={mode === "addPipe"}
@@ -3787,11 +3865,26 @@ function NodeShape({ category, color, r, selected }: { category: string; color: 
   }
 }
 
-function SideBtn({ active, onClick, icon, label, color }: { active?: boolean; onClick: () => void; icon: string; label: string; color?: string }) {
+function SideBtn({
+  active,
+  onClick,
+  icon,
+  label,
+  color,
+  title,
+}: {
+  active?: boolean;
+  onClick: () => void;
+  icon: string;
+  label: string;
+  color?: string;
+  /** Phase 6.8.7 — optional richer tooltip; defaults to `label`. */
+  title?: string;
+}) {
   return (
     <button
       onClick={onClick}
-      title={label}
+      title={title ?? label}
       style={{
         margin: "0 6px",
         padding: "0.4rem 0",
