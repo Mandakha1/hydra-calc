@@ -34,6 +34,8 @@ const BomPanel = lazy(() => import("./panels/BomPanel").then((m) => ({ default: 
 const ResultsPanel = lazy(() => import("./panels/ResultsPanel").then((m) => ({ default: m.ResultsPanel })));
 const SettingsPanel = lazy(() => import("./panels/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
 const ItpSchemePicker = lazy(() => import("./panels/ItpSchemePicker").then((m) => ({ default: m.ItpSchemePicker })));
+// Phase 8.1 — Longitudinal profile (first of 5 detail views).
+const LongitudinalProfile = lazy(() => import("./panels/LongitudinalProfile").then((m) => ({ default: m.LongitudinalProfile })));
 
 interface Props {
   projectId?: string;
@@ -41,7 +43,21 @@ interface Props {
   sharedData?: unknown;
 }
 
-type Tab = "scheme" | "results" | "piezo" | "balancing" | "failure" | "bom" | "settings";
+type Tab =
+  | "scheme"
+  | "results"
+  | "piezo"
+  | "balancing"
+  | "failure"
+  | "bom"
+  | "settings"
+  // Phase 8 — Detail-view cluster. Adds 5 sub-phase tabs over time:
+  //   8.1 ✓ "profile"       — longitudinal profile
+  //   8.2   "energy"        — energy / heat-balance scheme
+  //   8.3   "well"          — ҮХТ chamber cross-section
+  //   8.4   "compensator"   — compensator detail
+  //   8.5   "pid"           — УДДТ P&ID
+  | "profile";
 
 export function HydraulicV5(props: Props) {
   return (
@@ -332,6 +348,12 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <TabBtn active={tab === "balancing"} onClick={() => setTab("balancing")}>⚖ Тэнцвэржүүлэлт</TabBtn>
         <TabBtn active={tab === "failure"} onClick={() => setTab("failure")}>🚨 Эвдрэлийн загвар</TabBtn>
         <TabBtn active={tab === "bom"} onClick={() => setTab("bom")}>💰 Смет</TabBtn>
+        {/* Phase 8 — visual divider between Plan-cluster (above) and
+            Detail-cluster (below). Helps the engineer mental-model
+            why some tabs feel "side views" and others "analysis". */}
+        <span aria-hidden style={tabDivider}>|</span>
+        <TabBtn active={tab === "profile"} onClick={() => setTab("profile")}>📊 Профиль</TabBtn>
+        <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
 
         <div style={{ flex: 1 }} />
@@ -446,6 +468,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "bom" && <BomPanel />}
             {tab === "piezo" && <PiezometricChart />}
             {tab === "balancing" && <BalancingPanel />}
+            {tab === "profile" && <LongitudinalProfile />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
           </Suspense>
         </main>
@@ -491,6 +514,17 @@ const btn: CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: 6,
   cursor: "pointer",
+};
+
+// Phase 8 — light pipe-character divider separating Plan-cluster
+// tabs from Detail-view tabs in the top tab bar. Lower opacity so
+// it reads as a structural cue rather than another tab button.
+const tabDivider: CSSProperties = {
+  color: "var(--fg-muted)",
+  fontSize: 14,
+  opacity: 0.5,
+  padding: "0 4px",
+  userSelect: "none",
 };
 
 const primaryBtn: CSSProperties = {
