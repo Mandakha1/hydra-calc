@@ -4,23 +4,34 @@
  *   1. Drag-drop / file-picker .dxf файл (browser-side parse)
  *   2. Бэлэн жишээ — Баянголын ам Гадна дулаан 2-2 (Ган-Кад ХХК 2022)
  */
-import { useState, type DragEvent, type ChangeEvent } from "react";
+import { useCallback, useState, type DragEvent, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   importDxfBytes,
+  importDxfJson,
   importBayangolSample,
   type DxfImportResult,
+  type ExtractedDxf,
 } from "../lib/dxfImport";
 import { api, HttpError } from "../lib/api";
 import { storage } from "../lib/storage";
 import { useAuthStore } from "../lib/authStore";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { ImportReviewPanel, type ImportOverrides } from "../components/hydraulic/import/ImportReviewPanel";
+import type { UndoSnapshot } from "../components/hydraulic/hydraulicTypes";
 
 export function ImportDxf() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<DxfImportResult | null>(null);
+  /** Phase 7.4 — keep the original ExtractedDxf so the review pane
+   *  can re-run the importer with overrides without re-parsing the
+   *  raw DXF text. */
+  const [extracted, setExtracted] = useState<ExtractedDxf | null>(null);
+  /** Phase 7.4 — gate the editor-navigation step. After parse the
+   *  engineer sees the review pane; on Confirm we commit + navigate. */
+  const [reviewing, setReviewing] = useState(false);
   const [filename, setFilename] = useState<string>("");
   const [heatingOnly, setHeatingOnly] = useState(true);
   const [defaultDn, setDefaultDn] = useState(100);
@@ -31,6 +42,8 @@ export function ImportDxf() {
     setBusy(true);
     setErr(null);
     setResult(null);
+    setExtracted(null);
+    setReviewing(false);
     setFilename(file.name);
     try {
       // Phase 7.1 — use the bytes path so the CP1251 sniffer can run.
@@ -39,6 +52,12 @@ export function ImportDxf() {
       const buffer = await file.arrayBuffer();
       const r = await importDxfBytes(buffer, { heatingOnly, defaultDn });
       setResult(r);
+      // We don't have the ExtractedDxf back from importDxfBytes
+      // because that path re-extracts inside importDxfText. For
+      // file-uploaded DXFs the engineer's override re-parse will
+      // skip the cheap path and re-run the importer on the original
+      // bytes; this is still fast (~50ms on Bayangol). Phase 11
+      // could expose ExtractedDxf through importDxfBytes if needed.
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Импорт амжилтгүй");
     } finally {
@@ -50,12 +69,24 @@ export function ImportDxf() {
     setBusy(true);
     setErr(null);
     setResult(null);
+    setExtracted(null);
+    setReviewing(false);
     setFilename("Баянголын ам Гадна дулаан 2-2 (жишээ).dxf");
     try {
-      const r = await importBayangolSample();
-      setResult(r);
+      // For the bundled sample we have the ExtractedDxf directly —
+      // grab it so the review-pane re-parse is essentially free.
+      const r = await fetch("/dxf-samples/bayangol-2-2.json");
+      const json = (await r.json()) as ExtractedDxf;
+      setExtracted(json);
+      setResult(importDxfJson(json, { heatingOnly: true, defaultDn }));
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Жишээ ачаалалт амжилтгүй");
+      // Fall through to the legacy path if the JSON fetch fails.
+      try {
+        setResult(await importBayangolSample());
+      } catch (e2) {
+        setErr(e2 instanceof Error ? e2.message : "Жишээ ачаалалт амжилтгүй");
+      }
+      void e;
     } finally {
       setBusy(false);
     }
@@ -71,21 +102,84 @@ export function ImportDxf() {
     if (f) void loadFile(f);
   };
 
-  async function saveProject() {
-    if (!result) return;
+  /**
+   * Phase 7.4 — re-run the importer with engineer overrides. Used
+   * by the review pane to produce a live preview. Only callable
+   * when we have the original ExtractedDxf in state (e.g. Bayangol
+   * preset). For file uploads `extracted` is null so the pane uses
+   * the original parseResult as a static preview.
+   */
+  const recomputeWithOverrides = useCallback(
+    (overrides: ImportOverrides): DxfImportResult => {
+      if (!extracted) return result!;
+      return importDxfJson(extracted, {
+        heatingOnly,
+        defaultDn,
+        blockAliasOverrides: overrides.blockAliases,
+        layerCircuitOverrides: overrides.layerCircuits,
+      });
+    },
+    [extracted, heatingOnly, defaultDn, result],
+  );
+
+  /**
+   * Phase 7.4 — commit step. Prepends a single empty-state
+   * UndoSnapshot to the project so engineer can Ctrl+Z in the
+   * editor to restore the pre-import (empty) state. The label
+   * surfaces as "DXF импортолсон" in the undo toast.
+   */
+  async function commitImport(finalResult: DxfImportResult) {
     const baseName = filename.replace(/\.dxf$/i, "") || "Импорт-DXF";
     const name = `${baseName} (DXF)`;
+    const importedNodeCount = finalResult.state.nodes.length;
+    const importedPipeCount = finalResult.state.pipes.length;
+    const preImportSnapshot: UndoSnapshot = {
+      label: "DXF импортолсон",
+      affectedCount: importedNodeCount + importedPipeCount,
+      nodes: [],
+      pipes: [],
+      selection: null,
+      multiSelection: {
+        nodeIds: [],
+        pipeIds: [],
+        dimensionIds: [],
+        constructionLineIds: [],
+        annotationIds: [],
+        buildingIds: [],
+      },
+      dimensions: [],
+      constructionLines: [],
+      annotations: [],
+      buildings: [],
+    };
+    const stateWithUndo = {
+      ...finalResult.state,
+      undoStack: [preImportSnapshot],
+    };
     try {
       if (demoMode) {
-        await storage.set(`project:${name}`, JSON.stringify(result.state));
+        await storage.set(`project:${name}`, JSON.stringify(stateWithUndo));
         nav(`/app/${encodeURIComponent(name)}`);
       } else {
-        const created = await api.post<{ id: string }>("/projects", { name, data: result.state });
+        const created = await api.post<{ id: string }>("/projects", { name, data: stateWithUndo });
         nav(`/app/${created.id}`);
       }
     } catch (e) {
       alert(e instanceof HttpError ? e.message : "Хадгалж чадсангүй");
     }
+  }
+
+  /** Legacy: direct commit without the review pane (kept on the
+   *  "Хадгалж editor нээх" button as a one-click shortcut). */
+  async function saveProject() {
+    if (!result) return;
+    await commitImport(result);
+  }
+
+  /** Phase 7.4 — open the review pane. */
+  function openReview() {
+    if (!result) return;
+    setReviewing(true);
   }
 
   return (
@@ -218,13 +312,33 @@ export function ImportDxf() {
                   </ul>
                 </details>
               )}
-              <div style={{ display: "flex", gap: 8, marginTop: "1.5rem" }}>
-                <Button onClick={saveProject} size="lg">💾 Хадгалж editor нээх</Button>
-                <Button variant="secondary" onClick={() => { setResult(null); setFilename(""); }}>
+              <div style={{ display: "flex", gap: 8, marginTop: "1.5rem", flexWrap: "wrap" }}>
+                <Button onClick={openReview} size="lg" data-testid="open-review">
+                  🔍 Review хийх + хадгалах
+                </Button>
+                <Button variant="secondary" onClick={saveProject} data-testid="quick-commit">
+                  💾 Шууд хадгалах
+                </Button>
+                <Button variant="secondary" onClick={() => { setResult(null); setExtracted(null); setReviewing(false); setFilename(""); }}>
                   Дахин эхлэх
                 </Button>
               </div>
             </Card>
+
+            {/* Phase 7.4 — review pane (between parse and commit) */}
+            {reviewing && (
+              <Card style={{ marginBottom: "1rem" }}>
+                <ImportReviewPanel
+                  parseResult={result}
+                  {...(extracted ? { extracted } : {})}
+                  {...(extracted ? { recompute: recomputeWithOverrides } : {})}
+                  onConfirm={(_overrides, livePreview) => {
+                    void commitImport(livePreview);
+                  }}
+                  onCancel={() => setReviewing(false)}
+                />
+              </Card>
+            )}
 
             <Card>
               <details open>
