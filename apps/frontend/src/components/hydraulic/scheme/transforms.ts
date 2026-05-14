@@ -37,7 +37,7 @@
  *   - Snap engine integration — caller applies snap before calling
  *     these helpers.
  */
-import type { SchemeNode } from "../hydraulicTypes";
+import type { SchemeBuilding, SchemeNode } from "../hydraulicTypes";
 
 /** Haversine-consistent metres per degree of latitude. */
 const M_PER_DEG_LAT = (Math.PI * 6_371_000) / 180;
@@ -249,4 +249,154 @@ export function centroidGeo(
   }
   if (n === 0) return null;
   return { lat: sLat / n, lon: sLon / n };
+}
+
+/* ─── Phase 6.8.7 — Building polygon transforms ──────────────────── */
+
+/** Per-building polygon centroid in pixel space. Sums all vertices'
+ *  (x, y) and divides by count. Used internally when combining
+ *  building centroids with node centroids for a multi-select rotate
+ *  pivot. */
+export function buildingPolygonCentroidPx(
+  b: SchemeBuilding,
+): { x: number; y: number } {
+  if (b.polygon.length === 0) return { x: 0, y: 0 };
+  let sx = 0;
+  let sy = 0;
+  for (const v of b.polygon) {
+    sx += v.x;
+    sy += v.y;
+  }
+  return { x: sx / b.polygon.length, y: sy / b.polygon.length };
+}
+
+/** Per-building polygon centroid in geo space. Returns null when no
+ *  vertex carries geo. Same averaging strategy as `centroidGeo`. */
+export function buildingPolygonCentroidGeo(
+  b: SchemeBuilding,
+): { lat: number; lon: number } | null {
+  let n = 0;
+  let sLat = 0;
+  let sLon = 0;
+  for (const v of b.polygon) {
+    if (typeof v.lat === "number" && typeof v.lon === "number") {
+      sLat += v.lat;
+      sLon += v.lon;
+      n += 1;
+    }
+  }
+  if (n === 0) return null;
+  return { lat: sLat / n, lon: sLon / n };
+}
+
+/**
+ * Rotate building polygon vertices by `angleDeg` around `center_px`
+ * (and optionally `center_geo`). Phase 6.8.6 originally shipped the
+ * SchemeBuilding entity but left transforms unwired — building
+ * polygons stayed put when a multi-select rotated nodes around them.
+ * This helper closes that gap by applying the SAME rotation math
+ * (`rotateNodes` formula) to every polygon vertex.
+ *
+ * Returns a fresh array of cloned buildings; input untouched.
+ */
+export function rotateBuildings(
+  buildings: SchemeBuilding[],
+  center_px: { x: number; y: number },
+  angleDeg: number,
+  center_geo?: { lat: number; lon: number },
+): SchemeBuilding[] {
+  if (buildings.length === 0) return [];
+  const theta = (angleDeg * Math.PI) / 180;
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
+  const m_per_lon_at_center = center_geo ? mPerDegLon(center_geo.lat) : null;
+  return buildings.map((b) => ({
+    ...b,
+    polygon: b.polygon.map((v) => {
+      // Pixel-space rotation.
+      const dx = v.x - center_px.x;
+      const dy = v.y - center_px.y;
+      const nx = Math.round(center_px.x + dx * cosT - dy * sinT);
+      const ny = Math.round(center_px.y + dx * sinT + dy * cosT);
+      // Geo rotation only when the vertex AND the pivot both carry geo.
+      if (
+        typeof v.lat === "number"
+        && typeof v.lon === "number"
+        && center_geo
+        && m_per_lon_at_center
+      ) {
+        const dLat_m = (v.lat - center_geo.lat) * M_PER_DEG_LAT;
+        const dLon_m = (v.lon - center_geo.lon) * m_per_lon_at_center;
+        const newLon_m = dLon_m * cosT - dLat_m * sinT;
+        const newLat_m = dLon_m * sinT + dLat_m * cosT;
+        return {
+          x: nx,
+          y: ny,
+          lat: center_geo.lat + newLat_m / M_PER_DEG_LAT,
+          lon: center_geo.lon + newLon_m / m_per_lon_at_center,
+        };
+      }
+      return { x: nx, y: ny };
+    }),
+  }));
+}
+
+/**
+ * Mirror building polygon vertices across a `MirrorAxis` (same axis
+ * shape as `mirrorNodes`). Each vertex's pixel coords are reflected;
+ * geo coords are reflected for horizontal / vertical axes that
+ * carry a geo reference.
+ */
+export function mirrorBuildings(
+  buildings: SchemeBuilding[],
+  axis: MirrorAxis,
+): SchemeBuilding[] {
+  if (buildings.length === 0) return [];
+  return buildings.map((b) => ({
+    ...b,
+    polygon: b.polygon.map((v) => {
+      if (axis.kind === "horizontal") {
+        return {
+          ...v,
+          x: v.x,
+          y: Math.round(2 * axis.y_px - v.y),
+          ...(typeof v.lat === "number" && axis.y_geo_lat !== undefined
+            ? { lat: 2 * axis.y_geo_lat - v.lat }
+            : typeof v.lat === "number"
+              ? { lat: v.lat }
+              : {}),
+          ...(typeof v.lon === "number" ? { lon: v.lon } : {}),
+        };
+      }
+      if (axis.kind === "vertical") {
+        return {
+          ...v,
+          x: Math.round(2 * axis.x_px - v.x),
+          y: v.y,
+          ...(typeof v.lat === "number" ? { lat: v.lat } : {}),
+          ...(typeof v.lon === "number" && axis.x_geo_lon !== undefined
+            ? { lon: 2 * axis.x_geo_lon - v.lon }
+            : typeof v.lon === "number"
+              ? { lon: v.lon }
+              : {}),
+        };
+      }
+      // Arbitrary 2-point line — same math as mirrorNodes. Geo
+      // deferred (same caveat as the node path).
+      const dx = axis.b_px.x - axis.a_px.x;
+      const dy = axis.b_px.y - axis.a_px.y;
+      const denom = dx * dx + dy * dy;
+      if (denom < 1e-9) return { ...v };
+      const px = v.x - axis.a_px.x;
+      const py = v.y - axis.a_px.y;
+      const t = (px * dx + py * dy) / denom;
+      const footX = axis.a_px.x + t * dx;
+      const footY = axis.a_px.y + t * dy;
+      return {
+        ...v,
+        x: Math.round(2 * footX - v.x),
+        y: Math.round(2 * footY - v.y),
+      };
+    }),
+  }));
 }

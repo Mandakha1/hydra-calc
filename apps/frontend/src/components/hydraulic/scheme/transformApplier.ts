@@ -26,36 +26,46 @@ import {
   rotateNodes,
   mirrorNodes,
   centroidGeo,
+  rotateBuildings,
+  mirrorBuildings,
+  buildingPolygonCentroidPx,
+  buildingPolygonCentroidGeo,
 } from "./transforms";
 import { rotateAnnotations, mirrorAnnotations } from "./annotations";
 import { pushUndoSnapshot } from "./undoStack";
-import type { SchemeAnnotation } from "../hydraulicTypes";
+import type { SchemeAnnotation, SchemeBuilding } from "../hydraulicTypes";
 
-/** Internal: collect currently-selected nodes + annotations from the
- *  store. Phase 6.6.3 — annotations participate in rotate/mirror so
- *  drafting labels follow the geometry they describe. */
+/** Internal: collect currently-selected nodes + annotations + buildings
+ *  from the store. Phase 6.6.3 — annotations participate in rotate/
+ *  mirror so drafting labels follow the geometry they describe.
+ *  Phase 6.8.7 — buildings participate too so a polygon outline
+ *  stays aligned with the network it contains. */
 function collectTransformTargets(): {
   nodes: ReturnType<typeof useHydraulicStore.getState>["nodes"];
   annotations: SchemeAnnotation[];
+  buildings: SchemeBuilding[];
 } {
   const s = useHydraulicStore.getState();
   const nodeIds = new Set(s.multiSelection.nodeIds);
   const annIds = new Set(s.multiSelection.annotationIds ?? []);
+  const bldIds = new Set(s.multiSelection.buildingIds ?? []);
   return {
     nodes: s.nodes.filter((n) => nodeIds.has(n.id)),
     annotations: (s.annotations ?? []).filter((a) => annIds.has(a.id)),
+    buildings: (s.buildings ?? []).filter((b) => bldIds.has(b.id)),
   };
 }
 
-/** Combined centroid (in pixel space) over nodes + annotation anchors.
- *  When only one entity type is selected, falls back to that type's
- *  centroid — the engineer's intent of "rotate around what I have"
- *  stays intact. */
+/** Combined centroid (in pixel space) over nodes + annotation anchors
+ *  + building polygon centroids. Each building contributes ONCE
+ *  (using its polygon centroid) so a single 4-vertex building
+ *  doesn't outweigh a single node. */
 function combinedCentroidPx(
   nodes: ReturnType<typeof useHydraulicStore.getState>["nodes"],
   annotations: SchemeAnnotation[],
+  buildings: SchemeBuilding[] = [],
 ): { x: number; y: number } {
-  const total = nodes.length + annotations.length;
+  const total = nodes.length + annotations.length + buildings.length;
   if (total === 0) return { x: 0, y: 0 };
   let sx = 0;
   let sy = 0;
@@ -67,15 +77,44 @@ function combinedCentroidPx(
     sx += a.x;
     sy += a.y;
   }
+  for (const b of buildings) {
+    const c = buildingPolygonCentroidPx(b);
+    sx += c.x;
+    sy += c.y;
+  }
   return { x: sx / total, y: sy / total };
+}
+
+/** Combined geo centroid (nodes + building polygon vertices). Used
+ *  to derive the rotation/mirror pivot's lat/lon when ANY of the
+ *  selected entities carries geo. Returns null when none of them do. */
+function combinedCentroidGeo(
+  nodes: ReturnType<typeof useHydraulicStore.getState>["nodes"],
+  buildings: SchemeBuilding[],
+): { lat: number; lon: number } | null {
+  const nodeGeo = centroidGeo(nodes);
+  let n = nodeGeo ? 1 : 0;
+  let sLat = nodeGeo ? nodeGeo.lat : 0;
+  let sLon = nodeGeo ? nodeGeo.lon : 0;
+  for (const b of buildings) {
+    const c = buildingPolygonCentroidGeo(b);
+    if (c) {
+      sLat += c.lat;
+      sLon += c.lon;
+      n += 1;
+    }
+  }
+  if (n === 0) return null;
+  return { lat: sLat / n, lon: sLon / n };
 }
 
 /** Rotate the current multi-selection by an arbitrary angle around
  *  the selection's centroid. Toolbar buttons call this with +90,
  *  -90, or 180. Phase 6.6.3 — annotations rotate with nodes. */
 export function applyRotateAroundCentroid(angleDeg: number): number {
-  const { nodes: nodeTargets, annotations: annTargets } = collectTransformTargets();
-  const affected = nodeTargets.length + annTargets.length;
+  const { nodes: nodeTargets, annotations: annTargets, buildings: bldTargets } =
+    collectTransformTargets();
+  const affected = nodeTargets.length + annTargets.length + bldTargets.length;
   if (affected === 0) return 0;
   // Phase 6.5.5 — snapshot pre-mutation so Ctrl+Z restores positions.
   // Label tailored per angle for engineer-readable toast.
@@ -85,10 +124,11 @@ export function applyRotateAroundCentroid(angleDeg: number): number {
     : angleDeg === 180 ? "Эргүүлэлт 180°"
     : `Эргүүлэлт ${angleDeg}°`;
   pushUndoSnapshot(label, affected);
-  // Geo centroid is computed from nodes only — annotations don't
-  // carry geo coords, so they're rotated in pixel space only.
-  const centerPx = combinedCentroidPx(nodeTargets, annTargets);
-  const centerGeo = centroidGeo(nodeTargets);
+  // Combined centroid spans nodes + annotations + buildings (each
+  // building contributes its polygon centroid once). Geo centroid
+  // includes building polygon vertex geo when present.
+  const centerPx = combinedCentroidPx(nodeTargets, annTargets, bldTargets);
+  const centerGeo = combinedCentroidGeo(nodeTargets, bldTargets);
   const s = useHydraulicStore.getState();
   if (nodeTargets.length > 0) {
     const rotated = rotateNodes(nodeTargets, centerPx, angleDeg, centerGeo ?? undefined);
@@ -109,6 +149,20 @@ export function applyRotateAroundCentroid(angleDeg: number): number {
     });
     useHydraulicStore.setState({ annotations: updated });
   }
+  if (bldTargets.length > 0) {
+    // Phase 6.8.7 — rotate building polygon vertices in pixel + geo
+    // space. The shared centerPx ensures the building stays in the
+    // same relative position to the rotating node cluster.
+    const rotated = rotateBuildings(
+      bldTargets,
+      centerPx,
+      angleDeg,
+      centerGeo ?? undefined,
+    );
+    const existing = useHydraulicStore.getState().buildings ?? [];
+    const updated = existing.map((b) => rotated.find((r) => r.id === b.id) ?? b);
+    useHydraulicStore.setState({ buildings: updated });
+  }
   return affected;
 }
 
@@ -121,19 +175,21 @@ export const applyRotate180 = (): number => applyRotateAroundCentroid(180);
  *  across the selection's centroid Y. Phase 6.6.3 — annotations
  *  mirror with nodes (text flips to the new orientation). */
 export function applyMirrorHorizontal(): number {
-  const { nodes: nodeTargets, annotations: annTargets } = collectTransformTargets();
-  const affected = nodeTargets.length + annTargets.length;
+  const { nodes: nodeTargets, annotations: annTargets, buildings: bldTargets } =
+    collectTransformTargets();
+  const affected = nodeTargets.length + annTargets.length + bldTargets.length;
   if (affected === 0) return 0;
   pushUndoSnapshot("Хэвтээ тусгал", affected);
-  const cPx = combinedCentroidPx(nodeTargets, annTargets);
-  const cGeo = centroidGeo(nodeTargets);
+  const cPx = combinedCentroidPx(nodeTargets, annTargets, bldTargets);
+  const cGeo = combinedCentroidGeo(nodeTargets, bldTargets);
   const s = useHydraulicStore.getState();
+  const axis = {
+    kind: "horizontal" as const,
+    y_px: cPx.y,
+    ...(cGeo ? { y_geo_lat: cGeo.lat } : {}),
+  };
   if (nodeTargets.length > 0) {
-    const mirrored = mirrorNodes(nodeTargets, {
-      kind: "horizontal",
-      y_px: cPx.y,
-      ...(cGeo ? { y_geo_lat: cGeo.lat } : {}),
-    });
+    const mirrored = mirrorNodes(nodeTargets, axis);
     for (const n of mirrored) {
       s.updateNode(n.id, {
         x: n.x,
@@ -148,25 +204,33 @@ export function applyMirrorHorizontal(): number {
     const updated = existing.map((a) => mirrored.find((m) => m.id === a.id) ?? a);
     useHydraulicStore.setState({ annotations: updated });
   }
+  if (bldTargets.length > 0) {
+    const mirrored = mirrorBuildings(bldTargets, axis);
+    const existing = useHydraulicStore.getState().buildings ?? [];
+    const updated = existing.map((b) => mirrored.find((m) => m.id === b.id) ?? b);
+    useHydraulicStore.setState({ buildings: updated });
+  }
   return affected;
 }
 
 /** Mirror the current multi-selection vertically (flip left↔right)
  *  across the selection's centroid X. */
 export function applyMirrorVertical(): number {
-  const { nodes: nodeTargets, annotations: annTargets } = collectTransformTargets();
-  const affected = nodeTargets.length + annTargets.length;
+  const { nodes: nodeTargets, annotations: annTargets, buildings: bldTargets } =
+    collectTransformTargets();
+  const affected = nodeTargets.length + annTargets.length + bldTargets.length;
   if (affected === 0) return 0;
   pushUndoSnapshot("Босоо тусгал", affected);
-  const cPx = combinedCentroidPx(nodeTargets, annTargets);
-  const cGeo = centroidGeo(nodeTargets);
+  const cPx = combinedCentroidPx(nodeTargets, annTargets, bldTargets);
+  const cGeo = combinedCentroidGeo(nodeTargets, bldTargets);
   const s = useHydraulicStore.getState();
+  const axis = {
+    kind: "vertical" as const,
+    x_px: cPx.x,
+    ...(cGeo ? { x_geo_lon: cGeo.lon } : {}),
+  };
   if (nodeTargets.length > 0) {
-    const mirrored = mirrorNodes(nodeTargets, {
-      kind: "vertical",
-      x_px: cPx.x,
-      ...(cGeo ? { x_geo_lon: cGeo.lon } : {}),
-    });
+    const mirrored = mirrorNodes(nodeTargets, axis);
     for (const n of mirrored) {
       s.updateNode(n.id, {
         x: n.x,
@@ -180,6 +244,12 @@ export function applyMirrorVertical(): number {
     const existing = useHydraulicStore.getState().annotations ?? [];
     const updated = existing.map((a) => mirrored.find((m) => m.id === a.id) ?? a);
     useHydraulicStore.setState({ annotations: updated });
+  }
+  if (bldTargets.length > 0) {
+    const mirrored = mirrorBuildings(bldTargets, axis);
+    const existing = useHydraulicStore.getState().buildings ?? [];
+    const updated = existing.map((b) => mirrored.find((m) => m.id === b.id) ?? b);
+    useHydraulicStore.setState({ buildings: updated });
   }
   return affected;
 }

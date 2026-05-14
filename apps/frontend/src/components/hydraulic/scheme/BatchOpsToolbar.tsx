@@ -3,7 +3,7 @@
  *
  * Compact toolbar exposing every Phase 6.5 batch operation as a single
  * click:
- *   ↺ ↻ ↕ ⏥ ⏤ ▦ ⊕
+ *   ↺ ↻ ⟳ ⏥ ⏤ ▦ ⊕
  *   Rotate CCW / Rotate CW / Rotate 180 / Mirror H / Mirror V /
  *   Linear array / Polar array
  *
@@ -17,6 +17,14 @@
  * Where it sits:
  *   Mounted by SchemeEditor at the top-centre of the canvas, above
  *   the existing top toolbar. Visible whenever the editor is active.
+ *
+ * Phase 6.8.7 (BUG #6) — engineers reported the rotate ↺/↻ glyphs
+ * looked identical to undo/redo glyphs in the OS font (both render
+ * to "an arc with arrow", visually indistinguishable at 16px on
+ * common Windows / Mac font stacks). Fixed by adding a short text
+ * label under each button: "↺ 90°", "↻ 90°", "⟳ 180°", "⏥ ↕",
+ * "⏤ ↔", "▦", "⊕". The label is the load-bearing engineer cue;
+ * the glyph stays as a visual anchor.
  */
 import { useState, type CSSProperties } from "react";
 import { useHydraulicStore } from "../hydraulicStore";
@@ -42,7 +50,19 @@ export function BatchOpsToolbar({ onToastMessage }: BatchOpsToolbarProps) {
   const [polarOpen, setPolarOpen] = useState(false);
 
   const totalSelected = ms.nodeIds.length + ms.pipeIds.length;
-  const transformsDisabled = ms.nodeIds.length === 0;
+  // Phase 6.8.7 — transforms enable when ANY transformable entity is
+  // selected (nodes / annotations / buildings). Previously only nodes
+  // unlocked the rotate / mirror buttons, so a building-only
+  // selection couldn't be rotated even though `applyRotate*` knows
+  // how to handle it.
+  const transformsDisabled =
+    ms.nodeIds.length === 0
+    && (ms.annotationIds ?? []).length === 0
+    && (ms.buildingIds ?? []).length === 0;
+  // Array tools still require nodes — cloning a payload without
+  // nodes is a no-op for now (Phase 6.5.4 arrayApplier reads node
+  // ids first; building-only arrays would need a separate code
+  // path that's out of scope for the closeout PR).
   const arrayDisabled = ms.nodeIds.length === 0;
 
   const runWithToast = (action: () => number, prefix: string) => () => {
@@ -58,38 +78,45 @@ export function BatchOpsToolbar({ onToastMessage }: BatchOpsToolbarProps) {
         <span style={label}>Бөгөмөөр:</span>
         <ToolbarBtn
           title="Цагийн зүүний эсрэг 90° (CCW)"
+          subLabel="90°↺"
           disabled={transformsDisabled}
           onClick={runWithToast(applyRotateCCW, "Эргүүлсэн ↺ 90°")}
         >↺</ToolbarBtn>
         <ToolbarBtn
           title="Цагийн зүүгээр 90° (CW)"
+          subLabel="90°↻"
           disabled={transformsDisabled}
           onClick={runWithToast(applyRotateCW, "Эргүүлсэн ↻ 90°")}
         >↻</ToolbarBtn>
         <ToolbarBtn
           title="180° эргүүлэх"
+          subLabel="180°"
           disabled={transformsDisabled}
           onClick={runWithToast(applyRotate180, "Эргүүлсэн 180°")}
         >⟳</ToolbarBtn>
         <span style={divider} />
         <ToolbarBtn
           title="Хэвтээ тэнхлэгээр тусгах (дээш↕доош)"
+          subLabel="↕"
           disabled={transformsDisabled}
           onClick={runWithToast(applyMirrorHorizontal, "Хэвтээ тусгасан")}
         >⏥</ToolbarBtn>
         <ToolbarBtn
           title="Босоо тэнхлэгээр тусгах (зүүн↔баруун)"
+          subLabel="↔"
           disabled={transformsDisabled}
           onClick={runWithToast(applyMirrorVertical, "Босоо тусгасан")}
         >⏤</ToolbarBtn>
         <span style={divider} />
         <ToolbarBtn
           title="Шугаман массив (N×M grid)"
+          subLabel="N×M"
           disabled={arrayDisabled}
           onClick={() => setLinearOpen(true)}
         >▦</ToolbarBtn>
         <ToolbarBtn
           title="Радиал массив (төвийн орчмын N хувилбар)"
+          subLabel="rad"
           disabled={arrayDisabled}
           onClick={() => setPolarOpen(true)}
         >⊕</ToolbarBtn>
@@ -130,11 +157,16 @@ function ToolbarBtn({
   onClick,
   disabled,
   title,
+  subLabel,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   title: string;
+  /** Phase 6.8.7 — short text label rendered under the glyph so
+   *  rotate buttons can't be confused with undo/redo (the latter
+   *  use the same ↺/↻ characters on most OS fonts). 3–5 chars. */
+  subLabel?: string;
 }) {
   return (
     <button
@@ -142,13 +174,15 @@ function ToolbarBtn({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      data-sublabel={subLabel}
       style={{
         ...btnBase,
         opacity: disabled ? 0.35 : 1,
         cursor: disabled ? "not-allowed" : "pointer",
       }}
     >
-      {children}
+      <span style={glyphStyle}>{children}</span>
+      {subLabel && <span style={subLabelStyle}>{subLabel}</span>}
     </button>
   );
 }
@@ -188,19 +222,35 @@ const divider: CSSProperties = {
 };
 
 const btnBase: CSSProperties = {
-  width: 30,
-  height: 28,
+  // Phase 6.8.7 — width widened (30 → 42) + height grown (28 → 36)
+  // to fit the disambiguating subLabel underneath each glyph.
+  width: 42,
+  height: 36,
   padding: 0,
   border: "1px solid var(--bp-line, #444)",
   borderRadius: 4,
   background: "var(--bp-bg, #2a2a2a)",
   color: "var(--fg, #fff)",
-  fontSize: 16,
   fontFamily: "var(--font-mono, monospace)",
   display: "flex",
+  flexDirection: "column",
   alignItems: "center",
   justifyContent: "center",
   transition: "background 80ms, border-color 80ms",
+  lineHeight: 1,
+};
+
+const glyphStyle: CSSProperties = {
+  fontSize: 15,
+  lineHeight: 1,
+};
+
+const subLabelStyle: CSSProperties = {
+  fontSize: 8,
+  lineHeight: 1,
+  marginTop: 2,
+  color: "var(--fg-muted, #aaa)",
+  letterSpacing: 0.2,
 };
 
 const countBadge: CSSProperties = {
