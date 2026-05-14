@@ -175,9 +175,15 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         // switching projects don't want a stale paste from the
         // previous session to land in the new one.
         clipboard: null,
-        // Phase 6.5.5 — same blank-slate rule for undo/redo history.
-        undoStack: [],
-        redoStack: [],
+        // Phase 6.5.5 — undo/redo history is PER-PROJECT, so reset()
+        // preserves whatever history the incoming state carried.
+        // Empty when omitted (e.g. legacy projects without
+        // `undoStack` in storage).
+        // Phase 7.4 adopts this so DXF-import projects can pre-seed
+        // a "pre-import" undo entry, letting engineers Ctrl+Z to
+        // restore the empty pre-import state.
+        undoStack: state?.undoStack ?? [],
+        redoStack: state?.redoStack ?? [],
         // Phase 6.6.1/6.6.2/6.6.3 — same for drafting aids.
         dimensions: [],
         constructionLines: [],

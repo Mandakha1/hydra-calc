@@ -56,6 +56,27 @@ export interface DxfImportResult {
     /** Phase 7.3 — number of pipes whose multi-signal vote disagreed. */
     circuitConflicts?: number;
   };
+  /** Phase 7.4 — distinct CAD layer names that contributed pipes,
+   *  paired with the auto-detected circuit. Engineer uses this in
+   *  the review pane to override layer→circuit mappings before
+   *  commit. Sorted descending by pipe count. */
+  distinctLayers?: Array<{
+    layer: string;
+    pipeCount: number;
+    autoCircuit: string;
+    autoLayerKey: string;
+    /** True when the multi-signal voter saw a conflict on this layer's pipes. */
+    hadConflict: boolean;
+  }>;
+  /** Phase 7.4 — distinct CAD block names that contributed nodes,
+   *  paired with the auto-detected NodeKind. Engineer uses this in
+   *  the review pane to override block→kind mappings. Sorted
+   *  descending by node count. */
+  distinctBlocks?: Array<{
+    block: string;
+    nodeCount: number;
+    autoKind: string;
+  }>;
   warnings: string[];
   /** Real-world bbox in meters (used to compute geo-anchor if needed). */
   bbox: { minX: number; maxX: number; minY: number; maxY: number };
@@ -351,10 +372,18 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
 
   /* === 6. Snap inserts (block references) → typed nodes === */
   let insertCount = 0;
+  /** Phase 7.4 — per-block-name aggregation for the review pane. */
+  const blockAgg = new Map<string, { nodeCount: number; autoKind: string }>();
   for (const ins of extracted.inserts) {
     const key = nearbyKey(ins.x, ins.y, POINT_TOL_M * 2);
     const pn = protoNodes.get(key);
     const kind = classifyBlockName(ins.name, blockAliasOverrides);
+    const bagg = blockAgg.get(ins.name);
+    if (bagg) {
+      bagg.nodeCount += 1;
+    } else {
+      blockAgg.set(ins.name, { nodeCount: 1, autoKind: kind });
+    }
     if (pn) {
       pn.kind = kind;
       pn.fromInsert = true;
@@ -428,6 +457,12 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
   const circuitCounts: Record<string, number> = {};
   let conflictCount = 0;
   let unknownCount = 0;
+  /** Phase 7.4 — per-layer aggregation for the review pane. */
+  const layerAgg = new Map<string, {
+    pipeCount: number;
+    autoCircuit: string;
+    hadConflict: boolean;
+  }>();
 
   const pipes: SchemePipe[] = [];
   let totalLen_m = 0;
@@ -442,6 +477,7 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
     };
     const overrideCircuit = layerCircuitOverrides?.[pp.layer];
     let circuit: PipeCircuitFinal;
+    let conflict = false;
     if (overrideCircuit) {
       circuit = overrideCircuit;
     } else {
@@ -454,11 +490,23 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
       } else {
         circuit = raw;
       }
-      if (detectCircuitConflict(hint)) {
+      conflict = detectCircuitConflict(hint);
+      if (conflict) {
         conflictCount += 1;
       }
     }
     circuitCounts[circuit] = (circuitCounts[circuit] ?? 0) + 1;
+    const lagg = layerAgg.get(pp.layer);
+    if (lagg) {
+      lagg.pipeCount += 1;
+      if (conflict) lagg.hadConflict = true;
+    } else {
+      layerAgg.set(pp.layer, {
+        pipeCount: 1,
+        autoCircuit: circuit,
+        hadConflict: conflict,
+      });
+    }
     pipes.push({
       id: pp.id,
       fromNodeId: fromId,
@@ -512,12 +560,44 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
     circuitConflicts: conflictCount,
   };
 
+  // Phase 7.4 — populate review-pane payloads from the aggregators.
+  const distinctLayers: NonNullable<DxfImportResult["distinctLayers"]> = [];
+  for (const [layer, agg] of layerAgg.entries()) {
+    distinctLayers.push({
+      layer,
+      pipeCount: agg.pipeCount,
+      autoCircuit: agg.autoCircuit,
+      autoLayerKey: layerKeyForFromCircuit(agg.autoCircuit),
+      hadConflict: agg.hadConflict,
+    });
+  }
+  distinctLayers.sort((a, b) => b.pipeCount - a.pipeCount);
+  const distinctBlocks: NonNullable<DxfImportResult["distinctBlocks"]> = [];
+  for (const [block, agg] of blockAgg.entries()) {
+    distinctBlocks.push({ block, nodeCount: agg.nodeCount, autoKind: agg.autoKind });
+  }
+  distinctBlocks.sort((a, b) => b.nodeCount - a.nodeCount);
+
   return {
     state: { nodes, pipes, settings, schemaVersion: 5 },
     stats,
+    distinctLayers,
+    distinctBlocks,
     warnings,
     bbox: { minX: bb.min_x, maxX: bb.max_x, minY: bb.min_y, maxY: bb.max_y },
   };
+}
+
+/** Local helper: derive Hydra layer key from PipeCircuit string. */
+function layerKeyForFromCircuit(circuit: string): string {
+  switch (circuit) {
+    case "heating_supply": return "D2.1";
+    case "heating_return": return "D2.2";
+    case "dhw_supply": return "D3";
+    case "dhw_recirc": return "D4";
+    case "cold_water": return "U1";
+    default: return "D2.1";
+  }
 }
 
 /* ============================================================================
