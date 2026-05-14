@@ -36,6 +36,8 @@ const SettingsPanel = lazy(() => import("./panels/SettingsPanel").then((m) => ({
 const ItpSchemePicker = lazy(() => import("./panels/ItpSchemePicker").then((m) => ({ default: m.ItpSchemePicker })));
 // Phase 8.1 — Longitudinal profile (first of 5 detail views).
 const LongitudinalProfile = lazy(() => import("./panels/LongitudinalProfile").then((m) => ({ default: m.LongitudinalProfile })));
+// Phase 8.2 — Energy schemes (heat-balance view).
+const EnergySchemes = lazy(() => import("./panels/EnergySchemes").then((m) => ({ default: m.EnergySchemes })));
 
 interface Props {
   projectId?: string;
@@ -53,11 +55,12 @@ type Tab =
   | "settings"
   // Phase 8 — Detail-view cluster. Adds 5 sub-phase tabs over time:
   //   8.1 ✓ "profile"       — longitudinal profile
-  //   8.2   "energy"        — energy / heat-balance scheme
+  //   8.2 ✓ "energy"        — energy / heat-balance scheme
   //   8.3   "well"          — ҮХТ chamber cross-section
   //   8.4   "compensator"   — compensator detail
   //   8.5   "pid"           — УДДТ P&ID
-  | "profile";
+  | "profile"
+  | "energy";
 
 export function HydraulicV5(props: Props) {
   return (
@@ -353,6 +356,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             why some tabs feel "side views" and others "analysis". */}
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "profile"} onClick={() => setTab("profile")}>📊 Профиль</TabBtn>
+        <TabBtn active={tab === "energy"} onClick={() => setTab("energy")}>⚡ Энерги</TabBtn>
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
 
@@ -469,6 +473,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "piezo" && <PiezometricChart />}
             {tab === "balancing" && <BalancingPanel />}
             {tab === "profile" && <LongitudinalProfile />}
+            {tab === "energy" && <EnergySchemes />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
           </Suspense>
         </main>
