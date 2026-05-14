@@ -80,6 +80,21 @@ export interface SchemeNode {
   /** Manhole cover diameter (mm). Default 700 mm (standard concrete
    *  manhole ring) when undefined. */
   coverDiameter_mm?: number;
+
+  /* ============== PHASE 8.4 — Compensator detail dimensions ============== */
+  /** Compensator bend radius (mm). For Ω-bends (compensator_u): the
+   *  radius of the semicircular top. For sильfон (compensator_bellow):
+   *  the OD of the accordion convolution. Default 500 mm when
+   *  undefined. */
+  bendRadius_mm?: number;
+  /** Arm height (m). Vertical reach of an Ω-bend's two arms (the
+   *  distance from the pipe centerline up to the start of the
+   *  semicircle). Default 1.2 m. */
+  armHeight_m?: number;
+  /** Span (m). Horizontal distance between the two compensator arms
+   *  at the pipe centerline. For bellows it's the total expansion
+   *  length. Default 2.0 m. */
+  span_m?: number;
   /** Hatch fill pattern for building footprint / plan-view rectangle. AutoCAD-style.
    *  - "solid"     — semi-transparent fill (default)
    *  - "diag45"    — 45° parallel lines (concrete / standard)
