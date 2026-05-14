@@ -65,6 +65,21 @@ export interface SchemeNode {
    *  result still clamps to [MIN_SYMBOL_PX, MAX_SYMBOL_PX]. Default 1.0
    *  (no override) — undefined behaves identically. */
   size_scale?: number;
+
+  /* ============== PHASE 8.3 — Well / chamber detail dimensions ============== */
+  /** Chamber inside length (m). Used by the ҮХТ Well Detail view to
+   *  render the cross-section rectangle to true scale. Only meaningful
+   *  on `well_*` / `chamber` kinds. Default rendering when undefined:
+   *  3 m × 2 m × 2.5 m (typical Mongolian small heating chamber). */
+  chamber_length_m?: number;
+  /** Chamber inside width (m). See chamber_length_m. */
+  chamber_width_m?: number;
+  /** Chamber inside depth (m). Drives the vertical extent of the
+   *  cross-section view. */
+  chamber_depth_m?: number;
+  /** Manhole cover diameter (mm). Default 700 mm (standard concrete
+   *  manhole ring) when undefined. */
+  coverDiameter_mm?: number;
   /** Hatch fill pattern for building footprint / plan-view rectangle. AutoCAD-style.
    *  - "solid"     — semi-transparent fill (default)
    *  - "diag45"    — 45° parallel lines (concrete / standard)
