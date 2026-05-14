@@ -27,7 +27,12 @@
  *   - Undo coverage — wired into the store's undo stack in 6.5.5.
  */
 
-import type { SchemeAnnotation, SchemeNode, SchemePipe } from "../hydraulicTypes";
+import type {
+  SchemeAnnotation,
+  SchemeBuilding,
+  SchemeNode,
+  SchemePipe,
+} from "../hydraulicTypes";
 
 /**
  * What lives in the in-memory clipboard after a `copy()` or `cut()`.
@@ -43,6 +48,10 @@ export interface ClipboardPayload {
   /** Phase 6.6.3 — snapshot of selected annotations at copy time.
    *  Free-coord entities so no topology preservation needed. */
   annotations?: SchemeAnnotation[];
+  /** Phase 6.8.6 — snapshot of selected reference buildings. Same
+   *  free-coord semantics as annotations — no topology constraint;
+   *  each polygon clones with its own fresh id on paste. */
+  buildings?: SchemeBuilding[];
   /** ms timestamp — useful for UI staleness checks ("pasted from
    *  clipboard 4 minutes ago"). */
   copiedAt: number;
@@ -77,9 +86,18 @@ export function buildClipboardPayload(
    *  compat with Phase 6.5.2 store cut/copy/paste signatures). */
   annotations?: SchemeAnnotation[],
   annotationIds?: string[],
+  /** Phase 6.8.6 — reference buildings. Same optional-args pattern. */
+  buildings?: SchemeBuilding[],
+  buildingIds?: string[],
 ): ClipboardPayload | null {
   const annIds = annotationIds ?? [];
-  if (nodeIds.length === 0 && pipeIds.length === 0 && annIds.length === 0) {
+  const bldIds = buildingIds ?? [];
+  if (
+    nodeIds.length === 0
+    && pipeIds.length === 0
+    && annIds.length === 0
+    && bldIds.length === 0
+  ) {
     return null;
   }
 
@@ -117,10 +135,24 @@ export function buildClipboardPayload(
     }
   }
 
+  // Phase 6.8.6 — reference buildings. Same free-coord pattern as
+  // annotations — no topology dependency on nodes/pipes, just deep-
+  // clone the selected polygons.
+  const bldIdSet = new Set(bldIds);
+  const copiedBuildings: SchemeBuilding[] = [];
+  if (buildings && bldIdSet.size > 0) {
+    for (const b of buildings) {
+      if (bldIdSet.has(b.id)) {
+        copiedBuildings.push(JSON.parse(JSON.stringify(b)) as SchemeBuilding);
+      }
+    }
+  }
+
   return {
     nodes: copiedNodes,
     pipes: copiedPipes,
     annotations: copiedAnnotations,
+    buildings: copiedBuildings,
     copiedAt: Date.now(),
   };
 }
@@ -155,6 +187,10 @@ export function applyPaste(
    *  the same px offset as nodes. Always present (possibly empty)
    *  so consumers don't need a null check. */
   annotations: SchemeAnnotation[];
+  /** Phase 6.8.6 — reference buildings cloned with fresh ids,
+   *  polygon vertices shifted by the same px + geo offset as the
+   *  nodes. */
+  buildings: SchemeBuilding[];
   oldToNewId: Map<string, string>;
 } {
   const oldToNewId = new Map<string, string>();
@@ -222,7 +258,41 @@ export function applyPaste(
     id: uid("note"),
     x: Math.round(a.x + px_offset_x),
     y: Math.round(a.y + px_offset_y),
+    // Geo offset (only applied when the original annotation carries geo).
+    ...(a.geo
+      ? {
+          geo: {
+            lat: a.geo.lat + offset_m.y / M_PER_DEG_LAT,
+            lon: a.geo.lon + offset_m.x / m_per_deg_lon,
+          },
+        }
+      : {}),
   }));
 
-  return { nodes: newNodes, pipes: newPipes, annotations: newAnnotations, oldToNewId };
+  // Phase 6.8.6 — reference buildings. Polygon vertices each get
+  // the same px offset; vertices with geo also get the same
+  // lat/lon delta as the nodes, so a copied building on a map
+  // tracks the map view at its NEW position.
+  const newBuildings: SchemeBuilding[] = (payload.buildings ?? []).map((b) => ({
+    ...b,
+    id: uid("bld"),
+    polygon: b.polygon.map((v) => ({
+      x: Math.round(v.x + px_offset_x),
+      y: Math.round(v.y + px_offset_y),
+      ...(typeof v.lat === "number"
+        ? { lat: v.lat + offset_m.y / M_PER_DEG_LAT }
+        : {}),
+      ...(typeof v.lon === "number"
+        ? { lon: v.lon + offset_m.x / m_per_deg_lon }
+        : {}),
+    })),
+  }));
+
+  return {
+    nodes: newNodes,
+    pipes: newPipes,
+    annotations: newAnnotations,
+    buildings: newBuildings,
+    oldToNewId,
+  };
 }

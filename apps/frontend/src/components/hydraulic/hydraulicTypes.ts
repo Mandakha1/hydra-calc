@@ -611,6 +611,56 @@ export interface SchemeConstructionLine {
 }
 
 /**
+ * Phase 6.8.6 — Reference building entity.
+ *
+ * Standalone polygon drawn on the canvas / map as a building
+ * outline. Distinct from "consumer-node-with-footprint" (which
+ * carries a full BuildingEnvelope + heat-load computation):
+ *
+ *   - SchemeBuilding has NO hydraulic role. It's a polygon plus
+ *     a few engineer-friendly metadata fields (floors, type, an
+ *     optional heat load estimate).
+ *   - It's NOT connected to pipes. To bring it into the
+ *     hydraulic network, the engineer drops a consumer node on
+ *     top of the building (or converts it via a future
+ *     Inspector action).
+ *
+ * Geo-anchoring follows the Phase 6.8.2 pattern — each polygon
+ * vertex may carry an optional `{lat, lon}` so the building
+ * tracks the leaflet map view on pan / zoom.
+ */
+export interface SchemeBuilding {
+  id: string;
+  /** Polygon vertices in scheme-pixel coords. Closed implicitly
+   *  (renderer connects last vertex to first). Min 3 vertices.
+   *  Each vertex may carry optional `{lat, lon}` for map
+   *  tracking; the renderer projects lat/lon → scheme-px live
+   *  when the map is visible. */
+  polygon: Array<{ x: number; y: number; lat?: number; lon?: number }>;
+  /** Engineer-typed name (e.g. "АОС-15", "Сургууль-3"). */
+  label?: string;
+  /** Storey count. Used for the centroid annotation + future
+   *  area × floors × specificLoad heat-load estimate. */
+  floors?: number;
+  /** Coarse building-type tag. Matches the most common use
+   *  cases in Mongolian residential heating projects. The
+   *  Inspector dropdown renders these 5 options + an "other"
+   *  fall-through. */
+  building_type?: "apartment" | "school" | "hospital" | "office" | "industrial";
+  /** Optional engineer-typed heat-load estimate in kW. Stored
+   *  here so the engineer can sketch a load on the plan without
+   *  building a full BuildingEnvelope. Solver does NOT use this
+   *  unless a consumer node references the building. */
+  heatLoad_kw?: number;
+  /** Layer assignment — defaults to "D" (Drafting, visible in
+   *  print). Engineer can move to "C" to hide on print. */
+  layerKey?: "D" | "C";
+  /** Optional colour override for the fill / stroke. When
+   *  undefined, the renderer picks the layer colour. */
+  color?: string;
+}
+
+/**
  * Phase 6.6.3 — Text annotation entity.
  *
  * Free-positioned drafting text — engineer-typed notes, axis labels,
@@ -671,9 +721,18 @@ export interface UndoSnapshot {
    *  Phase 6.6.3 — extended again with "annotation".
    *  Phase 6.7.3 — extended with singleton "northArrow" (no
    *    multiSelection list — there is only one north arrow per
-   *    project). */
+   *    project).
+   *  Phase 6.8.6 — extended with "building" (reference outline
+   *    polygons). */
   selection: {
-    kind: "node" | "pipe" | "dimension" | "constructionLine" | "annotation" | "northArrow";
+    kind:
+      | "node"
+      | "pipe"
+      | "dimension"
+      | "constructionLine"
+      | "annotation"
+      | "northArrow"
+      | "building";
     id: string;
   } | null;
   multiSelection: {
@@ -684,6 +743,8 @@ export interface UndoSnapshot {
     constructionLineIds?: string[];
     /** Phase 6.6.3 — annotation selection set. */
     annotationIds?: string[];
+    /** Phase 6.8.6 — building selection set. */
+    buildingIds?: string[];
   };
   /** Phase 6.6.1 — dimensions snapshot for batched op undo. */
   dimensions?: SchemeDimension[];
@@ -691,6 +752,8 @@ export interface UndoSnapshot {
   constructionLines?: SchemeConstructionLine[];
   /** Phase 6.6.3 — annotations snapshot for batched op undo. */
   annotations?: SchemeAnnotation[];
+  /** Phase 6.8.6 — reference buildings snapshot for batched op undo. */
+  buildings?: SchemeBuilding[];
 }
 
 export type HydraulicState = {
@@ -717,6 +780,10 @@ export type HydraulicState = {
   /** Phase 6.6.3 — text annotation entities. Optional so legacy
    *  projects without drafting aids load cleanly. */
   annotations?: SchemeAnnotation[];
+  /** Phase 6.8.6 — reference building entities (polygon outlines
+   *  drawn on the canvas / map). Optional so legacy projects
+   *  load cleanly. */
+  buildings?: SchemeBuilding[];
 };
 
 /** Default state for a fresh project. */

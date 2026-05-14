@@ -42,7 +42,7 @@ describe("clipboard store integration — Phase 6.5.2", () => {
     st.selectExtend({ kind: "node", id: "c1" });
     st.selectExtend({ kind: "node", id: "c2" });
     const result = st.copySelection();
-    expect(result).toEqual({ nodes: 2, pipes: 1, annotations: 0 }); // c1, c2 + p2 between them
+    expect(result).toEqual({ nodes: 2, pipes: 1, annotations: 0, buildings: 0 }); // c1, c2 + p2 between them
     const clip = useHydraulicStore.getState().clipboard;
     expect(clip).not.toBeNull();
     expect(clip!.nodes.map((n) => n.id).sort()).toEqual(["c1", "c2"]);
@@ -64,7 +64,7 @@ describe("clipboard store integration — Phase 6.5.2", () => {
     const nBefore = useHydraulicStore.getState().nodes.length;
     const pBefore = useHydraulicStore.getState().pipes.length;
     const inserted = useHydraulicStore.getState().pasteClipboard();
-    expect(inserted).toEqual({ nodes: 2, pipes: 1, annotations: 0 });
+    expect(inserted).toEqual({ nodes: 2, pipes: 1, annotations: 0, buildings: 0 });
     const after = useHydraulicStore.getState();
     expect(after.nodes.length).toBe(nBefore + 2);
     expect(after.pipes.length).toBe(pBefore + 1);
@@ -100,7 +100,7 @@ describe("clipboard store integration — Phase 6.5.2", () => {
     st.selectExtend({ kind: "node", id: "c1" });
     st.selectExtend({ kind: "node", id: "c2" });
     const result = st.cutSelection();
-    expect(result).toEqual({ nodes: 2, pipes: 1, annotations: 0 });
+    expect(result).toEqual({ nodes: 2, pipes: 1, annotations: 0, buildings: 0 });
     const after = useHydraulicStore.getState();
     // Originals gone; only src remains. p1 + p2 both cascade-deleted
     // because each touched a removed node.
@@ -122,7 +122,7 @@ describe("clipboard store integration — Phase 6.5.2", () => {
     st.selectExtend({ kind: "node", id: "c2" });
     st.cutSelection();
     const result = useHydraulicStore.getState().pasteClipboard();
-    expect(result).toEqual({ nodes: 2, pipes: 1, annotations: 0 });
+    expect(result).toEqual({ nodes: 2, pipes: 1, annotations: 0, buildings: 0 });
     const after = useHydraulicStore.getState();
     // src + 2 new pasted nodes (c1/c2 were deleted by cut, then 2 new
     // ones with shifted positions added by paste).
@@ -169,6 +169,6 @@ describe("clipboard store integration — Phase 6.5.2", () => {
     expect(useHydraulicStore.getState().nodes).toEqual([]);
     expect(useHydraulicStore.getState().clipboard).toBeNull();
     expect(useHydraulicStore.getState().selection).toBeNull();
-    expect(useHydraulicStore.getState().multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [] });
+    expect(useHydraulicStore.getState().multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [] });
   });
 });

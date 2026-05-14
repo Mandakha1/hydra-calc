@@ -74,6 +74,10 @@ import {
   addAnnotation,
   selectAnnotation,
 } from "../scheme/annotationApplier";
+import {
+  addBuilding,
+  selectBuilding,
+} from "../scheme/buildingApplier";
 import { ScaleBar } from "../scheme/ScaleBar";
 import {
   DEFAULT_SCALE,
@@ -147,6 +151,8 @@ export function SchemeEditor({ readOnly }: Props) {
   const constructionLines = useHydraulicStore((s) => s.constructionLines);
   // Phase 6.6.3 — annotation entities
   const annotations = useHydraulicStore((s) => s.annotations);
+  // Phase 6.8.6 — reference-building entities
+  const buildings = useHydraulicStore((s) => s.buildings);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<Mode>("select");
@@ -525,6 +531,56 @@ export function SchemeEditor({ readOnly }: Props) {
   }, [readOnly, pendingKind, showMap, svgToLatLon, addNode, nodes, select, settings.snapEndpoint, displayPos]);
 
   /**
+   * Phase 6.8.6 — commit a polygon drawn via the `drawBuilding` mode
+   * directly as a SchemeBuilding entity (bypassing the legacy
+   * BuildingDialog → consumer-node path).
+   *
+   * Why bypass the dialog: engineers reported that drawing a quick
+   * outline on the map shouldn't force them through an envelope /
+   * load-calc form — they want the polygon on the canvas first,
+   * then fill metadata via the Inspector at their own pace (or
+   * leave it blank for pure-reference outlines).
+   *
+   * Geo is preserved per-vertex (each `polygon[i]` may carry
+   * `{lat, lon}` from `onMapNativeClick`), so the new building
+   * tracks the leaflet map view on pan/zoom via the Phase 6.8.2
+   * mechanism. Pixel coords stay the source of truth + canvas-only
+   * fallback when no map is visible.
+   *
+   * BuildingDialog is still wired and used by `pickBuildingFromOsm`
+   * — that path benefits from the dialog's rich envelope-based
+   * heat-load inputs because OSM tags hint at building type.
+   */
+  const commitDrawnBuilding = useCallback((
+    vertices: Array<{ x: number; y: number; lat?: number; lon?: number }>,
+  ) => {
+    if (readOnly) return;
+    if (vertices.length < 3) return;
+    const cur = useHydraulicStore.getState();
+    const buildingsCount = (cur.buildings ?? []).length;
+    const id = uid("bld");
+    addBuilding({
+      id,
+      polygon: vertices.map((v) => ({
+        x: Math.round(v.x),
+        y: Math.round(v.y),
+        ...(typeof v.lat === "number" ? { lat: v.lat } : {}),
+        ...(typeof v.lon === "number" ? { lon: v.lon } : {}),
+      })),
+      label: `Барилга-${buildingsCount + 1}`,
+      layerKey: "D",
+    });
+    selectBuilding(id);
+    setPolygon([]);
+    setMode("select");
+    setToast({
+      text: "Барилгын зураг үүсгэв",
+      key: Date.now(),
+      tone: "success",
+    });
+  }, [readOnly]);
+
+  /**
    * When the user clicks directly on the Leaflet map (not blocked by an SVG
    * node/pipe), place the currently-selected category at that lat/lon.
    * This is how map-overlay drawing works: map gets the click first, then
@@ -552,8 +608,10 @@ export function SchemeEditor({ readOnly }: Props) {
       // Polygon vertex on map — store BOTH pixel and geo so the polygon
       // tracks the map when user pans/zooms.
       if (polygon.length >= 3 && nearPoint(svgPt, polygon[0]!, 12)) {
-        setPendingFootprint([...polygon]);
-        setPolygon([]);
+        // Phase 6.8.6 — commit DIRECTLY as a SchemeBuilding instead of
+        // opening the legacy BuildingDialog. The polygon already carries
+        // per-vertex {lat, lon}, so the geo-anchoring follows seamlessly.
+        commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
         return;
       }
       const nextPoint: Point = polygon.length > 0
@@ -563,7 +621,7 @@ export function SchemeEditor({ readOnly }: Props) {
       setPolygon([...polygon, { ...nextPoint, lat, lon } as Point & { lat?: number; lon?: number }]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readOnly, mode, pan, zoom, placeNodeAt, snap, polygon, constrain]);
+  }, [readOnly, mode, pan, zoom, placeNodeAt, snap, polygon, constrain, commitDrawnBuilding]);
 
   /**
    * Fetch the closest OSM building polygon to the clicked lat/lon via
@@ -706,9 +764,10 @@ export function SchemeEditor({ readOnly }: Props) {
       } else if (mode === "drawBuilding") {
         // Polygon drawing — add vertex; close if click on first vertex
         if (polygon.length >= 3 && nearPoint(pt, polygon[0]!, 12)) {
-          // Close polygon → open dialog
-          setPendingFootprint([...polygon]);
-          setPolygon([]);
+          // Phase 6.8.6 — commit DIRECTLY as a SchemeBuilding (no dialog).
+          // Canvas-mode vertices don't carry geo, so the polygon lives in
+          // scheme-pixel space and stays put when the map toggles on/off.
+          commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
           return;
         }
         let nextPoint = pt;
@@ -828,6 +887,7 @@ export function SchemeEditor({ readOnly }: Props) {
       svgToLatLon,
       pendingConstructionAnchor,
       showMap,
+      commitDrawnBuilding,
     ],
   );
 
@@ -835,11 +895,11 @@ export function SchemeEditor({ readOnly }: Props) {
     (e: MouseEvent<SVGSVGElement>) => {
       if (mode === "drawBuilding" && polygon.length >= 3) {
         e.preventDefault();
-        setPendingFootprint([...polygon]);
-        setPolygon([]);
+        // Phase 6.8.6 — direct-commit SchemeBuilding (no dialog).
+        commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
       }
     },
-    [mode, polygon],
+    [mode, polygon, commitDrawnBuilding],
   );
 
   const onNodeMouseDown = useCallback(
@@ -1285,16 +1345,19 @@ export function SchemeEditor({ readOnly }: Props) {
         const dimIdsSel = ms.dimensionIds ?? [];
         const clIdsSel = ms.constructionLineIds ?? [];
         const anIdsSel = ms.annotationIds ?? [];
+        const bldIdsSel = ms.buildingIds ?? [];
         const totalSelected =
           ms.nodeIds.length
           + ms.pipeIds.length
           + dimIdsSel.length
           + clIdsSel.length
-          + anIdsSel.length;
+          + anIdsSel.length
+          + bldIdsSel.length;
         const hasMulti = totalSelected > 1;
         if (hasMulti) {
           // Phase 6.5.5 — snapshot before cascade-delete so Ctrl+Z
-          // restores all removed nodes + pipes + drafting aids.
+          // restores all removed nodes + pipes + drafting aids +
+          // buildings (Phase 6.8.6).
           pushUndoSnapshot("Бөгөмөөр устгасан", totalSelected);
           // Snapshot ids — removeNode cascades to pipes touching it
           // and would mutate ms mid-iteration.
@@ -1303,16 +1366,23 @@ export function SchemeEditor({ readOnly }: Props) {
           const dimIds = [...dimIdsSel];
           const clIds = [...clIdsSel];
           const annIds = [...anIdsSel];
+          const bldIds = [...bldIdsSel];
           for (const pid of pipeIds) useHydraulicStore.getState().removePipe(pid);
           for (const nid of nodeIds) useHydraulicStore.getState().removeNode(nid);
-          // Drafting aids — set-based delete inline so we don't push
-          // N extra snapshots (the appliers each push one; this batch
-          // already pushed its own).
-          if (dimIds.length > 0 || clIds.length > 0 || annIds.length > 0) {
+          // Drafting aids + buildings — set-based delete inline so we
+          // don't push N extra snapshots (the appliers each push one;
+          // this batch already pushed its own).
+          if (
+            dimIds.length > 0
+            || clIds.length > 0
+            || annIds.length > 0
+            || bldIds.length > 0
+          ) {
             useHydraulicStore.setState((s) => ({
               dimensions: (s.dimensions ?? []).filter((d) => !dimIds.includes(d.id)),
               constructionLines: (s.constructionLines ?? []).filter((c) => !clIds.includes(c.id)),
               annotations: (s.annotations ?? []).filter((a) => !annIds.includes(a.id)),
+              buildings: (s.buildings ?? []).filter((b) => !bldIds.includes(b.id)),
             }));
           }
           useHydraulicStore.getState().clearSelection();
@@ -1335,6 +1405,7 @@ export function SchemeEditor({ readOnly }: Props) {
               dimensionIds: (s.multiSelection.dimensionIds ?? []).filter((x) => x !== selection.id),
               constructionLineIds: s.multiSelection.constructionLineIds ?? [],
               annotationIds: s.multiSelection.annotationIds ?? [],
+              buildingIds: s.multiSelection.buildingIds ?? [],
             },
           }));
         } else if (selection.kind === "constructionLine") {
@@ -1348,6 +1419,7 @@ export function SchemeEditor({ readOnly }: Props) {
               dimensionIds: s.multiSelection.dimensionIds ?? [],
               constructionLineIds: (s.multiSelection.constructionLineIds ?? []).filter((x) => x !== selection.id),
               annotationIds: s.multiSelection.annotationIds ?? [],
+              buildingIds: s.multiSelection.buildingIds ?? [],
             },
           }));
         } else if (selection.kind === "annotation") {
@@ -1361,6 +1433,21 @@ export function SchemeEditor({ readOnly }: Props) {
               dimensionIds: s.multiSelection.dimensionIds ?? [],
               constructionLineIds: s.multiSelection.constructionLineIds ?? [],
               annotationIds: (s.multiSelection.annotationIds ?? []).filter((x) => x !== selection.id),
+              buildingIds: s.multiSelection.buildingIds ?? [],
+            },
+          }));
+        } else if (selection.kind === "building") {
+          // Phase 6.8.6 — same pattern for reference buildings.
+          useHydraulicStore.setState((s) => ({
+            buildings: (s.buildings ?? []).filter((b) => b.id !== selection.id),
+            selection: null,
+            multiSelection: {
+              nodeIds: s.multiSelection.nodeIds,
+              pipeIds: s.multiSelection.pipeIds,
+              dimensionIds: s.multiSelection.dimensionIds ?? [],
+              constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+              annotationIds: s.multiSelection.annotationIds ?? [],
+              buildingIds: (s.multiSelection.buildingIds ?? []).filter((x) => x !== selection.id),
             },
           }));
         }
@@ -1474,8 +1561,8 @@ export function SchemeEditor({ readOnly }: Props) {
         // Phase 6.5.1 — Esc also clears multi-selection.
         useHydraulicStore.getState().clearSelection();
       } else if (e.key === "Enter" && mode === "drawBuilding" && polygon.length >= 3) {
-        setPendingFootprint([...polygon]);
-        setPolygon([]);
+        // Phase 6.8.6 — direct-commit SchemeBuilding on Enter (no dialog).
+        commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
         e.preventDefault();
         duplicateSelected();
@@ -1523,7 +1610,7 @@ export function SchemeEditor({ readOnly }: Props) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection, readOnly, mode, polygon, duplicateSelected]);
+  }, [selection, readOnly, mode, polygon, duplicateSelected, commitDrawnBuilding]);
 
   const violatingPipeIds = new Set(
     (violations ?? []).filter((v) => v.target.kind === "pipe").map((v) => v.target.id),
@@ -2073,6 +2160,144 @@ export function SchemeEditor({ readOnly }: Props) {
                 </g>
               );
             })}
+
+            {/* Phase 6.8.6 — Reference building polygons. Rendered
+                AFTER consumer-with-footprint nodes so the hydraulic
+                buildings sit on top visually (their colour also
+                differs — engineer-friendly orange vs the dashed
+                drafting-grey of reference outlines). Each polygon
+                follows the leaflet map on pan/zoom via per-vertex
+                geo (Phase 6.8.2 mechanism), with rigid-translate
+                fallback when no geo is present. */}
+            {(() => {
+              const bs = buildings ?? [];
+              if (bs.length === 0) return null;
+              return bs.map((b) => {
+                const lk = b.layerKey ?? "D";
+                const layer = resolveLayerByKey(lk, settings.layers);
+                if (!layer.visible) return null;
+                const isSelected = selection?.kind === "building" && selection.id === b.id;
+                const isMultiSelected = (multiSelection.buildingIds ?? []).includes(b.id);
+                const pts = b.polygon;
+                const fillColor = b.color ?? layer.color;
+                // Per-vertex geo projection mirrors the consumer-
+                // footprint block above. When the map is on AND
+                // any vertex carries lat/lon, use those for the
+                // current view; otherwise stay in scheme-pixel space.
+                const usingPerVertexGeo =
+                  showMap
+                  && pts.some((p) => typeof p.lat === "number" && typeof p.lon === "number")
+                  && leafletMapRef.current
+                  && svgRef.current;
+                let movedPts: Array<{ x: number; y: number }>;
+                if (usingPerVertexGeo) {
+                  const map = leafletMapRef.current!;
+                  const mapRect = map.getContainer().getBoundingClientRect();
+                  const svgRect = svgRef.current!.getBoundingClientRect();
+                  movedPts = pts.map((p) => {
+                    if (typeof p.lat !== "number" || typeof p.lon !== "number") {
+                      return { x: p.x, y: p.y };
+                    }
+                    const cpt = map.latLngToContainerPoint([p.lat, p.lon]);
+                    return {
+                      x: (mapRect.left + cpt.x - svgRect.left - RULER_PX) / zoom - pan.x,
+                      y: (mapRect.top + cpt.y - svgRect.top - RULER_PX) / zoom - pan.y,
+                    };
+                  });
+                } else {
+                  movedPts = pts.map((p) => ({ x: p.x, y: p.y }));
+                }
+                const centroid = polygonCentroid(movedPts);
+                const xMin = Math.min(...movedPts.map((p) => p.x));
+                const yMin = Math.min(...movedPts.map((p) => p.y));
+                const xMax = Math.max(...movedPts.map((p) => p.x));
+                const yMax = Math.max(...movedPts.map((p) => p.y));
+                // Area is computed from the displayed (projected) points
+                // so the m² readout matches the on-screen scale at the
+                // current map zoom.
+                const area_m2 = polygonAreaM2(movedPts);
+                const heatStr =
+                  typeof b.heatLoad_kw === "number"
+                    ? ` · ${b.heatLoad_kw.toFixed(1)}кВт`
+                    : "";
+                const floorsStr =
+                  typeof b.floors === "number" ? ` · ${b.floors}д` : "";
+                return (
+                  <g
+                    key={b.id}
+                    data-testid={`building-${b.id}`}
+                    onMouseDown={(e) => {
+                      if (mode === "select" || mode === "drawBuilding") {
+                        e.stopPropagation();
+                        if (e.ctrlKey || e.metaKey) {
+                          selectToggle({ kind: "building", id: b.id });
+                          return;
+                        }
+                        if (e.shiftKey) {
+                          selectExtend({ kind: "building", id: b.id });
+                          return;
+                        }
+                        selectBuilding(b.id);
+                      }
+                    }}
+                    style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                  >
+                    {isMultiSelected && (
+                      <rect
+                        x={xMin - 4}
+                        y={yMin - 4}
+                        width={xMax - xMin + 8}
+                        height={yMax - yMin + 8}
+                        fill="none"
+                        stroke="#FFB300"
+                        strokeWidth={2}
+                        strokeDasharray="3 2"
+                        pointerEvents="none"
+                      />
+                    )}
+                    <polygon
+                      points={movedPts.map((p) => `${p.x},${p.y}`).join(" ")}
+                      fill={fillColor}
+                      fillOpacity={isSelected ? 0.22 : 0.08}
+                      stroke={isSelected ? "var(--accent)" : fillColor}
+                      strokeWidth={isSelected ? 2.5 : 1.25}
+                      strokeDasharray={isSelected ? undefined : "5 3"}
+                      pointerEvents="all"
+                    />
+                    {b.label && (
+                      <text
+                        x={centroid.x}
+                        y={centroid.y - 4}
+                        fontSize={13}
+                        fontWeight={600}
+                        textAnchor="middle"
+                        fill="var(--fg)"
+                        stroke="white"
+                        strokeWidth={3}
+                        paintOrder="stroke"
+                        pointerEvents="none"
+                      >
+                        {b.label}
+                      </text>
+                    )}
+                    <text
+                      x={centroid.x}
+                      y={centroid.y + 12}
+                      fontSize={10}
+                      textAnchor="middle"
+                      fill="var(--fg-muted)"
+                      fontFamily="var(--font-mono)"
+                      stroke="white"
+                      strokeWidth={2.5}
+                      paintOrder="stroke"
+                      pointerEvents="none"
+                    >
+                      {area_m2.toFixed(0)}м²{floorsStr}{heatStr}
+                    </text>
+                  </g>
+                );
+              });
+            })()}
 
             {/* Phase 6.6.1 — Dimension lines. Rendered before pipes so
                 pipes can hover above dimension labels. Each dimension
@@ -3062,34 +3287,43 @@ export function SchemeEditor({ readOnly }: Props) {
         />
       )}
 
-      {/* Phase 6.5.1 — Multi-selection counter HUD. Shows when 2+
-          objects selected (single-select is already obvious from the
-          accent colour + InspectorPanel). Bottom-left to stay clear
-          of the bottom-right results HUD. */}
-      {(multiSelection.nodeIds.length + multiSelection.pipeIds.length) > 1 && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: 12,
-            left: 12,
-            background: "var(--bg-elev, #2a2a2a)",
-            border: "1px solid #FFB300",
-            color: "#FFB300",
-            padding: "0.4rem 0.7rem",
-            borderRadius: 8,
-            fontSize: 12,
-            fontFamily: "var(--font-mono, monospace)",
-            zIndex: 5,
-            pointerEvents: "none",
-          }}
-          data-testid="selection-counter"
-        >
-          {multiSelection.nodeIds.length > 0 && `${multiSelection.nodeIds.length} цэг`}
-          {multiSelection.nodeIds.length > 0 && multiSelection.pipeIds.length > 0 && ", "}
-          {multiSelection.pipeIds.length > 0 && `${multiSelection.pipeIds.length} хоолой`}
-          {" сонгогдсон"}
-        </div>
-      )}
+      {/* Phase 6.5.1 / 6.8.6 — Multi-selection counter HUD. Shows
+          when 2+ objects selected. Bottom-left to stay clear of the
+          bottom-right results HUD. Phase 6.8.6 added buildings to
+          the count so the engineer sees the full multi-selection
+          shape ("3 цэг, 1 хоолой, 2 барилга сонгогдсон"). */}
+      {(() => {
+        const nCount = multiSelection.nodeIds.length;
+        const pCount = multiSelection.pipeIds.length;
+        const bCount = (multiSelection.buildingIds ?? []).length;
+        const total = nCount + pCount + bCount;
+        if (total <= 1) return null;
+        const segments: string[] = [];
+        if (nCount > 0) segments.push(`${nCount} цэг`);
+        if (pCount > 0) segments.push(`${pCount} хоолой`);
+        if (bCount > 0) segments.push(`${bCount} барилга`);
+        return (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              left: 12,
+              background: "var(--bg-elev, #2a2a2a)",
+              border: "1px solid #FFB300",
+              color: "#FFB300",
+              padding: "0.4rem 0.7rem",
+              borderRadius: 8,
+              fontSize: 12,
+              fontFamily: "var(--font-mono, monospace)",
+              zIndex: 5,
+              pointerEvents: "none",
+            }}
+            data-testid="selection-counter"
+          >
+            {segments.join(", ")}{" сонгогдсон"}
+          </div>
+        );
+      })()}
 
       {/* HUD */}
       {results && (
