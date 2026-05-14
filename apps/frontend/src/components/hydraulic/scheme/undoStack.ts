@@ -74,6 +74,7 @@ export function pushUndoSnapshot(label: string, affectedCount: number): void {
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
       annotationIds: [...(s.multiSelection.annotationIds ?? [])],
+      buildingIds: [...(s.multiSelection.buildingIds ?? [])],
     },
     // Phase 6.6.1 declared `dimensions?` on UndoSnapshot but didn't
     // wire the read/write paths, so Ctrl+Z after addDimension was a
@@ -84,6 +85,7 @@ export function pushUndoSnapshot(label: string, affectedCount: number): void {
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
+    buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<UndoSnapshot["buildings"]>,
   };
   const existing = s.undoStack ?? [];
   const next = [...existing, snap];
@@ -124,10 +126,12 @@ export function undo(): { label: string; affectedCount: number } | null {
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
       annotationIds: [...(s.multiSelection.annotationIds ?? [])],
+      buildingIds: [...(s.multiSelection.buildingIds ?? [])],
     },
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
+    buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<UndoSnapshot["buildings"]>,
   };
 
   // Apply the snapshot. Drafting aids restored only when the
@@ -142,6 +146,7 @@ export function undo(): { label: string; affectedCount: number } | null {
     ...(top.dimensions !== undefined ? { dimensions: top.dimensions } : {}),
     ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
     ...(top.annotations !== undefined ? { annotations: top.annotations } : {}),
+    ...(top.buildings !== undefined ? { buildings: top.buildings } : {}),
     undoStack: stack.slice(0, stack.length - 1),
     redoStack: [...(s.redoStack ?? []), currentSnap],
   });
@@ -174,10 +179,12 @@ export function redo(): { label: string; affectedCount: number } | null {
       dimensionIds: [...(s.multiSelection.dimensionIds ?? [])],
       constructionLineIds: [...(s.multiSelection.constructionLineIds ?? [])],
       annotationIds: [...(s.multiSelection.annotationIds ?? [])],
+      buildingIds: [...(s.multiSelection.buildingIds ?? [])],
     },
     dimensions: JSON.parse(JSON.stringify(s.dimensions ?? [])) as NonNullable<UndoSnapshot["dimensions"]>,
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
+    buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<UndoSnapshot["buildings"]>,
   };
 
   useHydraulicStore.setState({
@@ -188,6 +195,7 @@ export function redo(): { label: string; affectedCount: number } | null {
     ...(top.dimensions !== undefined ? { dimensions: top.dimensions } : {}),
     ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
     ...(top.annotations !== undefined ? { annotations: top.annotations } : {}),
+    ...(top.buildings !== undefined ? { buildings: top.buildings } : {}),
     undoStack: [...(s.undoStack ?? []), currentSnap],
     redoStack: stack.slice(0, stack.length - 1),
   });

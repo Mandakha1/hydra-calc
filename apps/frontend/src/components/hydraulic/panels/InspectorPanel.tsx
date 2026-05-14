@@ -18,12 +18,17 @@ import {
   updateAnnotation,
   removeAnnotation,
 } from "../scheme/annotationApplier";
+import {
+  updateBuilding,
+  removeBuilding,
+} from "../scheme/buildingApplier";
 import type {
   BuildingEnvelope,
   EnvelopeSurface,
   SchemeDimension,
   SchemeConstructionLine,
   SchemeAnnotation,
+  SchemeBuilding,
 } from "../hydraulicTypes";
 
 export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
@@ -35,6 +40,7 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   const dimensions = useHydraulicStore((s) => s.dimensions);
   const constructionLines = useHydraulicStore((s) => s.constructionLines);
   const annotations = useHydraulicStore((s) => s.annotations);
+  const buildings = useHydraulicStore((s) => s.buildings);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
@@ -398,6 +404,120 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             onClick={() => removeAnnotation(annotation.id)}
           >
             Тэмдэглэгээг устгах
+          </button>
+        )}
+      </aside>
+    );
+  }
+
+  /* Phase 6.8.6 — reference-building inspector. Engineer fills in
+     label / floors / type / heat-load AFTER drawing the polygon
+     (the draw flow creates a bare outline so the engineer can
+     iterate without the legacy BuildingDialog gate). */
+  if (selection.kind === "building") {
+    const building = (buildings ?? []).find(
+      (b: SchemeBuilding) => b.id === selection.id,
+    );
+    if (!building) return null;
+    return (
+      <aside style={sidebarStyle}>
+        <h3>Барилгын зураг</h3>
+        <Field label="Нэр">
+          <input
+            value={building.label ?? ""}
+            disabled={readOnly}
+            onChange={(e) => updateBuilding(building.id, { label: e.target.value })}
+            style={inputStyle}
+            placeholder="АОС-15"
+          />
+        </Field>
+        <Field label="Барилгын төрөл">
+          <select
+            value={building.building_type ?? ""}
+            disabled={readOnly}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "") {
+                updateBuilding(building.id, { building_type: undefined });
+              } else {
+                updateBuilding(building.id, {
+                  building_type: v as SchemeBuilding["building_type"],
+                });
+              }
+            }}
+            style={inputStyle}
+            data-testid="inspector-building-type"
+          >
+            <option value="">— сонгох —</option>
+            <option value="apartment">Орон сууц</option>
+            <option value="school">Сургууль</option>
+            <option value="hospital">Эмнэлэг</option>
+            <option value="office">Оффис</option>
+            <option value="industrial">Үйлдвэрийн</option>
+          </select>
+        </Field>
+        <Field label="Давхар">
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={building.floors ?? ""}
+            disabled={readOnly}
+            onChange={(e) => {
+              const v = e.target.value === "" ? undefined : Number(e.target.value);
+              updateBuilding(building.id, { floors: v });
+            }}
+            style={inputStyle}
+            placeholder="5"
+          />
+        </Field>
+        <Field label="Дулааны ачаалал (кВт)">
+          <input
+            type="number"
+            min={0}
+            step={0.1}
+            value={building.heatLoad_kw ?? ""}
+            disabled={readOnly}
+            onChange={(e) => {
+              const v = e.target.value === "" ? undefined : Number(e.target.value);
+              updateBuilding(building.id, { heatLoad_kw: v });
+            }}
+            style={inputStyle}
+            placeholder="500"
+          />
+        </Field>
+        <Field label="Давхрага">
+          <select
+            value={building.layerKey ?? "D"}
+            disabled={readOnly}
+            onChange={(e) =>
+              updateBuilding(building.id, {
+                layerKey: e.target.value as "D" | "C",
+              })
+            }
+            style={inputStyle}
+          >
+            <option value="D">D — Дизайн / зураг (хэвлэх)</option>
+            <option value="C">C — Туслах (зөвхөн дэлгэц)</option>
+          </select>
+        </Field>
+        <p style={{ fontSize: 12, color: "var(--fg-muted)", margin: "0.4rem 0 0" }}>
+          Энэ нь барилгын <b>зураг</b> л юм — гидравлик ачаалалд автоматаар
+          оролцоогүй. Хэрэглэгчтэй холбохын тулд тус хэрэглэгчийн зангилаа
+          (АОС / ЦТП) барилга дотор тавьж, хоолой татна уу.
+        </p>
+        {!readOnly && (
+          <button
+            style={{
+              ...inputStyle,
+              color: "var(--danger)",
+              borderColor: "var(--danger)",
+              marginTop: 8,
+              cursor: "pointer",
+            }}
+            onClick={() => removeBuilding(building.id)}
+          >
+            Барилгын зургийг устгах
           </button>
         )}
       </aside>

@@ -23,20 +23,20 @@ describe("Multi-selection — Phase 6.5.1 store contract", () => {
   it("starts empty (fresh state)", () => {
     const s = useHydraulicStore.getState();
     expect(s.selection).toBeNull();
-    expect(s.multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [] });
+    expect(s.multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [] });
   });
 
   it("select(single) sets both legacy and multiSelection to that target", () => {
     useHydraulicStore.getState().select({ kind: "node", id: "n1" });
     const s = useHydraulicStore.getState();
     expect(s.selection).toEqual({ kind: "node", id: "n1" });
-    expect(s.multiSelection).toEqual({ nodeIds: ["n1"], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [] });
+    expect(s.multiSelection).toEqual({ nodeIds: ["n1"], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [] });
 
     // Pipe variant.
     useHydraulicStore.getState().select({ kind: "pipe", id: "p1" });
     const s2 = useHydraulicStore.getState();
     expect(s2.selection).toEqual({ kind: "pipe", id: "p1" });
-    expect(s2.multiSelection).toEqual({ nodeIds: [], pipeIds: ["p1"], dimensionIds: [], constructionLineIds: [], annotationIds: [] });
+    expect(s2.multiSelection).toEqual({ nodeIds: [], pipeIds: ["p1"], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [] });
   });
 
   it("select(null) clears both", () => {
@@ -44,7 +44,7 @@ describe("Multi-selection — Phase 6.5.1 store contract", () => {
     useHydraulicStore.getState().select(null);
     const s = useHydraulicStore.getState();
     expect(s.selection).toBeNull();
-    expect(s.multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [] });
+    expect(s.multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [] });
   });
 
   it("selectToggle adds a new target then removes on second toggle", () => {
@@ -114,7 +114,7 @@ describe("Multi-selection — Phase 6.5.1 store contract", () => {
     useHydraulicStore.getState().clearSelection();
     const s = useHydraulicStore.getState();
     expect(s.selection).toBeNull();
-    expect(s.multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [] });
+    expect(s.multiSelection).toEqual({ nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [] });
   });
 
   it("removeNode scrubs the removed node from multiSelection.nodeIds", () => {
@@ -174,7 +174,7 @@ describe("Multi-selection — Phase 6.5.1 store contract", () => {
     useHydraulicStore.getState().selectExtend({ kind: "pipe", id: "p1" });
     useHydraulicStore.getState().reset();
     expect(useHydraulicStore.getState().multiSelection).toEqual({
-      nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [],
+      nodeIds: [], pipeIds: [], dimensionIds: [], constructionLineIds: [], annotationIds: [], buildingIds: [],
     });
     expect(useHydraulicStore.getState().selection).toBeNull();
   });
