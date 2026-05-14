@@ -13,6 +13,7 @@ import { projectsRoutes } from "./routes/projects.js";
 import { sharedRoutes } from "./routes/shared.js";
 import { healthRoutes } from "./routes/health.js";
 import { adminRoutes } from "./routes/admin.js";
+import { bootstrapAdmin } from "./db/seed-admin.js";
 
 export async function buildApp() {
   const app = Fastify({ logger, trustProxy: true });
@@ -75,6 +76,31 @@ export async function buildApp() {
 
 async function main() {
   const app = await buildApp();
+
+  // Phase 6.8.4 (BUG D) — auto-bootstrap the admin user from
+  // ADMIN_BOOTSTRAP_* env vars on every dev/prod boot. Idempotent
+  // (upserts by email) so re-runs are safe. Without this, a fresh
+  // dev environment had no admin row, login returned 401, and that
+  // surfaced to users as "Internal Server Error" via the frontend.
+  // CLI `pnpm seed:admin` is still available for one-shot seeding
+  // outside the server process (e.g., post-migration scripts).
+  try {
+    const result = await bootstrapAdmin();
+    if (result.status === "created") {
+      app.log.info({ email: result.email }, "[boot] admin user created");
+    } else if (result.status === "updated") {
+      app.log.info({ email: result.email }, "[boot] admin user refreshed");
+    } else {
+      app.log.warn(
+        "[boot] ADMIN_BOOTSTRAP_EMAIL / ADMIN_BOOTSTRAP_PASSWORD unset — admin login will return 401 until you set them or run `pnpm seed:admin`.",
+      );
+    }
+  } catch (err) {
+    // Don't let a bootstrap failure block server startup — log
+    // loudly and continue so /api/health still responds.
+    app.log.error({ err }, "[boot] admin bootstrap failed (continuing)");
+  }
+
   try {
     await app.listen({ port: env.PORT, host: "0.0.0.0" });
     // eslint-disable-next-line no-console
