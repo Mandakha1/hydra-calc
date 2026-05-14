@@ -1601,6 +1601,7 @@ export function SchemeEditor({ readOnly }: Props) {
       {/* Vertical category toolbar */}
       {!readOnly && !hideUi && (
         <div
+          data-testid="scheme-toolbar"
           style={{
             width: 64,
             background: "var(--bg-soft)",
@@ -1610,6 +1611,17 @@ export function SchemeEditor({ readOnly }: Props) {
             padding: "0.4rem 0",
             gap: 4,
             zIndex: 4,
+            // Phase 6.8.4 (BUG #7) — at smaller viewport heights the
+            // 14+ category buttons used to overflow below the visible
+            // area, cutting off Хэмжих / Хэмжээс / Туслах / Тэмдэглэгээ.
+            // maxHeight: 100% + overflowY: auto turns the toolbar into
+            // a scrollable strip so every tool stays reachable. The
+            // scrollbar is intentional — it's the cheapest accessible
+            // affordance + matches the "more tools below" pattern in
+            // CAD apps. scrollbarWidth: thin keeps it discreet.
+            maxHeight: "100%",
+            overflowY: "auto",
+            scrollbarWidth: "thin",
           }}
         >
           <SideBtn

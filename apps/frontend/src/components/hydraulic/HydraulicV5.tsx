@@ -173,17 +173,40 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
   // Phase 6.7.4 — PDF export (headline feature). Dynamic-imported
   // so the jspdf + svg2pdf + Roboto Cyrillic font stack (~120 KB gz)
   // sits in a lazy chunk that's downloaded only on first PDF click.
+  //
+  // Phase 6.8.4 (BUG C) — production silent-failure report traced to
+  // two paths that didn't yell loud enough:
+  //   1. The blob may be created, anchor click fires, but on some
+  //      browser/OS combos the download is silently blocked OR the
+  //      file lands in a non-default folder. Engineers had no
+  //      confirmation either way.
+  //   2. svg2pdf occasionally rejects on a font-loading race; the
+  //      catch logged via `alert()`, but if the user dismissed the
+  //      alert too fast (or it was suppressed by a popup blocker
+  //      extension) they thought the button "did nothing".
+  // Fix: explicit `console.info` markers at every step + a
+  // user-visible success/error alert with a precise filename in the
+  // confirmation copy. The catch path also logs the full error to
+  // the console so devs can grab the stack trace on bug reports.
   const exportPdf = useCallback(async () => {
+    // eslint-disable-next-line no-console
+    console.info("[pdf-export] start");
     try {
       const svgEl = document.querySelector<SVGSVGElement>(
         '[data-testid="scheme-canvas"]',
       );
       if (!svgEl) {
+        // eslint-disable-next-line no-console
+        console.warn("[pdf-export] scheme-canvas element not found");
         alert("PDF үүсгэх боломжгүй — Схем таб дээр шилжээд дахин оролдоно уу.");
         return;
       }
+      // eslint-disable-next-line no-console
+      console.info("[pdf-export] svg ok, loading pdf chunk…");
       const { exportToPdf } = await import("./export/pdfExport");
       const s = useHydraulicStore.getState();
+      // eslint-disable-next-line no-console
+      console.info("[pdf-export] rendering pdf…");
       const blob = await exportToPdf({
         state: s,
         settings: s.settings,
@@ -192,18 +215,34 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         scale: s.settings.printScale ?? DEFAULT_SCALE,
         svgElement: svgEl,
       });
+      if (!blob || blob.size === 0) {
+        // eslint-disable-next-line no-console
+        console.error("[pdf-export] blob empty — refusing to download");
+        alert("PDF үүсгэж чадсангүй: гарсан файл хоосон байна. Console-ыг шалгана уу.");
+        return;
+      }
+      const filename = `${projectName || "hydra"}.pdf`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${projectName || "hydra"}.pdf`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       // Free the blob URL after the click has triggered. Some
       // browsers need a brief tick before revoke is safe.
       setTimeout(() => URL.revokeObjectURL(url), 250);
+      // eslint-disable-next-line no-console
+      console.info(`[pdf-export] done → ${filename} (${blob.size} bytes)`);
+      // Explicit user-visible confirmation. Same `alert()` pathway as
+      // the error branch so popup blockers / overlay extensions
+      // affect both equally — engineer gets ONE consistent signal
+      // either way.
+      alert(`PDF татагдлаа: ${filename}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // eslint-disable-next-line no-console
+      console.error("[pdf-export] failed:", e);
       alert(`PDF үүсгэж чадсангүй: ${msg}`);
     }
   }, [projectName]);
