@@ -58,6 +58,11 @@ import {
   type PidLayout,
   type PidElement,
 } from "../scheme/pid";
+import {
+  buildChannelDetail,
+  type ChannelCrossSection,
+} from "../scheme/channelCrossSection";
+import { circuitDefault } from "../scheme/channelTypes";
 
 /** Drawing area on the page in mm. */
 export interface PageArea {
@@ -992,4 +997,217 @@ export function pidLegendText(): string[] {
     `Мэдрэгч (${roleLabel("sensor")}) — ГОСТ тойрог + үсэг`,
     `Хэрэглэгч (${roleLabel("consumer")}) — ногоон байшин`,
   ];
+}
+
+/* ─── Phase 12.6b — Channel cross-section PDF page ─────────────── */
+
+/**
+ * Phase 12.6b — Composite channel cross-section detail page.
+ *
+ * One-page sheet showing the ГК-23/02 СЕРИЯ Г-991-1 trench: concrete
+ * rectangle drawn to mm-scale with the contained pipes laid out in
+ * canonical CIRCUIT_DEFAULTS order along the bottom row. Engineer-
+ * facing dimensions + per-pipe table on the same page.
+ *
+ * Mirrors the React `ChannelDetail` panel so what the engineer sees
+ * on screen matches what prints.
+ *
+ * Standards: ГК-23/02 СЕРИЯ Г-991-1 + БНбД 41-02-13 §6 (clearance).
+ */
+export function renderChannelCrossSectionPage(
+  pdf: jsPDF,
+  area: PageArea,
+  state: HydraulicState,
+  selection: { kind: string; id: string } | null = null,
+): void {
+  renderSheetTitle(
+    pdf,
+    area,
+    "Сувгийн хөндлөн огтлол",
+    "ГК-23/02 СЕРИЯ Г-991-1 — Л-4 / Л-7 / Л-9 бетон суваг",
+  );
+  const view = buildChannelDetail(state.channels, state.pipes, selection);
+  if ("error" in view) {
+    const banner = { x: area.x + 10, y: area.y + 30, width: area.width - 20, height: 40 };
+    renderErrorBanner(pdf, banner, "Сувгийн хөндлөн огтлол гаргах боломжгүй", view.error);
+    return;
+  }
+  drawChannelCrossSection(pdf, area, view);
+}
+
+function drawChannelCrossSection(
+  pdf: jsPDF,
+  area: PageArea,
+  view: ChannelCrossSection,
+): void {
+  // Upper 55% for the cross-section drawing, lower 45% for the table.
+  const plotY = area.y + 22;
+  const plotH = area.height * 0.45;
+  const plotW = area.width - 60;
+  const plotX = area.x + 30;
+
+  // Scale: longest dimension fills 80% of plot width/height
+  const usableW = plotW * 0.85;
+  const usableH = plotH * 0.7;
+  const scale =
+    view.width_mm > 0 && view.height_mm > 0
+      ? Math.min(usableW / (view.width_mm / 1000), usableH / (view.height_mm / 1000))
+      : 0.1;
+  // Convert mm → m for the scale calc above, then back to draw coords
+  // (jsPDF uses mm by default at A4 default config).
+  const drawW = (view.width_mm / 1000) * scale;
+  const drawH = (view.height_mm / 1000) * scale;
+  const cx = plotX + plotW / 2;
+  const rectX = cx - drawW / 2;
+  const rectY = plotY + 10;
+
+  // Width dimension above the channel
+  pdf.setDrawColor(120, 120, 120);
+  pdf.setTextColor(80, 80, 80);
+  pdf.setLineWidth(0.2);
+  pdf.line(rectX, rectY - 6, rectX + drawW, rectY - 6);
+  pdf.line(rectX, rectY - 8, rectX, rectY - 4);
+  pdf.line(rectX + drawW, rectY - 8, rectX + drawW, rectY - 4);
+  pdf.setFontSize(8);
+  pdf.text(`${view.width_mm} мм`, cx, rectY - 8, { align: "center" });
+
+  // Height dimension on the right
+  pdf.line(rectX + drawW + 5, rectY, rectX + drawW + 5, rectY + drawH);
+  pdf.line(rectX + drawW + 3, rectY, rectX + drawW + 7, rectY);
+  pdf.line(rectX + drawW + 3, rectY + drawH, rectX + drawW + 7, rectY + drawH);
+  pdf.text(`${view.height_mm} мм`, rectX + drawW + 9, rectY + drawH / 2, {
+    align: "left",
+    baseline: "middle",
+  });
+
+  // Concrete channel rectangle (light fill)
+  pdf.setFillColor(240, 240, 240);
+  pdf.setDrawColor(40, 40, 40);
+  pdf.setLineWidth(0.4);
+  pdf.rect(rectX, rectY, drawW, drawH, "FD");
+
+  // Concrete sleeper strip at the bottom
+  const sleeperH = Math.max(1, drawH * 0.04);
+  pdf.setFillColor(190, 190, 190);
+  pdf.setDrawColor(190, 190, 190);
+  pdf.rect(rectX, rectY + drawH - sleeperH, drawW, sleeperH, "F");
+
+  // Pipes laid out along the bottom row in canonical order
+  const channelFloorY = rectY + drawH;
+  for (const p of view.pipes) {
+    const cx_px = rectX + (p.centerX_mm / 1000) * scale;
+    const cy_px = channelFloorY - (p.centerY_mm / 1000) * scale;
+    const r_px = Math.max(1.2, (p.radius_mm / 1000) * scale);
+    // Circle: fill = circuit colour (hex), stroke = dark
+    const [fr, fg, fb] = hexToRgb(p.fill);
+    pdf.setFillColor(fr, fg, fb);
+    pdf.setDrawColor(40, 40, 40);
+    pdf.setLineWidth(0.25);
+    pdf.circle(cx_px, cy_px, r_px, "FD");
+    // Code label inside the circle (white text)
+    pdf.setFontSize(Math.max(5, Math.min(8, r_px * 1.4)));
+    pdf.setTextColor(255, 255, 255);
+    pdf.text(p.code, cx_px, cy_px + 1, { align: "center" });
+    // DN label below the channel floor
+    pdf.setFontSize(6.5);
+    pdf.setTextColor(40, 40, 40);
+    pdf.text(`Φ${p.dn_mm}`, cx_px, channelFloorY + 4, { align: "center" });
+    // Temperature badge above (if defined)
+    if (p.tempC != null) {
+      pdf.setFontSize(6);
+      pdf.setTextColor(fr, fg, fb);
+      pdf.text(`${p.tempC}°C`, cx_px, cy_px - r_px - 1.5, { align: "center" });
+    }
+  }
+
+  // Channel type label below the drawing
+  pdf.setFontSize(10);
+  pdf.setTextColor(20, 20, 20);
+  pdf.text(view.typeLabel, cx, channelFloorY + 12, { align: "center" });
+
+  /* Per-pipe table */
+  const tableY = plotY + plotH + 6;
+  const tableX = area.x + 12;
+  const tableW = area.width - 24;
+  drawChannelPipeTable(pdf, { x: tableX, y: tableY, width: tableW, height: area.y + area.height - tableY - 12 }, view);
+}
+
+function drawChannelPipeTable(
+  pdf: jsPDF,
+  area: PageArea,
+  view: ChannelCrossSection,
+): void {
+  const cols = [
+    { key: "idx", label: "#", width: 8 },
+    { key: "code", label: "Код", width: 18 },
+    { key: "label", label: "Хэлхээ", width: 60 },
+    { key: "dn", label: "Φ (DN)", width: 18 },
+    { key: "material", label: "Материал", width: 28 },
+    { key: "temp", label: "Темп.", width: 18 },
+  ];
+  const totalW = cols.reduce((s, c) => s + c.width, 0);
+  // Scale columns to area width
+  const scale = (area.width - 4) / totalW;
+  const rowH = 6;
+
+  // Header
+  pdf.setFillColor(230, 230, 230);
+  pdf.setDrawColor(80, 80, 80);
+  pdf.setLineWidth(0.2);
+  pdf.rect(area.x, area.y, area.width, rowH, "FD");
+  pdf.setFontSize(8);
+  pdf.setTextColor(40, 40, 40);
+  let cx = area.x + 2;
+  for (const c of cols) {
+    pdf.text(c.label, cx + 1, area.y + rowH - 2);
+    cx += c.width * scale;
+  }
+
+  // Rows
+  pdf.setDrawColor(180, 180, 180);
+  pdf.setLineWidth(0.1);
+  view.pipes.forEach((p, i) => {
+    const y = area.y + (i + 1) * rowH;
+    if (y + rowH > area.y + area.height) return; // overflow guard
+    pdf.line(area.x, y, area.x + area.width, y);
+    const def = circuitDefault(p.label === "Тодорхойгүй" ? undefined : (Object.keys({}) as never));
+    void def; // (intentional: future engineer cross-reference)
+    let xc = area.x + 2;
+    const cells: string[] = [
+      String(i + 1),
+      p.code,
+      p.label,
+      `Φ${p.dn_mm}`,
+      p.materialKey,
+      p.tempC != null ? `${p.tempC} °C` : "—",
+    ];
+    for (let j = 0; j < cols.length; j += 1) {
+      const value = cells[j]!;
+      const col = cols[j]!;
+      // Code cell coloured per circuit fill for at-a-glance recognition
+      if (j === 1) {
+        const [fr, fg, fb] = hexToRgb(p.fill);
+        pdf.setTextColor(fr, fg, fb);
+      } else {
+        pdf.setTextColor(40, 40, 40);
+      }
+      pdf.text(value, xc + 1, y + rowH - 2);
+      xc += col.width * scale;
+    }
+  });
+
+  // Bottom border
+  const lastY = area.y + Math.min(view.pipes.length + 1, Math.floor(area.height / rowH)) * rowH;
+  pdf.setDrawColor(80, 80, 80);
+  pdf.setLineWidth(0.2);
+  pdf.line(area.x, lastY, area.x + area.width, lastY);
+  // Outer border
+  pdf.rect(area.x, area.y, area.width, lastY - area.y, "D");
+}
+
+/** Convert "#RRGGBB" to [r, g, b] for jsPDF. */
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(hex);
+  if (!m) return [120, 120, 120];
+  return [parseInt(m[1]!, 16), parseInt(m[2]!, 16), parseInt(m[3]!, 16)];
 }

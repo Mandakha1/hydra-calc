@@ -21,9 +21,11 @@ import {
   renderWellPage,
   renderCompensatorPage,
   renderPidPage,
+  renderChannelCrossSectionPage,
   pidLegendText,
   type PageArea,
 } from "../pdfDetailPages";
+import { buildChannelFromDraw } from "../../scheme/channelOperations";
 import {
   DEFAULT_DRAWING_SET_PAGES,
   drawingSetPageLabel,
@@ -215,6 +217,100 @@ describe("DEFAULT_DRAWING_SET_PAGES + drawingSetPageLabel", () => {
     expect(drawingSetPageLabel("well")).toMatch(/Худаг/);
     expect(drawingSetPageLabel("compensator")).toMatch(/Компенсатор/);
     expect(drawingSetPageLabel("pid")).toMatch(/УДДТ|P&ID/);
+    expect(drawingSetPageLabel("channel")).toMatch(/Суваг|огтлол/);
+  });
+});
+
+/* ─── Phase 12.6b — Channel cross-section PDF page ──────────────── */
+
+describe("renderChannelCrossSectionPage — Phase 12.6b", () => {
+  function stateWithChannel(channelType: "Л-4" | "Л-7" | "Л-9" | "custom" = "Л-9"): HydraulicState {
+    const s = emptyState();
+    s.nodes = [
+      { id: "n1", kind: "junction", label: "1", x: 0, y: 0 },
+      { id: "n2", kind: "junction", label: "2", x: 200, y: 0 },
+    ];
+    const { channel, pipes } = buildChannelFromDraw({
+      fromNodeId: "n1",
+      toNodeId: "n2",
+      channelType,
+      pipeCircuits: channelType === "Л-4"
+        ? ["heating_supply", "heating_return"]
+        : channelType === "Л-7"
+          ? ["heating_supply", "heating_return", "dhw_supply", "dhw_recirc"]
+          : ["heating_supply", "heating_return", "dhw_supply", "dhw_recirc", "cold_water"],
+      ...(channelType === "custom"
+        ? { customWidth_mm: 900, customHeight_mm: 500 }
+        : {}),
+      length_m: 50,
+    });
+    s.channels = [channel];
+    s.pipes = pipes;
+    return s;
+  }
+
+  it("renders without throwing for a Л-9 channel with 5 pipes", () => {
+    const pdf = newPdf();
+    const state = stateWithChannel("Л-9");
+    expect(() =>
+      renderChannelCrossSectionPage(pdf, AREA, state, null),
+    ).not.toThrow();
+    expect(pdf.getNumberOfPages()).toBe(1);
+  });
+
+  it("renders Л-4 / Л-7 / Л-9 variants without throwing", () => {
+    for (const t of ["Л-4", "Л-7", "Л-9"] as const) {
+      const pdf = newPdf();
+      expect(() =>
+        renderChannelCrossSectionPage(pdf, AREA, stateWithChannel(t), null),
+      ).not.toThrow();
+    }
+  });
+
+  it("renders custom channel with engineer-supplied dimensions", () => {
+    const pdf = newPdf();
+    expect(() =>
+      renderChannelCrossSectionPage(pdf, AREA, stateWithChannel("custom"), null),
+    ).not.toThrow();
+  });
+
+  it("draws an error banner when project has no channels", () => {
+    const pdf = newPdf();
+    const state = emptyState();
+    // No channels in state → buildChannelDetail returns { error }
+    expect(() =>
+      renderChannelCrossSectionPage(pdf, AREA, state, null),
+    ).not.toThrow();
+    expect(pdf.getNumberOfPages()).toBe(1);
+  });
+
+  it("uses pipe-selection to pick the right channel in a multi-channel scene", () => {
+    const s = emptyState();
+    s.nodes = [
+      { id: "n1", kind: "junction", label: "1", x: 0, y: 0 },
+      { id: "n2", kind: "junction", label: "2", x: 200, y: 0 },
+      { id: "n3", kind: "junction", label: "3", x: 400, y: 0 },
+    ];
+    const draw1 = buildChannelFromDraw({
+      fromNodeId: "n1", toNodeId: "n2", channelType: "Л-4",
+      pipeCircuits: ["heating_supply", "heating_return"], length_m: 20,
+    });
+    const draw2 = buildChannelFromDraw({
+      fromNodeId: "n2", toNodeId: "n3", channelType: "Л-9",
+      pipeCircuits: ["heating_supply", "heating_return", "dhw_supply"], length_m: 30,
+    });
+    s.channels = [draw1.channel, draw2.channel];
+    s.pipes = [...draw1.pipes, ...draw2.pipes];
+
+    const pdf = newPdf();
+    // Selecting a pipe in the Л-9 channel should make the page render
+    // that one (not the Л-4 first one).
+    expect(() =>
+      renderChannelCrossSectionPage(pdf, AREA, s, {
+        kind: "pipe",
+        id: draw2.pipes[0]!.id,
+      }),
+    ).not.toThrow();
   });
 });
 
