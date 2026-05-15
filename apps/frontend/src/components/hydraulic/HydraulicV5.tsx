@@ -52,6 +52,8 @@ const ShareDialog = lazy(() => import("./dialogs/ShareDialog").then((m) => ({ de
 const ActivityFeed = lazy(() => import("./panels/ActivityFeed").then((m) => ({ default: m.ActivityFeed })));
 // Phase 10.5 — Team dialog (engineer + checker + approver roles + approval workflow).
 const TeamDialog = lazy(() => import("./dialogs/TeamDialog").then((m) => ({ default: m.TeamDialog })));
+// Phase 11.5 — First-time engineer onboarding tour.
+const OnboardingTour = lazy(() => import("./OnboardingTour").then((m) => ({ default: m.OnboardingTour })));
 
 interface Props {
   projectId?: string;
@@ -358,6 +360,15 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
   const [showShareDialog, setShowShareDialog] = useState(false);
   /** Phase 10.5 — Team dialog state (add/remove members + roles). */
   const [showTeamDialog, setShowTeamDialog] = useState(false);
+  /** Phase 11.5 — onboarding tour state. Shown automatically on first
+   *  engineer visit to /app/new; dismissible via localStorage flag. */
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    if (typeof window === "undefined") return false;
+    // Only show for fresh projects (not loaded ones) — engineer
+    // editing existing work already knows the app
+    if (projectId) return false;
+    return window.localStorage.getItem("hydra:onboarding-seen-v1") !== "1";
+  });
   const share = useCallback(() => {
     if (demoMode) {
       alert("Demo горимд хуваалцах байхгүй — жинхэнэ нэвтрэлт хийнэ үү.");
@@ -579,6 +590,13 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             currentUserId={user.id}
             onClose={() => setShowTeamDialog(false)}
           />
+        </Suspense>
+      )}
+
+      {/* Phase 11.5 — first-time onboarding tour */}
+      {showOnboarding && (
+        <Suspense fallback={null}>
+          <OnboardingTour onClose={() => setShowOnboarding(false)} />
         </Suspense>
       )}
 
