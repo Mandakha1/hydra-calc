@@ -181,9 +181,18 @@ hydra-calc/
 | 27 | Web Worker compliance (Phase 11.3) | Off-main-thread + fallback |
 | 28 | Lazy route chunks (Phase 11.4) | Initial bundle -140 KB raw / -48 KB gz |
 | 29 | Onboarding tour (Phase 11.5) | 5-step Mongolian first-time engineer carousel |
+| 30 | Outline-first workflow (Phase 12.1) | Building polygons + tag-as Mongolian conventions (УДДТ/АОС/ҮХТ/ЭӨ) |
+| 31 | Live AutoCAD HUD (Phase 12.2) | Cursor-anchored dimension overlay + 8-point compass |
+| 32 | Pipe flexibility (Phase 12.3) | Multi-segment bend points + free / snap_45 / snap_90 |
+| 33 | Right-click tag-as (Phase 12.4) | Context menu wires building → consumer/source/chamber/compensator |
+| 34 | Composite channels (Phase 12.5) | SchemeChannel groups 1-5 SchemePipe per ГК-23/02 Л-4/Л-7/Л-9 |
+| 35 | Cross-section view (Phase 12.6) | "Суваг" tab — pipes laid out canonically inside concrete rectangle |
+| 36 | Channel label panels (Phase 12.7) | AutoCAD-style 3-line callout with leader line per channel |
+| 37 | Node numbers + flow arrows (Phase 12.8) | 1..N cross-reference badges + chevron arrows from→to (or solver-flipped) |
 
-**Test counts**: 681 → **1026** (Phase 9-11). PRs merged: **48 total**.
+**Test counts**: 681 → **1285** (Phase 9-12). PRs merged: **56 total**.
 **Initial bundle**: 418 → 285 KB raw / 133 → 85 KB gz (-36% gz post Phase 11.4).
+**HydraulicV5 chunk**: 346.89 → **357.51 KB** / 104.47 → **108.23 KB gz** post Phase 12.5-12.8 (+3.76 KB gz for 4 channel features + node-numbering + flow arrows).
 
 ---
 
