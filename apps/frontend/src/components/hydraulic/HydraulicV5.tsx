@@ -393,8 +393,11 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
           }
         }
       `}</style>
-      {/* Top toolbar */}
+      {/* Top toolbar — Phase 11.1 adds `editor-toolbar` class for
+          touch-target rules + `scroll-x` for mobile horizontal scroll
+          when the button row exceeds viewport width. */}
       <header
+        className="editor-toolbar scroll-x"
         style={{
           borderBottom: "1px solid var(--border-soft)",
           background: "var(--bg-soft)",
