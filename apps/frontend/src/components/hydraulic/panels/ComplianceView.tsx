@@ -18,7 +18,6 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import { useHydraulicStore } from "../hydraulicStore";
 import {
-  runComplianceCheck,
   severityLabel,
   categoryLabel,
   type ComplianceReport,
@@ -26,6 +25,7 @@ import {
   type RuleSeverity,
 } from "../calc/compliance/ruleEngine";
 import { ALL_RULES } from "../calc/compliance/rules";
+import { runComplianceCheckAsync } from "../calc/compliance/complianceWorker";
 import type { ProjectSettings } from "../hydraulicTypes";
 
 /**
@@ -87,14 +87,24 @@ export function ComplianceView() {
   // Cached report — engineer must press "Шалгалт хийх" to (re)compute.
   const [report, setReport] = useState<ComplianceReport | null>(null);
   const [filter, setFilter] = useState<SeverityFilter>("all");
+  /** Phase 11.3 — running state for the web worker. UI dims the
+   *  button while the async check is in flight. */
+  const [running, setRunning] = useState(false);
+  /** Phase 11.3 — last run's elapsed ms + whether it ran off-main-thread. */
+  const [perfHint, setPerfHint] = useState<{ ms: number; offThread: boolean } | null>(null);
 
-  const runCheck = () => {
-    const r = runComplianceCheck(
-      { nodes, pipes, settings, schemaVersion: 5 },
-      results,
-      ALL_RULES,
-    );
-    setReport(r);
+  const runCheck = async () => {
+    setRunning(true);
+    try {
+      const r = await runComplianceCheckAsync(
+        { nodes, pipes, settings, schemaVersion: 5 },
+        results,
+      );
+      setReport(r.report);
+      setPerfHint({ ms: r.elapsedMs, offThread: r.offMainThread });
+    } finally {
+      setRunning(false);
+    }
   };
 
   const filteredResults = useMemo<RuleResult[]>(() => {
@@ -115,10 +125,11 @@ export function ComplianceView() {
         <button
           type="button"
           onClick={runCheck}
+          disabled={running}
           style={primaryBtn}
           data-testid="compliance-run"
         >
-          {report ? "🔄 Дахин шалгах" : "▶ Шалгалт хийх"}
+          {running ? "⏳ Шалгаж байна..." : report ? "🔄 Дахин шалгах" : "▶ Шалгалт хийх"}
         </button>
       </header>
 
@@ -229,6 +240,12 @@ export function ComplianceView() {
             <div style={{ fontSize: 11, color: "var(--fg-muted, #888)" }}>
               Шалгасан: {report.summary.passedRules + report.summary.totalViolations} дүрэм ·{" "}
               {new Date(report.generatedAt).toLocaleString("mn-MN")}
+              {perfHint && (
+                <span style={{ marginLeft: 8 }} data-testid="compliance-perf-hint">
+                  · {perfHint.ms.toFixed(0)} мс
+                  {perfHint.offThread && <span title="Web Worker дээр гүйцэтгэсэн"> ⚡</span>}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11, color: "var(--fg-muted, #888)", marginTop: 4 }}>
               Стандартууд: БНбД 41-02-13 · БНбД 41-01-2019 · СП 124.13330.2012 · ГОСТ 8732
