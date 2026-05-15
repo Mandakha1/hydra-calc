@@ -193,4 +193,62 @@ export async function projectsRoutes(app: FastifyInstance) {
       };
     },
   );
+
+  /* Phase 10.3 — list all share tokens for a project (engineer-only) */
+  app.get(
+    "/projects/:id/shares",
+    { preHandler: requireAuth },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const project = await db.query.projects.findFirst({
+        where: and(eq(schema.projects.id, id), eq(schema.projects.userId, req.user!.sub)),
+      });
+      if (!project) throw errors.notFound("Төсөл олдсонгүй");
+      const rows = await db.query.shares.findMany({
+        where: eq(schema.shares.projectId, project.id),
+        orderBy: [desc(schema.shares.createdAt)],
+      });
+      return {
+        shares: rows.map((s) => ({
+          id: s.id,
+          token: s.token,
+          canEdit: s.canEdit,
+          expiresAt: s.expiresAt?.toISOString() ?? null,
+          createdAt: s.createdAt.toISOString(),
+          /** Engineer-facing flag: token still serves traffic? */
+          active:
+            (!s.expiresAt || s.expiresAt > new Date()),
+        })),
+      };
+    },
+  );
+
+  /* Phase 10.3 — revoke a share token (delete row).
+   *  Engineer-only — checks project ownership before deletion. */
+  app.delete(
+    "/projects/:id/shares/:shareId",
+    { preHandler: requireAuth },
+    async (req) => {
+      const { id, shareId } = req.params as { id: string; shareId: string };
+      // Verify project ownership first
+      const project = await db.query.projects.findFirst({
+        where: and(eq(schema.projects.id, id), eq(schema.projects.userId, req.user!.sub)),
+      });
+      if (!project) throw errors.notFound("Төсөл олдсонгүй");
+      // Delete the share row (cascade-safe because the row only carries
+      // a project_id FK to projects).
+      const result = await db
+        .delete(schema.shares)
+        .where(and(eq(schema.shares.id, shareId), eq(schema.shares.projectId, project.id)))
+        .returning();
+      if (result.length === 0) throw errors.notFound("Хуваалцах токен олдсонгүй");
+      await db.insert(schema.auditLog).values({
+        userId: req.user!.sub,
+        action: "share.revoked",
+        details: { projectId: id, shareId },
+        ip: req.ip,
+      });
+      return { ok: true };
+    },
+  );
 }
