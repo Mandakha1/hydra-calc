@@ -22,6 +22,13 @@ export const users = pgTable(
     name: varchar("name", { length: 120 }),
     role: varchar("role", { length: 20 }).default("user").notNull(),
     verified: boolean("verified").default(false).notNull(),
+    /** Phase 10.1 — email verification token (URL-friendly, single-use).
+     *  Null when no pending verification. Cleared on successful verify. */
+    emailVerificationToken: text("email_verification_token"),
+    /** Phase 10.1 — password reset token (single-use, expiring). */
+    passwordResetToken: text("password_reset_token"),
+    /** Phase 10.1 — password reset token expiry (UTC). */
+    passwordResetExpires: timestamp("password_reset_expires", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
