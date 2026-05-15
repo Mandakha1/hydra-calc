@@ -50,6 +50,8 @@ const ComplianceView = lazy(() => import("./panels/ComplianceView").then((m) => 
 const ShareDialog = lazy(() => import("./dialogs/ShareDialog").then((m) => ({ default: m.ShareDialog })));
 // Phase 10.4 — Activity feed (audit trail per project).
 const ActivityFeed = lazy(() => import("./panels/ActivityFeed").then((m) => ({ default: m.ActivityFeed })));
+// Phase 10.5 — Team dialog (engineer + checker + approver roles + approval workflow).
+const TeamDialog = lazy(() => import("./dialogs/TeamDialog").then((m) => ({ default: m.TeamDialog })));
 
 interface Props {
   projectId?: string;
@@ -107,6 +109,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
   const setResults = useHydraulicStore((s) => s.setResults);
   const state = useHydraulicStore((s) => s);
   const demoMode = useAuthStore((s) => s.demoMode);
+  const user = useAuthStore((s) => s.user);
   const looped = hasLoops(state.nodes, state.pipes);
 
   // Load project from server, localStorage (demo), or from sharedData
@@ -353,6 +356,8 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
   /** Phase 10.3 — Share dialog state. Replaces the Phase 6.x one-shot
    *  alert flow with a proper modal listing existing tokens + revoke. */
   const [showShareDialog, setShowShareDialog] = useState(false);
+  /** Phase 10.5 — Team dialog state (add/remove members + roles). */
+  const [showTeamDialog, setShowTeamDialog] = useState(false);
   const share = useCallback(() => {
     if (demoMode) {
       alert("Demo горимд хуваалцах байхгүй — жинхэнэ нэвтрэлт хийнэ үү.");
@@ -489,6 +494,15 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         {!readOnly && loadedId && (
           <button onClick={share} style={btn}>🔗 Хуваалцах</button>
         )}
+        {!readOnly && loadedId && !demoMode && (
+          <button
+            onClick={() => setShowTeamDialog(true)}
+            style={btn}
+            title="Багт checker / approver гишүүн нэмэх + батлуулах"
+          >
+            👥 Багт
+          </button>
+        )}
         {saveMsg && <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>{saveMsg}</span>}
       </header>
 
@@ -550,6 +564,17 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
           <ShareDialog
             projectId={loadedId}
             onClose={() => setShowShareDialog(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* Phase 10.5 — Team dialog (engineer / checker / approver management) */}
+      {showTeamDialog && loadedId && user?.id && (
+        <Suspense fallback={<TabLoading />}>
+          <TeamDialog
+            projectId={loadedId}
+            currentUserId={user.id}
+            onClose={() => setShowTeamDialog(false)}
           />
         </Suspense>
       )}

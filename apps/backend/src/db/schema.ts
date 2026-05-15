@@ -103,6 +103,43 @@ export const sessions = pgTable(
   }),
 );
 
+/* ---------- project_members (Phase 10.5) ---------- */
+/**
+ * Per-project role assignment. Each row = one user has one role on
+ * one project. 3 roles:
+ *   - engineer (full edit + share + delete — owner-equivalent)
+ *   - checker  (view + run compliance + comment)
+ *   - approver (view + approve / reject the project)
+ *
+ * The project owner (projects.user_id) is implicitly an engineer;
+ * they don't need a row in this table. Other team members do.
+ */
+export const projectMembers = pgTable(
+  "project_members",
+  {
+    projectId: uuid("project_id")
+      .references(() => projects.id, { onDelete: "cascade" })
+      .notNull(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    role: varchar("role", { length: 20 }).notNull(),
+    addedAt: timestamp("added_at", { withTimezone: true }).defaultNow().notNull(),
+    addedBy: uuid("added_by").references(() => users.id, { onDelete: "set null" }),
+    /** Phase 10.5 — approver-only fields, populated when role=approver
+     *  AND the approver has acted on the project. */
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+  },
+  (t) => ({
+    pk: index("project_members_pk").on(t.projectId, t.userId),
+    projectIdx: index("project_members_project_idx").on(t.projectId),
+    userIdx: index("project_members_user_idx").on(t.userId),
+  }),
+);
+
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type NewProjectMember = typeof projectMembers.$inferInsert;
+
 /* ---------- audit_log ---------- */
 export const auditLog = pgTable(
   "audit_log",
