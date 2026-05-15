@@ -67,8 +67,18 @@ import {
 } from "../scheme/dimensionApplier";
 import { strokeDasharrayForStyle } from "../scheme/constructionLines";
 // Phase 12.5 — composite-channel render helpers + atomic build.
-import { channelPipeCountBadge, buildChannelFromDraw } from "../scheme/channelOperations";
-import { channelTypeLabel } from "../scheme/channelTypes";
+import {
+  channelPipeCountBadge,
+  buildChannelFromDraw,
+  addPipeToChannel as addPipeToChannelHelper,
+  removePipeFromChannel as removePipeFromChannelHelper,
+} from "../scheme/channelOperations";
+import {
+  channelTypeLabel,
+  CHANNEL_TYPE_REGISTRY,
+  CIRCUIT_DEFAULTS,
+  type ChannelTypeKey,
+} from "../scheme/channelTypes";
 // Phase 12.7 — engineer-facing per-channel label panel.
 import {
   buildChannelLabel,
@@ -78,6 +88,11 @@ import {
 // Phase 12.8 — engineering cross-reference numbers + flow arrows.
 import { assignNodeNumbers, nodeNumberBadge } from "../scheme/nodeNumbering";
 import { buildAllArrows } from "../scheme/flowArrows";
+// Phase 12.5b — channel-create modal opened on second click.
+import {
+  ChannelCreateDialog,
+  type ChannelCreatePayload,
+} from "../dialogs/ChannelCreateDialog";
 import {
   addConstructionLine,
   selectConstructionLine,
@@ -160,6 +175,9 @@ export function SchemeEditor({ readOnly }: Props) {
   const addPipe = useHydraulicStore((s) => s.addPipe);
   // Phase 12.5 — composite channel atomic insertion.
   const addChannel = useHydraulicStore((s) => s.addChannel);
+  // Phase 12.5b — patch + cascade-remove for the right-click submenu.
+  const updateChannel = useHydraulicStore((s) => s.updateChannel);
+  const removeChannel = useHydraulicStore((s) => s.removeChannel);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
@@ -193,6 +211,15 @@ export function SchemeEditor({ readOnly }: Props) {
   // For v1 the channel type defaults to Л-7 with the 4 standard
   // circuits (D2.1/D2.2/D3/D4); engineer adjusts via Inspector later.
   const [channelFrom, setChannelFrom] = useState<string | null>(null);
+  // Phase 12.5b — pending channel-create payload captured between the
+  // engineer's 2nd click and the modal's confirm. When non-null the
+  // ChannelCreateDialog is open. On confirm we call addChannel; on
+  // cancel we discard and return to select.
+  const [pendingChannelCreate, setPendingChannelCreate] = useState<{
+    fromNodeId: string;
+    toNodeId: string;
+    length_m: number;
+  } | null>(null);
   const [polygon, setPolygon] = useState<Point[]>([]); // polyline being drawn
   const [pendingFootprint, setPendingFootprint] = useState<Point[] | null>(null);
   const [showPalette, setShowPalette] = useState<NodeCategory | null>(null);
@@ -1120,12 +1147,12 @@ export function SchemeEditor({ readOnly }: Props) {
           setMode("select");
         }
       } else if (mode === "addChannel") {
-        // Phase 12.5 — two-click channel placement. First click picks
-        // the start node; second click (on a different node) builds
-        // a Л-7 channel with the 4 standard circuits (D2.1/D2.2/D3/D4)
-        // — the most common Mongolian district-heating configuration
-        // per ГК-23/02. Engineer can adjust channel type + add/remove
-        // pipes via Inspector / right-click after creation.
+        // Phase 12.5 — two-click channel placement. Phase 12.5b
+        // upgrades the 2nd click: instead of immediately building the
+        // channel with hardcoded Л-7 defaults, we open the
+        // ChannelCreateDialog so the engineer picks type + circuits
+        // + DN. The Inspector / right-click submenu still lets them
+        // tweak the channel after creation.
         if (!channelFrom) {
           setChannelFrom(node.id);
         } else if (channelFrom !== node.id) {
@@ -1134,22 +1161,14 @@ export function SchemeEditor({ readOnly }: Props) {
             ? pxToM(Math.hypot(from.x - node.x, from.y - node.y))
             : 0;
           const length_m = Math.max(0.5, Math.round(measuredLen * 10) / 10);
-          const { channel, pipes: newPipes } = buildChannelFromDraw({
+          setPendingChannelCreate({
             fromNodeId: channelFrom,
             toNodeId: node.id,
-            channelType: "Л-7",
-            pipeCircuits: [
-              "heating_supply",
-              "heating_return",
-              "dhw_supply",
-              "dhw_recirc",
-            ],
-            defaultDn: 100,
             length_m,
           });
-          addChannel(channel, newPipes);
-          setChannelFrom(null);
-          setMode("select");
+          // Leave addChannel mode now — the modal owns the flow.
+          // setChannelFrom remains as visual cue until modal closes;
+          // cleared by the modal's onConfirm / onCancel handlers below.
         }
       } else {
         // Phase 6.5.1 — modifier-click semantics:
@@ -1721,6 +1740,8 @@ export function SchemeEditor({ readOnly }: Props) {
         setPipeFrom(null);
         // Phase 12.5 — cancel any in-flight channel draw.
         setChannelFrom(null);
+        // Phase 12.5b — also dismiss the channel-create modal if open.
+        setPendingChannelCreate(null);
         setPolygon([]);
         setPendingFootprint(null);
         setMeasurePoints([]);
@@ -4067,6 +4088,112 @@ export function SchemeEditor({ readOnly }: Props) {
             }));
             setContextMenu(null);
           }}
+          /* Phase 12.5b — channel-action wiring. Computed lazily
+             from the targeted pipe; passed only when the pipe is
+             inside a composite channel. */
+          {...(() => {
+            if (contextMenu.target.kind !== "pipe") return {};
+            const pipe = pipes.find((p) => p.id === contextMenu.target.id);
+            if (!pipe?.channelId) return {};
+            const channel = (channels ?? []).find((c) => c.id === pipe.channelId);
+            if (!channel) return {};
+            const containedPipeIds = new Set(channel.pipeIds);
+            const containedPipes = pipes.filter((p) => containedPipeIds.has(p.id));
+            const usedCircuits = new Set(
+              containedPipes
+                .map((p) => p.circuit)
+                .filter((c): c is PipeCircuit => c != null),
+            );
+            const availableCircuits = CIRCUIT_DEFAULTS
+              .map((c) => c.circuit)
+              .filter((c) => !usedCircuits.has(c));
+            return {
+              isChannelMember: true,
+              channelAvailableCircuits: availableCircuits,
+              onChangeChannelType: (next: ChannelTypeKey) => {
+                const patch: { channelType: ChannelTypeKey; crossSectionWidth_mm?: number; crossSectionHeight_mm?: number } = {
+                  channelType: next,
+                };
+                if (next !== "custom") {
+                  const spec = CHANNEL_TYPE_REGISTRY[next];
+                  patch.crossSectionWidth_mm = spec.widthMm;
+                  patch.crossSectionHeight_mm = spec.heightMm;
+                }
+                pushUndoSnapshot("Сувгийн төрөл солих", 1);
+                updateChannel(channel.id, patch);
+                setContextMenu(null);
+              },
+              onAddPipeToChannel: (circuit: PipeCircuit) => {
+                pushUndoSnapshot("Сувагт хоолой нэмсэн", 1);
+                const len = containedPipes[0]?.length_m ?? pipe.length_m;
+                const { channelPatch, newPipe } = addPipeToChannelHelper({
+                  channel,
+                  existingPipes: containedPipes,
+                  newCircuit: circuit,
+                  defaultDn: pipe.dn,
+                  defaultMaterialKey: pipe.materialKey,
+                  length_m: len,
+                });
+                // Atomic-ish: addPipe writes the pipe row;
+                // updateChannel updates the parent's pipeIds list.
+                addPipe(newPipe);
+                updateChannel(channelPatch.id, { pipeIds: channelPatch.pipeIds });
+                setContextMenu(null);
+              },
+              onRemoveFromChannel: () => {
+                pushUndoSnapshot("Хоолойг сувгаас гаргасан", 1);
+                const { channelPatch } = removePipeFromChannelHelper({
+                  channel,
+                  pipeIdToRemove: pipe.id,
+                });
+                updateChannel(channelPatch.id, { pipeIds: channelPatch.pipeIds });
+                // Clear the back-reference on the pipe so it renders as
+                // a standalone pipe again.
+                updatePipe(pipe.id, { channelId: undefined });
+                setContextMenu(null);
+              },
+              onRemoveChannel: () => {
+                if (!window.confirm(
+                  `Бүх сувгийг устгах уу? ${containedPipes.length} хоолой бас устах.`,
+                )) return;
+                pushUndoSnapshot("Сувгийг устгасан", 1 + containedPipes.length);
+                removeChannel(channel.id);
+                setContextMenu(null);
+              },
+            };
+          })()}
+        />
+      )}
+
+      {/* Phase 12.5b — Channel creation dialog. Opens after the
+          engineer's 2nd click in addChannel mode (captures from/to/
+          length in pendingChannelCreate). Confirm → build channel via
+          the pure helper + dispatch addChannel atomically. Cancel
+          discards the in-flight draw. */}
+      {pendingChannelCreate && (
+        <ChannelCreateDialog
+          length_m={pendingChannelCreate.length_m}
+          onConfirm={(payload: ChannelCreatePayload) => {
+            const { channel, pipes: newPipes } = buildChannelFromDraw({
+              fromNodeId: pendingChannelCreate.fromNodeId,
+              toNodeId: pendingChannelCreate.toNodeId,
+              channelType: payload.channelType,
+              customWidth_mm: payload.customWidth_mm,
+              customHeight_mm: payload.customHeight_mm,
+              pipeCircuits: payload.pipeCircuits,
+              defaultDn: payload.defaultDn,
+              length_m: pendingChannelCreate.length_m,
+            });
+            addChannel(channel, newPipes);
+            setPendingChannelCreate(null);
+            setChannelFrom(null);
+            setMode("select");
+          }}
+          onCancel={() => {
+            setPendingChannelCreate(null);
+            setChannelFrom(null);
+            setMode("select");
+          }}
         />
       )}
     </div>
@@ -4083,6 +4210,9 @@ function ContextMenu({
   groupSize, onDeleteGroup, onDeselectAll,
   // Phase 12.4 — building tag-as workflow
   isBuilding, onTagAs, onUntag, taggedKind,
+  // Phase 12.5b — channel actions when the targeted pipe is inside a composite channel
+  isChannelMember, onRemoveFromChannel, onRemoveChannel, onChangeChannelType, onAddPipeToChannel,
+  channelAvailableCircuits,
 }: {
   x: number; y: number;
   target: { kind: "node" | "pipe" | "building"; id: string };
@@ -4105,9 +4235,24 @@ function ContextMenu({
   onTagAs?: (kind: string) => void;
   onUntag?: () => void;
   taggedKind?: string;
+  /** Phase 12.5b — true when target is a pipe inside a composite channel.
+   *  Surfaces "Suvgaas garagh" / "Suvag устгах" / change-type + add-pipe
+   *  submenu items. The four handlers are optional; ContextMenu only
+   *  renders the menu rows when the corresponding handler is supplied. */
+  isChannelMember?: boolean;
+  onRemoveFromChannel?: () => void;
+  onRemoveChannel?: () => void;
+  onChangeChannelType?: (next: ChannelTypeKey) => void;
+  onAddPipeToChannel?: (circuit: PipeCircuit) => void;
+  /** Circuits the channel does NOT already contain — engineer can add
+   *  one via the submenu. */
+  channelAvailableCircuits?: PipeCircuit[];
 }) {
   // Phase 12.4 — sub-menu state for the "Энэ юу вэ?" tag-as submenu
   const [tagSubmenuOpen, setTagSubmenuOpen] = useState(false);
+  // Phase 12.5b — submenu states for channel-type change + add-pipe.
+  const [channelTypeSubmenuOpen, setChannelTypeSubmenuOpen] = useState(false);
+  const [addPipeSubmenuOpen, setAddPipeSubmenuOpen] = useState(false);
   // Click-outside dismissal
   useEffect(() => {
     const dismiss = () => onClose();
@@ -4204,6 +4349,142 @@ function ContextMenu({
       {isPipe && hasWaypoints && (
         <CtxBtn icon="⏐" onClick={onClearWaypoints}>Бүх эргэлтийг арилгах</CtxBtn>
       )}
+
+      {/* Phase 12.5b — Channel-specific menu items. Render only when
+          the right-clicked pipe is inside a composite channel AND the
+          parent provided handlers for these actions. Sub-menu state is
+          isolated to the type-change + add-pipe rows so the engineer
+          can browse options without committing. */}
+      {isChannelMember && !channelTypeSubmenuOpen && !addPipeSubmenuOpen && (
+        <>
+          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
+          {onChangeChannelType && (
+            <CtxBtn
+              icon="▤"
+              onClick={() => setChannelTypeSubmenuOpen(true)}
+              data-testid="ctx-channel-change-type"
+            >
+              Сувгийн төрөл солих ▶
+            </CtxBtn>
+          )}
+          {onAddPipeToChannel &&
+            channelAvailableCircuits &&
+            channelAvailableCircuits.length > 0 && (
+              <CtxBtn
+                icon="➕"
+                onClick={() => setAddPipeSubmenuOpen(true)}
+                data-testid="ctx-channel-add-pipe"
+              >
+                Сувагт хоолой нэмэх ▶
+              </CtxBtn>
+            )}
+          {onRemoveFromChannel && (
+            <CtxBtn
+              icon="↗"
+              onClick={onRemoveFromChannel}
+              data-testid="ctx-channel-remove-pipe"
+            >
+              Энэ хоолойг сувгаас гаргах
+            </CtxBtn>
+          )}
+          {onRemoveChannel && (
+            <CtxBtn
+              icon="🗑"
+              danger
+              onClick={onRemoveChannel}
+              data-testid="ctx-channel-remove"
+            >
+              Бүх сувгийг устгах
+            </CtxBtn>
+          )}
+        </>
+      )}
+
+      {/* Channel-type submenu */}
+      {isChannelMember && channelTypeSubmenuOpen && onChangeChannelType && (
+        <>
+          <div
+            style={{
+              padding: "6px 10px",
+              fontSize: 11,
+              color: "var(--bp-text-3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+          >
+            Сувгийн шинэ төрөл
+          </div>
+          {(Object.values(CHANNEL_TYPE_REGISTRY) as Array<{
+            key: ChannelTypeKey;
+            label: string;
+          }>).map((spec) => (
+            <CtxBtn
+              key={spec.key}
+              icon=""
+              onClick={() => {
+                onChangeChannelType(spec.key);
+                setChannelTypeSubmenuOpen(false);
+              }}
+              data-testid={`ctx-channel-type-${spec.key}`}
+            >
+              {spec.label}
+            </CtxBtn>
+          ))}
+          <CtxBtn
+            icon=""
+            onClick={() => {
+              onChangeChannelType("custom");
+              setChannelTypeSubmenuOpen(false);
+            }}
+            data-testid="ctx-channel-type-custom"
+          >
+            Сонголтоор
+          </CtxBtn>
+          <CtxBtn icon="←" onClick={() => setChannelTypeSubmenuOpen(false)}>
+            Буцах
+          </CtxBtn>
+        </>
+      )}
+
+      {/* Add-pipe submenu */}
+      {isChannelMember &&
+        addPipeSubmenuOpen &&
+        onAddPipeToChannel &&
+        channelAvailableCircuits && (
+          <>
+            <div
+              style={{
+                padding: "6px 10px",
+                fontSize: 11,
+                color: "var(--bp-text-3)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Нэмэх хэлхээ
+            </div>
+            {channelAvailableCircuits.map((circuit) => {
+              const def = CIRCUIT_DEFAULTS.find((c) => c.circuit === circuit);
+              return (
+                <CtxBtn
+                  key={circuit}
+                  icon=""
+                  onClick={() => {
+                    onAddPipeToChannel(circuit);
+                    setAddPipeSubmenuOpen(false);
+                  }}
+                  data-testid={`ctx-channel-add-pipe-${circuit}`}
+                >
+                  {def ? `${def.code} — ${def.label}` : circuit}
+                </CtxBtn>
+              );
+            })}
+            <CtxBtn icon="←" onClick={() => setAddPipeSubmenuOpen(false)}>
+              Буцах
+            </CtxBtn>
+          </>
+        )}
+
       <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
       <CtxBtn icon="🗑" onClick={onDelete} danger kbd="Del">Устгах</CtxBtn>
     </div>
