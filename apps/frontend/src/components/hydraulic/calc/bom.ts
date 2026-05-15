@@ -5,11 +5,19 @@
  * Aggregates pipes + valves + ИТП equipment with Mongolian retail prices (2026).
  */
 import { PIPE_PRICES_MNT_PER_M, PIPE_DB } from "shared";
-import type { HydraulicState, SchemeNode, SchemePipe } from "../hydraulicTypes";
+import type { HydraulicState, SchemeChannel, SchemeNode, SchemePipe } from "../hydraulicTypes";
 import { getNodeKind } from "../nodeCatalog";
+import {
+  CHANNEL_TYPE_REGISTRY,
+  type ChannelTypeKey,
+} from "../scheme/channelTypes";
 
 export interface BomLineItem {
-  category: "pipe" | "valve" | "fitting" | "equipment" | "labor" | "transport";
+  /** Phase 12.10 — "material" added for composite-channel concrete /
+   *  sleepers / insulation that fall outside the pipe/valve/equipment
+   *  buckets. Engineer sees a separate "Бетон + дулаалга" subtotal in
+   *  the BoM panel grouped by this category. */
+  category: "pipe" | "valve" | "fitting" | "equipment" | "labor" | "transport" | "material";
   name: string;
   quantity: number;
   unit: string;
@@ -70,6 +78,126 @@ const EQUIPMENT_PRICES_MNT: Record<string, number> = {
 const VAT_RATE = 0.10;          // 10% НӨАТ (НТХАХ хууль 2.6 + Татварын хууль)
 const LABOR_RATE = 0.32;        // 32% угсралт + туршилт + халаалтын систем баталгаажуулалт (БНбД 12-12-2018)
 const TRANSPORT_RATE = 0.07;    // 7% тээвэр + ачааны логистик 2026 (диз. шатахуун ↑20%)
+
+/**
+ * Phase 12.10 — Composite-channel (ГК-23/02) BoM pricing.
+ *
+ * Concrete-section per metre (precast Г-991-1 panels delivered cut-
+ * to-length) + concrete sleepers (precast spacing blocks resting the
+ * contained pipes ~80 mm above the trench floor) + mineral wool
+ * insulation (URSA / ROCKWOOL 50 mm thickness blanket — standard
+ * Mongolian district-heating spec per БНбД 41-02-13 §6).
+ *
+ * Prices are Улаанбаатар 2026 Q1 retail averages from "Сүүн Цагаан
+ * Ган" precast yard + URSA/Knauf distributor + Ган Кад catalog.
+ * Custom channels priced at the engineer-typical midpoint (between
+ * Л-4 and Л-7).
+ */
+const CHANNEL_CONCRETE_PRICE_MNT_PER_M: Record<ChannelTypeKey, number> = {
+  "Л-4": 85_000,
+  "Л-7": 140_000,
+  "Л-9": 180_000,
+  "custom": 120_000,
+};
+/** Concrete sleeper price per piece (стандарт ж/б тулгуур блок). */
+const CHANNEL_SLEEPER_PRICE_MNT = 15_000;
+/** Sleeper spacing along the channel (ГК-23/02 typical 2.5 m). */
+const CHANNEL_SLEEPER_SPACING_M = 2.5;
+/** Mineral wool insulation (URSA / ROCKWOOL 50 mm) per m² surface. */
+const CHANNEL_INSULATION_PRICE_MNT_PER_M2 = 45_000;
+
+/** Engineer-facing channel type label for BoM line names. */
+function channelDisplayLabel(channelType: ChannelTypeKey | undefined): string {
+  if (!channelType) return "Тодорхойгүй";
+  if (channelType === "custom") return "Сонголтоор";
+  return channelType;
+}
+
+/**
+ * Pull the channel's effective inside dimensions (mm). Explicit
+ * crossSection* fields win; standard types fall back to the registry.
+ */
+function channelDimsMm(channel: SchemeChannel): { width_mm: number; height_mm: number } {
+  let width_mm = channel.crossSectionWidth_mm ?? 0;
+  let height_mm = channel.crossSectionHeight_mm ?? 0;
+  if ((!width_mm || !height_mm) && channel.channelType && channel.channelType !== "custom") {
+    const spec = CHANNEL_TYPE_REGISTRY[channel.channelType as Exclude<ChannelTypeKey, "custom">];
+    if (spec) {
+      width_mm = width_mm || spec.widthMm;
+      height_mm = height_mm || spec.heightMm;
+    }
+  }
+  return { width_mm, height_mm };
+}
+
+/**
+ * Build the engineer-facing BoM line items for a single channel.
+ *
+ *   - Бетон суваг Л-X (м):    length × concrete-per-m
+ *   - Бетон тулгуур блок (ш): ceil(length / 2.5)
+ *   - Эрдэс ноосон дулаалга (м²): perimeter × length / 1000
+ *
+ * Channel `length_m` comes from the FIRST contained pipe (all
+ * contained pipes share geometry per Phase 12.5 invariant). When no
+ * pipes are contained (engineer drew an empty channel), returns the
+ * concrete-section line only with the channel's logical length zero.
+ */
+export function channelBoMLines(
+  channel: SchemeChannel,
+  containedPipes: SchemePipe[],
+): BomLineItem[] {
+  const length_m = containedPipes[0]?.length_m ?? 0;
+  if (length_m <= 0) return [];
+
+  const dims = channelDimsMm(channel);
+  const typeKey: ChannelTypeKey = channel.channelType ?? "custom";
+  const concretePerM =
+    CHANNEL_CONCRETE_PRICE_MNT_PER_M[typeKey] ?? CHANNEL_CONCRETE_PRICE_MNT_PER_M.custom;
+  const concreteTotal = concretePerM * length_m;
+
+  const sleeperCount = Math.max(2, Math.ceil(length_m / CHANNEL_SLEEPER_SPACING_M));
+  const sleeperTotal = sleeperCount * CHANNEL_SLEEPER_PRICE_MNT;
+
+  // Inside surface area to insulate: perimeter (2W + 2H mm) × length / 1000 (m²).
+  const perimeter_m = ((dims.width_mm + dims.height_mm) * 2) / 1000;
+  const insulationArea_m2 = perimeter_m * length_m;
+  const insulationTotal = insulationArea_m2 * CHANNEL_INSULATION_PRICE_MNT_PER_M2;
+
+  const lines: BomLineItem[] = [];
+  const dimsLabel = dims.width_mm > 0 && dims.height_mm > 0
+    ? ` ${dims.width_mm}×${dims.height_mm}мм`
+    : "";
+  lines.push({
+    category: "material",
+    name: `Бетон суваг ${channelDisplayLabel(typeKey)}${dimsLabel}`,
+    quantity: Math.round(length_m * 10) / 10,
+    unit: "м",
+    unitPrice_mnt: concretePerM,
+    totalPrice_mnt: Math.round(concreteTotal),
+    source: `ГК-23/02 СЕРИЯ Г-991-1, ${containedPipes.length}п суваг`,
+  });
+  lines.push({
+    category: "material",
+    name: "Бетон тулгуур блок",
+    quantity: sleeperCount,
+    unit: "ш",
+    unitPrice_mnt: CHANNEL_SLEEPER_PRICE_MNT,
+    totalPrice_mnt: Math.round(sleeperTotal),
+    source: `${CHANNEL_SLEEPER_SPACING_M} м-ийн зайтай`,
+  });
+  if (insulationArea_m2 > 0) {
+    lines.push({
+      category: "material",
+      name: "Эрдэс ноосон дулаалга (URSA / ROCKWOOL 50мм)",
+      quantity: Math.round(insulationArea_m2 * 10) / 10,
+      unit: "м²",
+      unitPrice_mnt: CHANNEL_INSULATION_PRICE_MNT_PER_M2,
+      totalPrice_mnt: Math.round(insulationTotal),
+      source: `${dims.width_mm}+${dims.height_mm} мм периметр × ${length_m.toFixed(1)} м`,
+    });
+  }
+  return lines;
+}
 
 export function generateBom(state: HydraulicState): BomReport {
   const lines: BomLineItem[] = [];
@@ -136,6 +264,18 @@ export function generateBom(state: HydraulicState): BomReport {
       unitPrice_mnt: unitPrice,
       totalPrice_mnt: unitPrice * count,
     });
+  }
+
+  /* === Phase 12.10 — Composite channels (ГК-23/02) ===
+   * Concrete sections + sleepers + insulation per channel. Skipped
+   * when state.channels is undefined (pre-12.5 projects load cleanly). */
+  if (state.channels && state.channels.length > 0) {
+    for (const channel of state.channels) {
+      const contained = state.pipes.filter((p) => channel.pipeIds.includes(p.id));
+      for (const line of channelBoMLines(channel, contained)) {
+        lines.push(line);
+      }
+    }
   }
 
   /* === Throttle washers / орmasch (per ИТП scheme) === */
