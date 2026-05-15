@@ -189,10 +189,16 @@ hydra-calc/
 | 35 | Cross-section view (Phase 12.6) | "Суваг" tab — pipes laid out canonically inside concrete rectangle |
 | 36 | Channel label panels (Phase 12.7) | AutoCAD-style 3-line callout with leader line per channel |
 | 37 | Node numbers + flow arrows (Phase 12.8) | 1..N cross-reference badges + chevron arrows from→to (or solver-flipped) |
+| 38 | Channel UX polish (Phase 12.5b/6b/7b/8b) | Create modal + right-click submenu + drag-to-reposition labels + SettingsPanel toggles + cross-section PDF page |
+| 39 | DXF channel auto-detect (Phase 12.9) | TEXT/MTEXT scanner finds Л-4/Л-7/Л-9 patterns + groups nearby pipes into SchemeChannel |
+| 40 | Channel BoM (Phase 12.10) | Concrete sections (85k/140k/180k МНТ/м) + sleepers (15k/ш @ 2.5m) + insulation (45k МНТ/м²) per channel |
+| 41 | ГК-23/02 reference snapshot (Phase 12.11) | 14-test fixture validation: 5 АОС / 79.33 kW topology grouped into 3 channels, asserts plan + label + BoM + calc all consistent |
+| 42 | Channel compliance rules (Phase 12.12) | БНбД 41-02-13 §6 clearance + insulation + ГК-23/02 dimension-match — registry 30 → 33 rules |
 
-**Test counts**: 681 → **1285** (Phase 9-12). PRs merged: **56 total**.
+**Test counts**: 681 → **1371** (Phase 9-12, +690 over Phase 8). PRs merged: **64 total**.
 **Initial bundle**: 418 → 285 KB raw / 133 → 85 KB gz (-36% gz post Phase 11.4).
-**HydraulicV5 chunk**: 346.89 → **357.51 KB** / 104.47 → **108.23 KB gz** post Phase 12.5-12.8 (+3.76 KB gz for 4 channel features + node-numbering + flow arrows).
+**HydraulicV5 chunk**: 346.89 → **367.09 KB** / 104.47 → **111.06 KB gz** post Phase 12 (+6.59 KB gz for the entire Phase 12 channel system).
+**Phase 12 closed**: ГК-23/02 sets are first-class citizens across draw → render → label → cross-section → DXF import → BoM → compliance → reference-validated.
 
 ---
 
