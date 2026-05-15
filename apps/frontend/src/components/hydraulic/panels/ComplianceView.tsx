@@ -136,7 +136,7 @@ export function ComplianceView() {
       {!report && (
         <div style={emptyStateStyle} data-testid="compliance-empty">
           <p style={{ fontSize: 14 }}>
-            "Шалгалт хийх" дарж {ALL_RULES.length} БНбД дүрэм шалгах
+            &quot;Шалгалт хийх&quot; дарж {ALL_RULES.length} БНбД дүрэм шалгах
           </p>
           <p style={{ fontSize: 12, color: "var(--fg-muted, #888)" }}>
             Жич: Тооцоо хийгээгүй бол гидравлик дүрэм алгасагдана. Эхлээд ⚙ Тооцоолох товчийг дарна уу.
