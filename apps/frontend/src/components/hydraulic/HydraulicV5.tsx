@@ -46,6 +46,8 @@ const CompensatorDetail = lazy(() => import("./panels/CompensatorDetail").then((
 const UddtPid = lazy(() => import("./panels/UddtPid").then((m) => ({ default: m.UddtPid })));
 // Phase 9.1 — Compliance check (30+ БНбД rules).
 const ComplianceView = lazy(() => import("./panels/ComplianceView").then((m) => ({ default: m.ComplianceView })));
+// Phase 10.3 — Share dialog (create + revoke read-only links).
+const ShareDialog = lazy(() => import("./dialogs/ShareDialog").then((m) => ({ default: m.ShareDialog })));
 
 interface Props {
   projectId?: string;
@@ -344,7 +346,10 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
     window.print();
   }, []);
 
-  const share = useCallback(async () => {
+  /** Phase 10.3 — Share dialog state. Replaces the Phase 6.x one-shot
+   *  alert flow with a proper modal listing existing tokens + revoke. */
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const share = useCallback(() => {
     if (demoMode) {
       alert("Demo горимд хуваалцах байхгүй — жинхэнэ нэвтрэлт хийнэ үү.");
       return;
@@ -353,14 +358,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
       alert("Хуваалцахын өмнө төслийг хадгалаарай.");
       return;
     }
-    try {
-      const res = await api.post<{ token: string; url: string }>(`/projects/${loadedId}/share`, { canEdit: false });
-      const fullUrl = `${location.origin}${res.url}`;
-      await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
-      alert(`Хуваалцах холбоос хуулагдсан:\n${fullUrl}`);
-    } catch (err) {
-      alert(err instanceof HttpError ? err.message : "Холбоос үүсгэж чадсангүй");
-    }
+    setShowShareDialog(true);
   }, [loadedId, demoMode]);
 
   return (
@@ -537,6 +535,16 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
               }
               setShowItpPicker(false);
             }}
+          />
+        </Suspense>
+      )}
+
+      {/* Phase 10.3 — Share dialog (read-only token management) */}
+      {showShareDialog && loadedId && (
+        <Suspense fallback={<TabLoading />}>
+          <ShareDialog
+            projectId={loadedId}
+            onClose={() => setShowShareDialog(false)}
           />
         </Suspense>
       )}
