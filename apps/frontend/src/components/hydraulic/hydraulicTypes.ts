@@ -436,6 +436,14 @@ export interface ProjectSettings {
    *  per БНбД 41-01-2019 §5.4). Default 80. */
   minSupplyTemp_c?: number;
 
+  /* ===== Drawing tool UX (Phase 12) ===== */
+  /** Phase 12.1 — after engineer places one entity, return to the
+   *  default (select) tool instead of staying in placement mode.
+   *  Default false (one-at-a-time placement) — engineer-feedback
+   *  preference. Set to true to enable continuous placement (Phase
+   *  6.x default behaviour). */
+  continuousPlacement?: boolean;
+
   /* ===== Map / OSM background (Phase 5B.1) ===== */
   /** Tile-layer provider key (from MAP_PROVIDERS). Persisted so each
    *  project remembers whether the engineer prefers OSM, satellite,
@@ -688,6 +696,18 @@ export interface SchemeBuilding {
   /** Optional colour override for the fill / stroke. When
    *  undefined, the renderer picks the layer colour. */
   color?: string;
+  /** Phase 12.1 — engineer tagged this building as a specific
+   *  entity kind via the right-click "Энэ юу вэ?" workflow. When
+   *  set, the building represents that entity on the network. The
+   *  node is auto-created at the building centroid and stored in
+   *  `taggedAsNodeId`. Engineer can re-tag (changes kind) or
+   *  un-tag (clears both fields + deletes auto-created node). */
+  taggedAsKind?: string;
+  /** Phase 12.1 — id of the SchemeNode created when this building
+   *  was tagged. Stays in sync — deleting the building deletes
+   *  this node; deleting the node clears `taggedAsKind` /
+   *  `taggedAsNodeId` on the building (but leaves the outline). */
+  taggedAsNodeId?: string;
 }
 
 /**
