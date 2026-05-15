@@ -224,6 +224,59 @@ export function SettingsPanel({ readOnly }: { readOnly?: boolean }) {
         {" «Хэмжээний хувь» "}талбарыг ашиглана.
       </p>
 
+      {/* Phase 12.8b — Plan-view overlay toggles. Three independent
+          settings that engineer-controls the chrome layered ABOVE the
+          channels + pipes + nodes: cross-reference number badges, flow
+          arrows, channel label panels. Off by default → engineer enables
+          for finalized prints; on by default for working drafts. */}
+      <hr style={{ margin: "1.5rem 0", border: 0, borderTop: "1px solid var(--border-soft)" }} />
+      <h3 style={{ marginTop: "1rem", marginBottom: "0.6rem", fontSize: 15 }}>Зургийн давхарга</h3>
+
+      <Field label="">
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={settings.showNodeNumbers !== false}
+            disabled={readOnly}
+            onChange={(e) => update({ showNodeNumbers: e.target.checked })}
+            data-testid="settings-show-node-numbers"
+          />
+          <span>
+            <strong>Цэгийн дугаарлалт</strong> — 01 / 02 / … гэсэн хөндлөн харьцуулалтын дугаар цэг бүрд харагдана
+          </span>
+        </label>
+      </Field>
+
+      <Field label="">
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={settings.showFlowArrows !== false}
+            disabled={readOnly}
+            onChange={(e) => update({ showFlowArrows: e.target.checked })}
+            data-testid="settings-show-flow-arrows"
+          />
+          <span>
+            <strong>Урсгалын сум</strong> — хоолой бүрийн дунд жижиг ших чиглэлийн сум харагдана
+          </span>
+        </label>
+      </Field>
+
+      <Field label="">
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={settings.showChannelLabels !== false}
+            disabled={readOnly}
+            onChange={(e) => update({ showChannelLabels: e.target.checked })}
+            data-testid="settings-show-channel-labels"
+          />
+          <span>
+            <strong>Сувгийн тайлбар</strong> — 3-мөртэй AutoCAD-стиль тайлбар суваг бүрд харагдана
+          </span>
+        </label>
+      </Field>
+
       {/* Phase 6.7.2 — Title block (Зургийн тамга) metadata.
           Engineer fills these once per project; they appear on the
           canvas preview and on the printed PDF. All optional —

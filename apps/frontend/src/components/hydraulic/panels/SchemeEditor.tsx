@@ -220,6 +220,16 @@ export function SchemeEditor({ readOnly }: Props) {
     toNodeId: string;
     length_m: number;
   } | null>(null);
+  // Phase 12.8b — channel label-panel drag-to-reposition. Captures
+  // the mouse-anchor + the channel's labelOffset at drag start; the
+  // global mousemove updates labelOffset = startOffset + (mouse - start).
+  // Mouseup writes the final offset via updateChannel + pushes a single
+  // undo snapshot.
+  const [channelLabelDrag, setChannelLabelDrag] = useState<{
+    channelId: string;
+    startMouse: Point;
+    startOffset: { dx: number; dy: number };
+  } | null>(null);
   const [polygon, setPolygon] = useState<Point[]>([]); // polyline being drawn
   const [pendingFootprint, setPendingFootprint] = useState<Point[] | null>(null);
   const [showPalette, setShowPalette] = useState<NodeCategory | null>(null);
@@ -1386,6 +1396,19 @@ export function SchemeEditor({ readOnly }: Props) {
           );
           updatePipe(bendPointDrag.pipeId, { bendPoints: newBendPoints });
         }
+      } else if (channelLabelDrag) {
+        // Phase 12.8b — drag channel label panel. New offset = start
+        // + (current - start mouse). No snap; engineer wants free
+        // positioning. The store push is a live updateChannel (no
+        // snapshot per frame); the SNAPSHOT happens on mouseup below.
+        const dx = pt.x - channelLabelDrag.startMouse.x;
+        const dy = pt.y - channelLabelDrag.startMouse.y;
+        updateChannel(channelLabelDrag.channelId, {
+          labelOffset: {
+            dx: channelLabelDrag.startOffset.dx + dx,
+            dy: channelLabelDrag.startOffset.dy + dy,
+          },
+        });
       }
     },
     [
@@ -1404,6 +1427,9 @@ export function SchemeEditor({ readOnly }: Props) {
       svgViewport,
       settings.northArrow,
       updateSettings,
+      // Phase 12.8b — channel label drag deps.
+      channelLabelDrag,
+      updateChannel,
     ],
   );
 
@@ -1437,6 +1463,14 @@ export function SchemeEditor({ readOnly }: Props) {
     setBendPointDrag(null);
     setMapPanDrag(null);
     setNorthArrowDrag(null);
+    // Phase 12.8b — finalize the channel-label drag. The labelOffset
+    // was already being updated live in onMouseMove; here we just
+    // push a single undo snapshot capturing the final state so Ctrl+Z
+    // returns the label to its pre-drag position in one step.
+    if (channelLabelDrag) {
+      pushUndoSnapshot("Сувгийн тайлбар зөөгдсөн", 1);
+      setChannelLabelDrag(null);
+    }
     // Phase 6.5.1 — Resolve rubber-band on mouseup: hit-test all
     // visible nodes + pipes, populate multiSelection.
     if (rubberBand) {
@@ -1497,7 +1531,7 @@ export function SchemeEditor({ readOnly }: Props) {
       });
       setRubberBand(null);
     }
-  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection]);
+  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection, channelLabelDrag]);
 
   const onWheel = useCallback((e: WheelEvent<SVGSVGElement>) => {
     if (Math.abs(e.deltaY) < 1) return;
@@ -3099,35 +3133,32 @@ export function SchemeEditor({ readOnly }: Props) {
                 AutoCAD-style 3-line callout (type + pipes + meta) at
                 engineer-positioned offset from the channel midpoint
                 with a thin leader line. Hidden when channel has
-                labelVisible=false. Project-wide visibility default is
-                ON (no settings flag wired yet — Phase 12.8 polish).
-                Channel-contained pipes are NOT individually rendered
-                (they're inside the channel polyline above), so labels
-                here are the only per-pipe metadata visible on plan. */}
-            {(channels ?? []).map((ch) => {
-              if (!isLabelVisible(ch, undefined)) return null;
+                labelVisible=false. Phase 12.8b wires the project-wide
+                ProjectSettings.showChannelLabels toggle. Phase 12.8b
+                also adds drag-to-reposition: mousedown on the label
+                background starts a drag that writes the new offset to
+                channel.labelOffset via updateChannel. */}
+            {settings.showChannelLabels !== false &&
+              (channels ?? []).map((ch) => {
+              if (!isLabelVisible(ch, settings.showChannelLabels)) return null;
               const label = buildChannelLabel(ch, nodes, pipes);
               if (!label) return null;
               const dims = labelDimensions(label);
               if (dims.width === 0) return null;
-              // Apply display-pos transforms to anchor for map mode.
-              // Channel anchor uses raw scheme-px (no per-channel geo),
-              // matching the channel render above.
               const ax = label.anchorX;
               const ay = label.anchorY;
               const lx = ax + label.offsetDx;
               const ly = ay + label.offsetDy;
-              // Slightly shift line endpoints so leader doesn't overlap text
               const lineEndX = lx > ax ? lx - 4 : lx + dims.width + 4;
               const lineEndY = ly > ay ? ly - 4 : ly + dims.height + 4;
               const lines = [label.typeLine, label.pipesLine, label.metaLine].filter(
                 (l) => l.length > 0,
               );
+              const isDragging = channelLabelDrag?.channelId === ch.id;
               return (
                 <g
                   key={`chlbl_${ch.id}`}
                   data-testid={`channel-label-${ch.id}`}
-                  pointerEvents="none"
                 >
                   {/* Leader line — channel midpoint → label box edge */}
                   <line
@@ -3138,22 +3169,31 @@ export function SchemeEditor({ readOnly }: Props) {
                     stroke="#555"
                     strokeWidth={0.75}
                     strokeDasharray="2 2"
+                    pointerEvents="none"
                   />
-                  {/* Tiny dot at the channel anchor (engineer cue:
-                      "this label belongs to this channel") */}
-                  <circle cx={ax} cy={ay} r={1.5} fill="#555" />
-                  {/* Label background — soft cream tone so it reads
-                      against both the channel and the map. */}
+                  <circle cx={ax} cy={ay} r={1.5} fill="#555" pointerEvents="none" />
+                  {/* Label background — draggable. Phase 12.8b. */}
                   <rect
                     x={lx}
                     y={ly}
                     width={dims.width}
                     height={dims.height}
-                    fill="#FFF8E1"
-                    stroke="#5B4F33"
-                    strokeWidth={0.6}
+                    fill={isDragging ? "#FFE9A6" : "#FFF8E1"}
+                    stroke={isDragging ? "var(--accent, #1f5faa)" : "#5B4F33"}
+                    strokeWidth={isDragging ? 1.2 : 0.6}
                     rx={3}
                     opacity={0.96}
+                    style={{ cursor: "move" }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      const pt = toSvg(e);
+                      setChannelLabelDrag({
+                        channelId: ch.id,
+                        startMouse: pt,
+                        startOffset: { dx: label.offsetDx, dy: label.offsetDy },
+                      });
+                    }}
+                    data-testid={`channel-label-bg-${ch.id}`}
                   />
                   {lines.map((line, i) => (
                     <text
@@ -3163,6 +3203,7 @@ export function SchemeEditor({ readOnly }: Props) {
                       fontSize={11}
                       fontWeight={i === 0 ? 700 : 400}
                       fill="#222"
+                      pointerEvents="none"
                     >
                       {line}
                     </text>
