@@ -109,7 +109,14 @@ export const auditLog = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    /** Phase 10.4 — project_id for the project-scoped Activity feed.
+     *  Nullable so global events (login, register, password.reset.*) can
+     *  still write without a project context. */
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
     action: varchar("action", { length: 60 }).notNull(),
+    /** Phase 10.4 — engineer-friendly entity tag (node / pipe / building / project). */
+    entityType: varchar("entity_type", { length: 20 }),
+    entityId: text("entity_id"),
     details: jsonb("details"),
     ip: varchar("ip", { length: 45 }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -118,6 +125,8 @@ export const auditLog = pgTable(
     userIdx: index("audit_user_idx").on(t.userId),
     actionIdx: index("audit_action_idx").on(t.action),
     createdIdx: index("audit_created_idx").on(t.createdAt),
+    /** Phase 10.4 — per-project activity feed query path. */
+    projectCreatedIdx: index("audit_project_created_idx").on(t.projectId, t.createdAt),
   }),
 );
 

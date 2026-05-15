@@ -48,6 +48,8 @@ const UddtPid = lazy(() => import("./panels/UddtPid").then((m) => ({ default: m.
 const ComplianceView = lazy(() => import("./panels/ComplianceView").then((m) => ({ default: m.ComplianceView })));
 // Phase 10.3 — Share dialog (create + revoke read-only links).
 const ShareDialog = lazy(() => import("./dialogs/ShareDialog").then((m) => ({ default: m.ShareDialog })));
+// Phase 10.4 — Activity feed (audit trail per project).
+const ActivityFeed = lazy(() => import("./panels/ActivityFeed").then((m) => ({ default: m.ActivityFeed })));
 
 interface Props {
   projectId?: string;
@@ -76,7 +78,9 @@ type Tab =
   | "pid"
   // Phase 9.1 — Compliance check (separate cluster: stands apart
   // from drawing details since it's project-wide verification).
-  | "compliance";
+  | "compliance"
+  // Phase 10.4 — Activity feed (per-project audit trail).
+  | "activity";
 
 export function HydraulicV5(props: Props) {
   return (
@@ -433,6 +437,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             engineer typically runs LAST before exporting Drawing Set. */}
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "compliance"} onClick={() => setTab("compliance")}>📋 Стандарт</TabBtn>
+        <TabBtn active={tab === "activity"} onClick={() => setTab("activity")}>📜 Үйл ажиллагаа</TabBtn>
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
 
@@ -565,6 +570,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "compensator" && <CompensatorDetail />}
             {tab === "pid" && <UddtPid />}
             {tab === "compliance" && <ComplianceView />}
+            {tab === "activity" && <ActivityFeed projectId={loadedId} />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
           </Suspense>
         </main>

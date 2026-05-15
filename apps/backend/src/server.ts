@@ -14,6 +14,8 @@ import { sharedRoutes } from "./routes/shared.js";
 import { healthRoutes } from "./routes/health.js";
 import { adminRoutes } from "./routes/admin.js";
 import { calcRoutes } from "./routes/calc.js";
+import { auditRoutes } from "./routes/audit.js";
+import { runAuditCleanup } from "./lib/auditCleanup.js";
 import { bootstrapAdmin } from "./db/seed-admin.js";
 
 export async function buildApp() {
@@ -69,6 +71,7 @@ export async function buildApp() {
       await api.register(sharedRoutes);
       await api.register(adminRoutes);
       await api.register(calcRoutes);
+      await api.register(auditRoutes);
     },
     { prefix: "/api" },
   );
@@ -102,6 +105,12 @@ async function main() {
     // loudly and continue so /api/health still responds.
     app.log.error({ err }, "[boot] admin bootstrap failed (continuing)");
   }
+
+  // Phase 10.4 — audit-log retention cleanup at startup (90-day window).
+  // Fire-and-forget so server boot isn't blocked by the cleanup query.
+  void runAuditCleanup().catch((err: unknown) => {
+    app.log.warn({ err }, "[boot] audit cleanup failed (non-fatal)");
+  });
 
   try {
     await app.listen({ port: env.PORT, host: "0.0.0.0" });
