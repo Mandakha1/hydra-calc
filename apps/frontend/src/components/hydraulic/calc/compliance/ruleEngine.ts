@@ -32,6 +32,7 @@ import type {
   HydraulicState,
   SchemeNode,
   SchemePipe,
+  SchemeChannel,
   ProjectSettings,
 } from "../../hydraulicTypes";
 
@@ -169,12 +170,17 @@ let nodesById: Map<string, SchemeNode> | null = null;
 let pipesById: Map<string, SchemePipe> | null = null;
 let pipeResultsById: Map<string, CalculationResults["pipes"][number]> | null = null;
 let nodeResultsById: Map<string, CalculationResults["nodes"][number]> | null = null;
+// Phase 12.12 — channel cache so channel-aware rules (БНбД 41-02-13 §6
+// clearance / insulation thickness) can do O(1) lookup.
+let channelsById: Map<string, SchemeChannel> | null = null;
 
 function primeHotCache(project: HydraulicState, calc: CalculationResults | undefined): void {
   nodesById = new Map();
   for (const n of project.nodes) nodesById.set(n.id, n);
   pipesById = new Map();
   for (const p of project.pipes) pipesById.set(p.id, p);
+  channelsById = new Map();
+  for (const c of project.channels ?? []) channelsById.set(c.id, c);
   if (calc) {
     pipeResultsById = new Map();
     for (const r of calc.pipes) pipeResultsById.set(r.pipeId, r);
@@ -189,6 +195,7 @@ function primeHotCache(project: HydraulicState, calc: CalculationResults | undef
 function clearHotCache(): void {
   nodesById = null;
   pipesById = null;
+  channelsById = null;
   pipeResultsById = null;
   nodeResultsById = null;
 }
@@ -298,6 +305,14 @@ export function findNode(project: HydraulicState, id: string): SchemeNode | null
 export function findPipe(project: HydraulicState, id: string): SchemePipe | null {
   if (pipesById) return pipesById.get(id) ?? null;
   return project.pipes.find((p) => p.id === id) ?? null;
+}
+
+/** Find a SchemeChannel by id. Phase 12.12 — uses the hot-path cache
+ *  when populated. Returns null when the project has no channels OR
+ *  the id is stale. */
+export function findChannel(project: HydraulicState, id: string): SchemeChannel | null {
+  if (channelsById) return channelsById.get(id) ?? null;
+  return (project.channels ?? []).find((c) => c.id === id) ?? null;
 }
 
 /** Whether a node kind belongs to the consumer family. */
