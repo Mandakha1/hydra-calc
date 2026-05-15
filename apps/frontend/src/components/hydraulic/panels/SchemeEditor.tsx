@@ -75,6 +75,9 @@ import {
   isLabelVisible,
   labelDimensions,
 } from "../scheme/channelLabelPanel";
+// Phase 12.8 — engineering cross-reference numbers + flow arrows.
+import { assignNodeNumbers, nodeNumberBadge } from "../scheme/nodeNumbering";
+import { buildAllArrows } from "../scheme/flowArrows";
 import {
   addConstructionLine,
   selectConstructionLine,
@@ -1790,6 +1793,20 @@ export function SchemeEditor({ readOnly }: Props) {
   );
   const violatingNodeIds = new Set(
     (violations ?? []).filter((v) => v.target.kind === "node").map((v) => v.target.id),
+  );
+
+  // Phase 12.8 — engineering cross-reference node numbers
+  // (Mongolian category order: source → fitting → consumer → chamber → …).
+  // Memoised because the underlying ordering only changes when nodes
+  // are added / removed / kind-changed, NOT on every render.
+  const nodeNumberMap = useMemo(() => assignNodeNumbers(nodes), [nodes]);
+  // Flow arrows — direction from solver results when available, else
+  // geometric. Channel-contained pipes skipped (handled by the channel
+  // polyline). Memoised on pipes + nodes + results to avoid re-walking
+  // the network on every cursor-move re-render.
+  const pipeArrows = useMemo(
+    () => buildAllArrows(pipes, nodes, results ? "computed" : "geometric", results),
+    [pipes, nodes, results],
   );
 
   // Live cursor info
@@ -3580,6 +3597,78 @@ export function SchemeEditor({ readOnly }: Props) {
                 </g>
               );
             })}
+
+            {/* Phase 12.8 — engineering cross-reference node-number
+                badges. Small dark capsule with the auto-assigned 1..N
+                sequence painted at upper-right of each node, providing
+                a stable index for title-block / report cross-reference.
+                Rendered as a separate loop so the existing node-render
+                block stays untouched. */}
+            {settings.showNodeNumbers !== false &&
+              nodes
+                .filter((n) => !n.footprint || n.footprint.length < 3)
+                .map((n) => {
+                  const num = nodeNumberMap.get(n.id);
+                  if (num == null) return null;
+                  const dp = displayPos(n);
+                  const badge = nodeNumberBadge(num);
+                  // Small offset up-right of the symbol so it doesn't
+                  // overlap the engineer-set label below.
+                  const bx = dp.x + 14;
+                  const by = dp.y - 14;
+                  return (
+                    <g key={`nn_${n.id}`} pointerEvents="none">
+                      <rect
+                        x={bx - 9}
+                        y={by - 8}
+                        width={18}
+                        height={14}
+                        rx={3}
+                        fill="#222"
+                        opacity={0.85}
+                      />
+                      <text
+                        x={bx}
+                        y={by + 3}
+                        textAnchor="middle"
+                        fontSize={9.5}
+                        fill="white"
+                        fontWeight={700}
+                      >
+                        {badge}
+                      </text>
+                    </g>
+                  );
+                })}
+
+            {/* Phase 12.8 — pipe flow-direction arrows. Small chevron
+                at each pipe midpoint pointing in the flow direction
+                (geometric from→to or solver-reversed when G_kg_s < 0).
+                Skipped for pipes inside a composite channel. */}
+            {settings.showFlowArrows !== false &&
+              pipeArrows.map((arrow) => (
+                <g key={`fa_${arrow.pipeId}`} pointerEvents="none">
+                  <line
+                    x1={arrow.tail1X}
+                    y1={arrow.tail1Y}
+                    x2={arrow.tipX}
+                    y2={arrow.tipY}
+                    stroke="#1F2937"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={arrow.tail2X}
+                    y1={arrow.tail2Y}
+                    x2={arrow.tipX}
+                    y2={arrow.tipY}
+                    stroke="#1F2937"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                  />
+                </g>
+              ))}
+
             {/* Phase 6.5.1 — rubber-band selection rectangle, drawn
                 inside the zoom/pan group so it tracks the underlying
                 coordinates. Translucent gold fill + dashed gold border. */}
