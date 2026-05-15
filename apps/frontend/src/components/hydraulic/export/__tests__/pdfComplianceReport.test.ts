@@ -103,9 +103,12 @@ describe("renderCompliancePage", () => {
 /* ─── Drawing Set integration ──────────────────────────────────── */
 
 describe("DEFAULT_DRAWING_SET_PAGES + drawingSetPageLabel — Phase 9.4", () => {
-  it("includes 'compliance' as the 7th default page", () => {
-    expect(DEFAULT_DRAWING_SET_PAGES).toHaveLength(7);
-    expect(DEFAULT_DRAWING_SET_PAGES[6]).toBe("compliance");
+  it("includes 'compliance' as the LAST default page", () => {
+    // Phase 12.6b added 'channel' before 'compliance', bumping the
+    // total from 7 → 8 pages. Compliance still needs to be the final
+    // sheet (engineer's audit closure).
+    expect(DEFAULT_DRAWING_SET_PAGES.length).toBeGreaterThanOrEqual(7);
+    expect(DEFAULT_DRAWING_SET_PAGES.at(-1)).toBe("compliance");
   });
 
   it("Mongolian label for 'compliance'", () => {

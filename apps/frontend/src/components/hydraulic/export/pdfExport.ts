@@ -43,6 +43,7 @@ import {
   renderWellPage,
   renderCompensatorPage,
   renderPidPage,
+  renderChannelCrossSectionPage,
   type PageArea,
 } from "./pdfDetailPages";
 import { renderCompliancePage } from "./pdfComplianceReport";
@@ -427,6 +428,8 @@ export type DrawingSetPage =
   | "well"
   | "compensator"
   | "pid"
+  // Phase 12.6b — composite-channel cross-section (Л-4 / Л-7 / Л-9).
+  | "channel"
   | "compliance";
 
 export const DEFAULT_DRAWING_SET_PAGES: DrawingSetPage[] = [
@@ -436,6 +439,7 @@ export const DEFAULT_DRAWING_SET_PAGES: DrawingSetPage[] = [
   "well",
   "compensator",
   "pid",
+  "channel",
   "compliance",
 ];
 
@@ -454,6 +458,8 @@ export function drawingSetPageLabel(page: DrawingSetPage): string {
       return "Компенсатор зүсэлт";
     case "pid":
       return "УДДТ — P&ID";
+    case "channel":
+      return "Сувгийн хөндлөн огтлол";
     case "compliance":
       return "Стандарт шалгалт";
   }
@@ -600,6 +606,8 @@ export async function exportDrawingSetPdf(inputs: DrawingSetPdfInputs): Promise<
       renderCompensatorPage(pdf, area as PageArea, state, selection ?? null);
     } else if (page === "pid") {
       renderPidPage(pdf, area as PageArea, state);
+    } else if (page === "channel") {
+      renderChannelCrossSectionPage(pdf, area as PageArea, state, selection ?? null);
     } else if (page === "compliance") {
       // Use the supplied compliance report or compute one on the fly.
       const report = complianceReport ?? runComplianceCheck(state, results, ALL_RULES);
