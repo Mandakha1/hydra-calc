@@ -45,6 +45,9 @@ import {
   renderPidPage,
   type PageArea,
 } from "./pdfDetailPages";
+import { renderCompliancePage } from "./pdfComplianceReport";
+import { runComplianceCheck, type ComplianceReport } from "../calc/compliance/ruleEngine";
+import { ALL_RULES } from "../calc/compliance/rules";
 import {
   DEFAULT_LAYERS,
   type LayerKey,
@@ -423,7 +426,8 @@ export type DrawingSetPage =
   | "energy"
   | "well"
   | "compensator"
-  | "pid";
+  | "pid"
+  | "compliance";
 
 export const DEFAULT_DRAWING_SET_PAGES: DrawingSetPage[] = [
   "plan",
@@ -432,6 +436,7 @@ export const DEFAULT_DRAWING_SET_PAGES: DrawingSetPage[] = [
   "well",
   "compensator",
   "pid",
+  "compliance",
 ];
 
 /** Engineer-facing label for a drawing-set page. */
@@ -449,6 +454,8 @@ export function drawingSetPageLabel(page: DrawingSetPage): string {
       return "Компенсатор зүсэлт";
     case "pid":
       return "УДДТ — P&ID";
+    case "compliance":
+      return "Стандарт шалгалт";
   }
 }
 
@@ -465,9 +472,16 @@ export interface DrawingSetPdfInputs extends PdfExportInputs {
    */
   selection?: { kind: string; id: string } | null;
   /**
-   * Pages to include in the bundle (defaults to all six). Useful for
-   * partial exports (e.g. just "plan + profile" for a quick review).
-   * `plan` is always anchored at position 1 if requested.
+   * Pre-computed compliance report. Phase 9.4 — when omitted, the
+   * Drawing Set will run `runComplianceCheck` automatically before
+   * rendering the Compliance page. Caller can supply a cached
+   * report (e.g. from the Compliance tab) to avoid re-running.
+   */
+  complianceReport?: ComplianceReport;
+  /**
+   * Pages to include in the bundle (defaults to all seven). Useful
+   * for partial exports (e.g. just "plan + profile" for a quick
+   * review). `plan` is always anchored at position 1 if requested.
    */
   includePages?: DrawingSetPage[];
 }
@@ -541,7 +555,7 @@ async function renderPlanPage(
 export async function exportDrawingSetPdf(inputs: DrawingSetPdfInputs): Promise<Blob> {
   const {
     state, settings, paperSize, orientation, scale, svgElement,
-    results, selection, includePages,
+    results, selection, complianceReport, includePages,
   } = inputs;
 
   const pages: DrawingSetPage[] = includePages && includePages.length > 0
@@ -586,6 +600,10 @@ export async function exportDrawingSetPdf(inputs: DrawingSetPdfInputs): Promise<
       renderCompensatorPage(pdf, area as PageArea, state, selection ?? null);
     } else if (page === "pid") {
       renderPidPage(pdf, area as PageArea, state);
+    } else if (page === "compliance") {
+      // Use the supplied compliance report or compute one on the fly.
+      const report = complianceReport ?? runComplianceCheck(state, results, ALL_RULES);
+      renderCompliancePage(pdf, area as PageArea, report);
     }
 
     // Overlay title block + (optional) scale bar + (optional) north arrow.
@@ -595,6 +613,7 @@ export async function exportDrawingSetPdf(inputs: DrawingSetPdfInputs): Promise<
       titleBlock: withSheetNumber(settings.titleBlock, i + 1, total),
     };
     renderTitleBlock(pdf, perPageSettings, scale, paperSize, orientation);
+    // Scale bar only on pages where scale is meaningful. Compliance + Energy + P&ID skip it.
     if (page === "plan" || page === "profile" || page === "well" || page === "compensator") {
       renderScaleBar(pdf, scale, paperSize, orientation);
     }

@@ -26,6 +26,48 @@ import {
   type RuleSeverity,
 } from "../calc/compliance/ruleEngine";
 import { ALL_RULES } from "../calc/compliance/rules";
+import type { ProjectSettings } from "../hydraulicTypes";
+
+/**
+ * Download a single-page Compliance Report PDF (compliance only, no
+ * Drawing Set bundle). Lazy-imports pdfExport so we don't pull jsPDF
+ * into the panel's initial chunk.
+ */
+async function downloadCompliancePdf(
+  report: ComplianceReport,
+  settings: ProjectSettings,
+): Promise<void> {
+  try {
+    const { exportDrawingSetPdf } = await import("../export/pdfExport");
+    const s = useHydraulicStore.getState();
+    const blob = await exportDrawingSetPdf({
+      state: s,
+      settings,
+      paperSize: settings.printPaperSize ?? "A3",
+      orientation: settings.printOrientation ?? "landscape",
+      scale: settings.printScale ?? "1:500",
+      svgElement: null,
+      complianceReport: report,
+      includePages: ["compliance"],
+    });
+    if (!blob || blob.size === 0) {
+      alert("PDF үүсгэж чадсангүй: гарсан файл хоосон байна.");
+      return;
+    }
+    const filename = "compliance-report.pdf";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 250);
+    alert(`PDF татагдлаа: ${filename}`);
+  } catch (e) {
+    alert(`PDF үүсгэж чадсангүй: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 type SeverityFilter = "all" | RuleSeverity;
 
@@ -167,6 +209,21 @@ export function ComplianceView() {
             </table>
           )}
 
+          {/* PDF download button — Phase 9.4 */}
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => downloadCompliancePdf(report, settings)}
+              style={primaryBtn}
+              data-testid="compliance-pdf-download"
+            >
+              📄 Энэ дүнг PDF-ээр татах
+            </button>
+            <span style={{ fontSize: 11, color: "var(--fg-muted, #888)", alignSelf: "center" }}>
+              эсвэл бүх Drawing Set-руу 7-р хуудас болгон оруулна — 📚 Drawing Set товч
+            </span>
+          </div>
+
           {/* Footer */}
           <footer style={footerStyle}>
             <div style={{ fontSize: 11, color: "var(--fg-muted, #888)" }}>
@@ -175,10 +232,6 @@ export function ComplianceView() {
             </div>
             <div style={{ fontSize: 11, color: "var(--fg-muted, #888)", marginTop: 4 }}>
               Стандартууд: БНбД 41-02-13 · БНбД 41-01-2019 · СП 124.13330.2012 · ГОСТ 8732
-            </div>
-            <div style={{ fontSize: 11, color: "var(--fg-muted, #888)", marginTop: 4 }}>
-              📄 Compliance Report PDF — Drawing Set-ийн 7-р хуудас (Phase 9.4-руу нэмэгдэнэ){" "}
-              {/* Placeholder — wired in Phase 9.4 */}
             </div>
           </footer>
 
