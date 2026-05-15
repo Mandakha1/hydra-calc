@@ -676,12 +676,385 @@ const pipeMaterialConsistent: Rule = {
   },
 };
 
+/* ───────────────────────────────────────────────────────────────────
+   PHASE 9.3 — Geometric + project metadata rules (rules 21-30)
+   ─────────────────────────────────────────────────────────────────── */
+
+const FIXED_SUPPORT_SPACING_MAX_M = 50;     // straight-run support spacing
+const COMPENSATOR_SPACING_MAX_M = 80;       // thermal expansion compensator
+const CONSUMER_DISTANCE_MAX_M = 1000;       // far-consumer warning
+const POINT_OVERLAP_TOL_PX = 1;             // overlap detection tolerance
+
+function isFixedSupportKind(kind: string): boolean {
+  return kind === "fixed_support" || kind.startsWith("fixed_support_");
+}
+function isCompensatorKind(kind: string): boolean {
+  return kind === "compensator" || kind.startsWith("compensator_");
+}
+function isWellKind(kind: string): boolean {
+  return kind === "well_supply" || kind === "well_drain" || kind === "chamber";
+}
+
+/** Build adjacency: nodeId → array of pipe ids touching that node. */
+function buildAdjacency(pipes: ReadonlyArray<{ id: string; fromNodeId: string; toNodeId: string }>): Map<string, string[]> {
+  const adj = new Map<string, string[]>();
+  for (const p of pipes) {
+    adj.set(p.fromNodeId, [...(adj.get(p.fromNodeId) ?? []), p.id]);
+    adj.set(p.toNodeId, [...(adj.get(p.toNodeId) ?? []), p.id]);
+  }
+  return adj;
+}
+
+/** Cumulative path length from a source via BFS (shortest path
+ *  in number-of-pipes terms, weighted by pipe.length_m). */
+function shortestPathLength_m(
+  fromId: string,
+  toId: string,
+  pipes: ReadonlyArray<{ fromNodeId: string; toNodeId: string; length_m: number }>,
+): number | null {
+  if (fromId === toId) return 0;
+  // Dijkstra-like BFS (uniform-cost on length_m).
+  const adj = new Map<string, Array<{ to: string; len: number }>>();
+  for (const p of pipes) {
+    adj.set(p.fromNodeId, [...(adj.get(p.fromNodeId) ?? []), { to: p.toNodeId, len: p.length_m }]);
+    adj.set(p.toNodeId, [...(adj.get(p.toNodeId) ?? []), { to: p.fromNodeId, len: p.length_m }]);
+  }
+  const dist = new Map<string, number>([[fromId, 0]]);
+  const queue: string[] = [fromId];
+  while (queue.length > 0) {
+    // Pick the node with min dist
+    queue.sort((a, b) => (dist.get(a) ?? Infinity) - (dist.get(b) ?? Infinity));
+    const cur = queue.shift()!;
+    const curDist = dist.get(cur) ?? Infinity;
+    for (const edge of adj.get(cur) ?? []) {
+      const next = curDist + edge.len;
+      if (next < (dist.get(edge.to) ?? Infinity)) {
+        dist.set(edge.to, next);
+        queue.push(edge.to);
+      }
+    }
+  }
+  return dist.get(toId) ?? null;
+}
+
+/* ─── Rule 21: fixed_support_spacing_max ──────────────────────── */
+
+const fixedSupportSpacingMax: Rule = {
+  id: "fixed_support_spacing_max",
+  category: "geometry",
+  severity: "warn",
+  name: "Тогтмол тулгуурын зай",
+  description: "Бэхэлгээ хоорондын зай 30-50 м-ээс хэтрэхгүй (БНбД 41-02-13 §8.4).",
+  standardRef: "БНбД 41-02-13 §8.4",
+  check(project) {
+    const supportIds = new Set(project.nodes.filter((n) => isFixedSupportKind(n.kind)).map((n) => n.id));
+    if (supportIds.size === 0 && project.pipes.length > 0) {
+      // No supports at all — surface a single project-level warning.
+      const totalLen = project.pipes.reduce((s, p) => s + p.length_m, 0);
+      if (totalLen > FIXED_SUPPORT_SPACING_MAX_M) {
+        return [{
+          ruleId: "fixed_support_spacing_max",
+          severity: "warn",
+          message: `Сүлжээнд тогтмол тулгуур (fixed_support) байхгүй, нийт ${totalLen.toFixed(0)} м хоолой`,
+          entityType: "project",
+          fixHint: "Уртын ≥ 50 м-ийн интервалд тогтмол тулгуур нэмнэ",
+        }];
+      }
+    }
+    // Find straight runs without supports — flag pipes > 50m without a support endpoint.
+    const out: RuleResult[] = [];
+    for (const pipe of project.pipes) {
+      if (pipe.length_m <= FIXED_SUPPORT_SPACING_MAX_M) continue;
+      const hasSupport = supportIds.has(pipe.fromNodeId) || supportIds.has(pipe.toNodeId);
+      if (!hasSupport) {
+        out.push({
+          ruleId: "fixed_support_spacing_max",
+          severity: "warn",
+          message: `Хоолой L = ${pipe.length_m.toFixed(0)} м > ${FIXED_SUPPORT_SPACING_MAX_M} м, тулгуургүй`,
+          entityType: "pipe",
+          entityId: pipe.id,
+          fixHint: "Шугамын дунд тогтмол тулгуур (fixed_support_steel) тавих",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Rule 22: compensator_spacing_required ───────────────────── */
+
+const compensatorSpacingRequired: Rule = {
+  id: "compensator_spacing_required",
+  category: "geometry",
+  severity: "error",
+  name: "Компенсатор зайтай",
+  description: "Дулааны уртасгалт хариуцах компенсатор 60-80 м тутамд шаардлагатай.",
+  standardRef: "СП 124.13330 §11.3 + БНбД 41-02-13",
+  check(project) {
+    const compensatorIds = new Set(project.nodes.filter((n) => isCompensatorKind(n.kind)).map((n) => n.id));
+    const out: RuleResult[] = [];
+    for (const pipe of project.pipes) {
+      if (pipe.length_m <= COMPENSATOR_SPACING_MAX_M) continue;
+      const hasComp = compensatorIds.has(pipe.fromNodeId) || compensatorIds.has(pipe.toNodeId);
+      if (!hasComp) {
+        out.push({
+          ruleId: "compensator_spacing_required",
+          severity: "error",
+          message: `Хоолой L = ${pipe.length_m.toFixed(0)} м > ${COMPENSATOR_SPACING_MAX_M} м, компенсаторгүй`,
+          entityType: "pipe",
+          entityId: pipe.id,
+          fixHint: "U-bend (compensator_u) эсвэл сильфон (compensator_bellow) нэмэх",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Rule 23: well_at_branches ───────────────────────────────── */
+
+const wellAtBranches: Rule = {
+  id: "well_at_branches",
+  category: "geometry",
+  severity: "warn",
+  name: "Салбарлалт дээр худаг",
+  description: "T-холболтод (3+ хоолой нийлэх) худаг буюу камер байх ёстой — засвар үйлчилгээ.",
+  standardRef: "БНбД 41-02-13 §6.4",
+  check(project) {
+    const adj = buildAdjacency(project.pipes);
+    const out: RuleResult[] = [];
+    for (const node of project.nodes) {
+      const pipeCount = adj.get(node.id)?.length ?? 0;
+      if (pipeCount < 3) continue;
+      // T-junction or higher
+      if (!isWellKind(node.kind)) {
+        out.push({
+          ruleId: "well_at_branches",
+          severity: "warn",
+          message: `"${node.label}" (${pipeCount} хоолой нийлэх) худаг биш`,
+          entityType: "node",
+          entityId: node.id,
+          fixHint: "Зангилаа төрөл болон 'well_supply' эсвэл 'chamber' болгох",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Rule 24: building_footprint_metadata ────────────────────── */
+
+const buildingFootprintMetadata: Rule = {
+  id: "building_footprint_metadata",
+  category: "project",
+  severity: "info",
+  name: "Барилгын мэдээлэл",
+  description: "Барилга тус бүр давхрын тоо + дулааны ачаалал бүртгэсэн байх ёстой.",
+  standardRef: "ГОСТ 21.501 + Mongolian convention",
+  check(project) {
+    const out: RuleResult[] = [];
+    for (const b of project.buildings ?? []) {
+      const missing: string[] = [];
+      if (typeof b.floors !== "number" || b.floors <= 0) missing.push("давхар");
+      if (typeof b.heatLoad_kw !== "number" || b.heatLoad_kw <= 0) missing.push("ачаалал");
+      if (missing.length > 0) {
+        out.push({
+          ruleId: "building_footprint_metadata",
+          severity: "info",
+          message: `"${b.label ?? b.id}" дутуу: ${missing.join(", ")}`,
+          entityType: "building",
+          entityId: b.id,
+          fixHint: "Inspector панелаас давхар + heatLoad_kw оруулах",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Rule 25: consumer_distance_to_source_max ────────────────── */
+
+const consumerDistanceToSourceMax: Rule = {
+  id: "consumer_distance_to_source_max",
+  category: "geometry",
+  severity: "info",
+  name: "Хол хэрэглэгч",
+  description: "Эх үүсвэрээс 1000 м-ээс хол хэрэглэгч — урт салаа болон илүү дулаан алдагдал.",
+  standardRef: "Engineering convention",
+  check(project) {
+    const sources = project.nodes.filter((n) => isSourceKind(n.kind));
+    if (sources.length === 0) return []; // already flagged by source_node_exists
+    const consumers = project.nodes.filter((n) => isConsumerKind(n.kind));
+    const out: RuleResult[] = [];
+    for (const consumer of consumers) {
+      // Find shortest distance to ANY source
+      let minDist = Infinity;
+      for (const src of sources) {
+        const d = shortestPathLength_m(src.id, consumer.id, project.pipes);
+        if (d !== null && d < minDist) minDist = d;
+      }
+      if (minDist > CONSUMER_DISTANCE_MAX_M && minDist < Infinity) {
+        out.push({
+          ruleId: "consumer_distance_to_source_max",
+          severity: "info",
+          message: `"${consumer.label}" → эх үүсвэр зай = ${minDist.toFixed(0)} м > ${CONSUMER_DISTANCE_MAX_M} м`,
+          entityType: "node",
+          entityId: consumer.id,
+          fixHint: "Ойролцоо дунд UDDT эсвэл шинэ эх үүсвэр төлөвлөх",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Rule 26: pipe_overlap ───────────────────────────────────── */
+
+const pipeOverlap: Rule = {
+  id: "pipe_overlap",
+  category: "geometry",
+  severity: "error",
+  name: "Хоолой давхцал",
+  description: "Хоёр хоолой яг ижил геометрэй байх ёсгүй — давхцалт зурах алдаа.",
+  standardRef: "Engineering convention",
+  check(project) {
+    const out: RuleResult[] = [];
+    const seen = new Map<string, string>();
+    for (const pipe of project.pipes) {
+      // Canonical key: sorted endpoint ids (treat undirected duplicates).
+      const a = pipe.fromNodeId < pipe.toNodeId ? pipe.fromNodeId : pipe.toNodeId;
+      const b = pipe.fromNodeId < pipe.toNodeId ? pipe.toNodeId : pipe.fromNodeId;
+      const key = `${a}|${b}`;
+      const prev = seen.get(key);
+      if (prev) {
+        out.push({
+          ruleId: "pipe_overlap",
+          severity: "error",
+          message: `Хоолой "${pipe.id}" нь "${prev}" -тэй ижил холболттой`,
+          entityType: "pipe",
+          entityId: pipe.id,
+          fixHint: "Давхцсан хоолойг устгах эсвэл нэгтгэх",
+        });
+      } else {
+        seen.set(key, pipe.id);
+      }
+    }
+    void POINT_OVERLAP_TOL_PX;
+    return out;
+  },
+};
+
+/* ─── Rule 27: dimension_orphan ──────────────────────────────── */
+
+const dimensionOrphan: Rule = {
+  id: "dimension_orphan",
+  category: "geometry",
+  severity: "info",
+  name: "Хэмжээ зураасны өнчингөл",
+  description: "Устгагдсан зангилаатай холбоотой хэмжээ зураас.",
+  standardRef: "Phase 6.6.1 orphan-state cleanup",
+  check(project) {
+    const out: RuleResult[] = [];
+    const nodeIds = new Set(project.nodes.map((n) => n.id));
+    for (const d of project.dimensions ?? []) {
+      const fromMissing = !nodeIds.has(d.fromNodeId);
+      const toMissing = !nodeIds.has(d.toNodeId);
+      if (fromMissing || toMissing) {
+        out.push({
+          ruleId: "dimension_orphan",
+          severity: "info",
+          message: `Хэмжээ "${d.id}" өнчин зангилаа лавлаж байна`,
+          entityType: "project",
+          fixHint: "Хэмжээг устгах эсвэл хэмжих зангилаа дахин зурах",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Rule 28: project_metadata_complete ──────────────────────── */
+
+const projectMetadataComplete: Rule = {
+  id: "project_metadata_complete",
+  category: "project",
+  severity: "warn",
+  name: "Төслийн мэдээлэл бүрэн",
+  description: "Зургийн тамга дахь Engineer / Checker / Company талбарууд бөглөгдсөн байна.",
+  standardRef: "ГОСТ 21.501 + Mongolian convention",
+  check(project) {
+    const tb = project.settings.titleBlock;
+    const missing: string[] = [];
+    if (!tb?.engineer?.trim()) missing.push("Зурсан");
+    if (!tb?.checker?.trim()) missing.push("Шалгасан");
+    if (!tb?.company?.trim()) missing.push("Фирм");
+    if (missing.length > 0) {
+      return [{
+        ruleId: "project_metadata_complete",
+        severity: "warn",
+        message: `Зургийн тамга дутуу: ${missing.join(", ")}`,
+        entityType: "project",
+        fixHint: "Тохиргоо таб → Зургийн тамга бүх талбарыг бөглөх",
+      }];
+    }
+    return [];
+  },
+};
+
+/* ─── Rule 29: project_scale_set ──────────────────────────────── */
+
+const projectScaleSet: Rule = {
+  id: "project_scale_set",
+  category: "project",
+  severity: "info",
+  name: "Зургийн масштаб",
+  description: "Printable scale тодорхой томъёологдсон байх (1:200, 1:500, 1:1000, 1:2000).",
+  standardRef: "ГОСТ 21.501 + Mongolian convention",
+  check(project) {
+    if (!project.settings.printScale) {
+      return [{
+        ruleId: "project_scale_set",
+        severity: "info",
+        message: "Зургийн масштаб (printScale) тохируулагдаагүй",
+        entityType: "project",
+        fixHint: "Тохиргоо таб → 1:500 эсвэл өөр стандарт масштаб сонгох",
+      }];
+    }
+    return [];
+  },
+};
+
+/* ─── Rule 30: project_paper_set ──────────────────────────────── */
+
+const projectPaperSet: Rule = {
+  id: "project_paper_set",
+  category: "project",
+  severity: "info",
+  name: "Цаасны хэмжээ + чиглэл",
+  description: "PaperSize + orientation бүртгэгдсэн байх ёстой — Drawing Set-руу зайлшгүй.",
+  standardRef: "ГОСТ 21.501",
+  check(project) {
+    const missing: string[] = [];
+    if (!project.settings.printPaperSize) missing.push("paperSize");
+    if (!project.settings.printOrientation) missing.push("orientation");
+    if (missing.length > 0) {
+      return [{
+        ruleId: "project_paper_set",
+        severity: "info",
+        message: `Цаас тохиргоо дутуу: ${missing.join(" + ")}`,
+        entityType: "project",
+        fixHint: "Тохиргоо таб → A3 / A4 + landscape / portrait сонгох",
+      }];
+    }
+    return [];
+  },
+};
+
 /* ─── Registry export ─────────────────────────────────────────── */
 
 /**
- * Phase 9.1 + 9.2 — 20 rules. Phase 9.3 appends 10 more.
- * Order doesn't affect behaviour (the engine sorts by severity), but
- * it's grouped by category for readability.
+ * Phase 9.1 + 9.2 + 9.3 — 30 rules. Grouped by category for
+ * readability; the engine sorts by severity at runtime.
  */
 export const ALL_RULES: ReadonlyArray<Rule> = [
   // Hydraulics — supply/return velocity + Re + balance + length + DN flow
@@ -702,6 +1075,12 @@ export const ALL_RULES: ReadonlyArray<Rule> = [
   heatLossPerMeterMax,      // Phase 9.2
   // Geometry
   pipeLengthMaxBranch,      // Phase 9.2
+  fixedSupportSpacingMax,   // Phase 9.3
+  compensatorSpacingRequired, // Phase 9.3
+  wellAtBranches,           // Phase 9.3
+  consumerDistanceToSourceMax, // Phase 9.3
+  pipeOverlap,              // Phase 9.3
+  dimensionOrphan,          // Phase 9.3
   // Materials
   pipeDnMinimum,
   insulationThicknessMin,   // Phase 9.2
@@ -709,6 +1088,10 @@ export const ALL_RULES: ReadonlyArray<Rule> = [
   // Project
   sourceNodeExists,
   consumerNodeExists,
+  buildingFootprintMetadata, // Phase 9.3
+  projectMetadataComplete,  // Phase 9.3
+  projectScaleSet,          // Phase 9.3
+  projectPaperSet,          // Phase 9.3
 ];
 
 /** Constants re-exported for tests + future rule implementations. */
