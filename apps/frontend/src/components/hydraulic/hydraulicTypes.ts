@@ -443,6 +443,11 @@ export interface ProjectSettings {
    *  preference. Set to true to enable continuous placement (Phase
    *  6.x default behaviour). */
   continuousPlacement?: boolean;
+  /** Phase 12.2 — when true, every drawn pipe shows a persistent
+   *  midpoint length label on the canvas (toggled via 'D' shortcut).
+   *  Default true. The live HUD next to the cursor shows during
+   *  active drawing regardless of this setting. */
+  showLiveDimensions?: boolean;
 
   /* ===== Map / OSM background (Phase 5B.1) ===== */
   /** Tile-layer provider key (from MAP_PROVIDERS). Persisted so each

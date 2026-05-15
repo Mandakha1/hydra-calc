@@ -32,6 +32,8 @@ import {
 import { BuildingDialog } from "./BuildingDialog";
 import { MapBackground, MapControls } from "./MapBackground";
 import { AddressSearch } from "./AddressSearch";
+import { DrawingHud } from "../scheme/DrawingHud";
+import { formatLength } from "../scheme/dimensionFormat";
 import {
   computeSymbolRadiusPx,
   computePipeStrokeWidthPx,
@@ -167,6 +169,10 @@ export function SchemeEditor({ readOnly }: Props) {
   const [zoom, setZoom] = useState(1);
   const [drag, setDrag] = useState<{ nodeId: string; offX: number; offY: number } | null>(null);
   const [mousePos, setMousePos] = useState<Point | null>(null);
+  /** Phase 12.2 — viewport-space cursor position (clientX / clientY)
+   *  for the floating DrawingHud overlay, which positions itself in
+   *  fixed-coords (not scheme-space). */
+  const [mouseViewport, setMouseViewport] = useState<{ x: number; y: number } | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [snapGrid, setSnapGrid] = useState(true);
   const [showMap, setShowMap] = useState(false);
@@ -1198,6 +1204,9 @@ export function SchemeEditor({ readOnly }: Props) {
     (e: MouseEvent<SVGSVGElement>) => {
       const pt = toSvg(e);
       setMousePos(pt);
+      // Phase 12.2 — also track raw viewport-pixel cursor for the
+      // DrawingHud floating overlay.
+      setMouseViewport({ x: e.clientX, y: e.clientY });
       // Phase 6.7.3 — north-arrow drag. Position is in VIEWPORT
       // coords (the arrow lives outside the pan/zoom group) so we
       // don't pass through `toSvg`. Clamp so the marker can't be
@@ -1633,6 +1642,11 @@ export function SchemeEditor({ readOnly }: Props) {
         setShowGrid((g) => !g);
       } else if (e.key === "s" || e.key === "S") {
         setSnapGrid((s) => !s);
+      } else if (e.key === "d" || e.key === "D") {
+        // Phase 12.2 — toggle persistent dimension labels on all pipes
+        // (the live HUD next to cursor shows during draw regardless).
+        const current = useHydraulicStore.getState().settings.showLiveDimensions ?? true;
+        updateSettings({ showLiveDimensions: !current });
       } else if (e.key === "m" || e.key === "M") {
         setShowMap((m) => !m);
       } else if (e.key === "v" || e.key === "V") {
@@ -2944,9 +2958,14 @@ export function SchemeEditor({ readOnly }: Props) {
                       }}
                     />
                   ))}
-                  <text x={mp.x} y={mp.y - 8} fontSize="11" fontFamily="var(--font-mono)" fill={isBad ? "var(--danger)" : "var(--fg-muted)"} textAnchor="middle" pointerEvents="none">
-                    DN{p.dn} · {p.length_m}м
-                  </text>
+                  {/* Phase 12.2 — persistent dimension label toggleable
+                      via 'D' shortcut. Default true; engineers who want
+                      a cleaner canvas (large districts) press D to hide. */}
+                  {(settings.showLiveDimensions ?? true) && (
+                    <text x={mp.x} y={mp.y - 8} fontSize="11" fontFamily="var(--font-mono)" fill={isBad ? "var(--danger)" : "var(--fg-muted)"} textAnchor="middle" pointerEvents="none">
+                      DN{p.dn} · {formatLength(p.length_m)}
+                    </text>
+                  )}
                   {r && (
                     <text x={mp.x} y={mp.y + 14} fontSize="10" fontFamily="var(--font-mono)" fill="var(--fg-dim)" textAnchor="middle" pointerEvents="none">
                       v={r.v_m_s.toFixed(2)} · R={r.headlossPerMeter_pa.toFixed(0)}
@@ -2972,7 +2991,7 @@ export function SchemeEditor({ readOnly }: Props) {
                 <>
                   <path d={pathD} stroke={circuit.color} strokeWidth={3} fill="none" strokeDasharray="6 4" opacity="0.65" strokeLinecap="round" strokeLinejoin="round" />
                   <text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 12} fontSize="12" fontFamily="var(--font-mono)" fill="var(--accent)" textAnchor="middle" fontWeight="600">
-                    {livePipeInfo.len_m.toFixed(2)}м · {livePipeInfo.ang.toFixed(0)}°
+                    {formatLength(livePipeInfo.len_m)} · {livePipeInfo.ang.toFixed(1)}°
                   </text>
                 </>
               );
@@ -3341,6 +3360,33 @@ export function SchemeEditor({ readOnly }: Props) {
           );
         })()}
       </svg>
+
+      {/* Phase 12.2 — Live AutoCAD-style dimension HUD. Renders as a
+          floating DOM overlay (NOT in SVG) so it can position with
+          edge-aware fixed coords. Active during pipe draw + building
+          polygon + measurement modes when cursor is over canvas. */}
+      {mouseViewport && livePipeInfo && mode === "addPipe" && (
+        <DrawingHud
+          cursorViewport={mouseViewport}
+          viewport={{ width: window.innerWidth, height: window.innerHeight }}
+          distance_m={livePipeInfo.len_m}
+          angleRad={(livePipeInfo.ang * Math.PI) / 180}
+          modeLabel="Хоолой зурж байна"
+        />
+      )}
+      {mouseViewport && liveBuildingInfo && mode === "drawBuilding" && (
+        <DrawingHud
+          cursorViewport={mouseViewport}
+          viewport={{ width: window.innerWidth, height: window.innerHeight }}
+          distance_m={liveBuildingInfo.len_m}
+          angleRad={(() => {
+            const last = polygon[polygon.length - 1]!;
+            const to = liveBuildingInfo.to;
+            return Math.atan2(to.y - last.y, to.x - last.x);
+          })()}
+          modeLabel={`Барилга зурж байна (${polygon.length} цэг)`}
+        />
+      )}
 
       {/* Phase 6.5 batch-ops toolbar — rotate / mirror / array. Mounted
           top-centre, above the existing top toolbar. Buttons disable
