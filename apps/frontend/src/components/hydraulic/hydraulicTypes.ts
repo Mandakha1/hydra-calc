@@ -209,8 +209,28 @@ export interface SchemePipe {
   insulationKey?: string;
   /** Insulation thickness (mm). */
   insulationThickness_mm?: number;
-  /** Polyline waypoints — intermediate vertices for right-angle bends. */
+  /** Polyline waypoints — intermediate vertices for right-angle bends.
+   *  Phase 6 legacy. Phase 12.3 introduces `bendPoints` with richer
+   *  lat/lon support; renderer prefers bendPoints when set, falls back
+   *  to waypoints for legacy projects. */
   waypoints?: Array<{ x: number; y: number }>;
+  /** Phase 12.3 — intermediate bend points between from/to nodes.
+   *  Each point carries scheme-px coords + optional lat/lon for map-
+   *  tracking (just like SchemeBuilding.polygon vertices). When empty
+   *  or undefined, pipe renders as a single straight segment from
+   *  fromNode → toNode (existing behaviour). When set, pipe renders
+   *  as a polyline through these points.
+   *
+   *  Geometry-only: length_m on SchemePipe remains AUTHORITATIVE for
+   *  hydraulics. Drift between geometry-length and length_m surfaces
+   *  as an Inspector advisory when > 5%. */
+  bendPoints?: Array<{ x: number; y: number; lat?: number; lon?: number }>;
+  /** Phase 12.3 — angle constraint during drawing / dragging.
+   *  'free' (default) — any angle, no snap
+   *  'snap_45' — snaps to 0/45/90/135/180° increments
+   *  'snap_90' — snaps to 0/90/180/270° only
+   *  Shift key during drag temporarily activates snap_45 regardless. */
+  anglePolicy?: "free" | "snap_45" | "snap_90";
 
   /* ============== ZULU-COMPATIBLE PIPE FIELDS ============== */
   /** Zulu (_uch.Dpod): supply line diameter in mm — separate from return. */
