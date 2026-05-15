@@ -207,6 +207,10 @@ export function SchemeEditor({ readOnly }: Props) {
   } | null>(null);
   /** Pipe waypoint drag state — index identifies which middle point is being moved. */
   const [waypointDrag, setWaypointDrag] = useState<{ pipeId: string; index: number } | null>(null);
+  /** Phase 12.3 — bend-point drag handle. Engineer-clicked bend point
+   *  follows cursor until mouseup. Separate from waypointDrag because
+   *  bendPoints uses the new richer field with lat/lon support. */
+  const [bendPointDrag, setBendPointDrag] = useState<{ pipeId: string; index: number } | null>(null);
   /** Hide the side toolbar + top mini toolbar for distraction-free drawing. */
   const [hideUi, setHideUi] = useState(false);
   /** Measure tool: list of points clicked to form a polyline whose total length is shown live. */
@@ -1271,6 +1275,23 @@ export function SchemeEditor({ readOnly }: Props) {
           );
           updatePipe(waypointDrag.pipeId, { waypoints: newWaypoints });
         }
+      } else if (bendPointDrag) {
+        // Phase 12.3 — drag bend point handle
+        const snapped = snap(pt);
+        const pipe = pipes.find((p) => p.id === bendPointDrag.pipeId);
+        if (pipe?.bendPoints) {
+          const newBendPoints = pipe.bendPoints.map((bp, i) =>
+            i === bendPointDrag.index
+              ? {
+                  x: Math.round(snapped.x),
+                  y: Math.round(snapped.y),
+                  // Preserve lat/lon if map is on and point has them
+                  ...(showMap ? (svgToLatLon(snapped) ?? {}) : {}),
+                }
+              : bp,
+          );
+          updatePipe(bendPointDrag.pipeId, { bendPoints: newBendPoints });
+        }
       }
     },
     [
@@ -1319,6 +1340,7 @@ export function SchemeEditor({ readOnly }: Props) {
   const onMouseUp = useCallback(() => {
     setDrag(null);
     setWaypointDrag(null);
+    setBendPointDrag(null);
     setMapPanDrag(null);
     setNorthArrowDrag(null);
     // Phase 6.5.1 — Resolve rubber-band on mouseup: hit-test all
@@ -2867,8 +2889,14 @@ export function SchemeEditor({ readOnly }: Props) {
               const sw = isSelected ? sw_base + 1.5 : sw_base;
 
               const points: Point[] = [{ x: aPos.x, y: aPos.y }];
-              if (p.waypoints?.length) points.push(...p.waypoints);
-              else if (angleMode === "ortho90" && Math.abs(aPos.x - bPos.x) > 1 && Math.abs(aPos.y - bPos.y) > 1) {
+              // Phase 12.3 — prefer bendPoints (richer with lat/lon)
+              // over legacy waypoints. Both fields supported for back-
+              // ward compat with Phase 6 projects.
+              if (p.bendPoints?.length) {
+                for (const bp of p.bendPoints) points.push({ x: bp.x, y: bp.y });
+              } else if (p.waypoints?.length) {
+                points.push(...p.waypoints);
+              } else if (angleMode === "ortho90" && Math.abs(aPos.x - bPos.x) > 1 && Math.abs(aPos.y - bPos.y) > 1) {
                 points.push({ x: bPos.x, y: aPos.y });
               }
               points.push({ x: bPos.x, y: bPos.y });
@@ -2955,6 +2983,29 @@ export function SchemeEditor({ readOnly }: Props) {
                       onMouseDown={(e) => {
                         e.stopPropagation();
                         setWaypointDrag({ pipeId: p.id, index: i });
+                      }}
+                    />
+                  ))}
+                  {/* Phase 12.3 — bend point handles. Rendered when pipe
+                      is selected. Drag to reposition; right-click on
+                      handle deletes (wired in 12.4 context menu). For
+                      now MVP: just visible markers, full drag handler
+                      to follow once context menu lands. */}
+                  {isSelected && p.bendPoints?.map((bp, i) => (
+                    <circle
+                      key={`bp-${p.id}-${i}`}
+                      cx={bp.x}
+                      cy={bp.y}
+                      r={5}
+                      fill="var(--accent, #1f5faa)"
+                      stroke="var(--bg, white)"
+                      strokeWidth={2}
+                      data-testid={`bend-point-${p.id}-${i}`}
+                      data-bend-index={i}
+                      style={{ cursor: "move" }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        setBendPointDrag({ pipeId: p.id, index: i });
                       }}
                     />
                   ))}
