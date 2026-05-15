@@ -13,6 +13,7 @@ import { projectsRoutes } from "./routes/projects.js";
 import { sharedRoutes } from "./routes/shared.js";
 import { healthRoutes } from "./routes/health.js";
 import { adminRoutes } from "./routes/admin.js";
+import { calcRoutes } from "./routes/calc.js";
 import { bootstrapAdmin } from "./db/seed-admin.js";
 
 export async function buildApp() {
@@ -67,6 +68,7 @@ export async function buildApp() {
       await api.register(projectsRoutes);
       await api.register(sharedRoutes);
       await api.register(adminRoutes);
+      await api.register(calcRoutes);
     },
     { prefix: "/api" },
   );
