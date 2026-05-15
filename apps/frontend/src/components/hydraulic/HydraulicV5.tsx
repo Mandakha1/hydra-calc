@@ -42,6 +42,8 @@ const EnergySchemes = lazy(() => import("./panels/EnergySchemes").then((m) => ({
 const WellDetail = lazy(() => import("./panels/WellDetail").then((m) => ({ default: m.WellDetail })));
 // Phase 8.4 — Compensator detail.
 const CompensatorDetail = lazy(() => import("./panels/CompensatorDetail").then((m) => ({ default: m.CompensatorDetail })));
+// Phase 12.6 — Composite channel cross-section detail.
+const ChannelDetail = lazy(() => import("./panels/ChannelDetail").then((m) => ({ default: m.ChannelDetail })));
 // Phase 8.5 — УДДТ P&ID.
 const UddtPid = lazy(() => import("./panels/UddtPid").then((m) => ({ default: m.UddtPid })));
 // Phase 9.1 — Compliance check (30+ БНбД rules).
@@ -80,6 +82,8 @@ type Tab =
   | "well"
   | "compensator"
   | "pid"
+  // Phase 12.6 — Composite channel cross-section (Л-4 / Л-7 / Л-9).
+  | "channel"
   // Phase 9.1 — Compliance check (separate cluster: stands apart
   // from drawing details since it's project-wide verification).
   | "compliance"
@@ -451,6 +455,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <TabBtn active={tab === "well"} onClick={() => setTab("well")}>🛢 Худаг</TabBtn>
         <TabBtn active={tab === "compensator"} onClick={() => setTab("compensator")}>🔄 Компенсатор</TabBtn>
         <TabBtn active={tab === "pid"} onClick={() => setTab("pid")}>🛠 P&amp;ID</TabBtn>
+        <TabBtn active={tab === "channel"} onClick={() => setTab("channel")}>▤ Суваг</TabBtn>
         {/* Phase 9.1 — Compliance check cluster. Sits between detail
             views and settings — it's project-wide verification that
             engineer typically runs LAST before exporting Drawing Set. */}
@@ -615,6 +620,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "well" && <WellDetail />}
             {tab === "compensator" && <CompensatorDetail />}
             {tab === "pid" && <UddtPid />}
+            {tab === "channel" && <ChannelDetail />}
             {tab === "compliance" && <ComplianceView />}
             {tab === "activity" && <ActivityFeed projectId={loadedId} />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
