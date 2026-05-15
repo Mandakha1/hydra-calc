@@ -186,6 +186,65 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   padding: 0 1.5rem;
 }
 
+/* ─── Phase 11.1 — Responsive breakpoints ─────────────────────────────
+ *
+ * Mobile  < 768px   — phone, single-column, hamburger nav
+ * Tablet  768-1024  — iPad landscape, mostly desktop with tighter spacing
+ * Desktop > 1024px  — full layout (default)
+ *
+ * Strategy: most layout already works fine on desktop. The mobile
+ * concerns are: (1) navbar horizontal overflow, (2) the editor
+ * toolbar's horizontal button row, (3) tab bar wrapping, (4) any
+ * fixed-width forms. We address those globally here, then per-
+ * component overrides ship inline in HydraulicV5 + Navbar.
+ */
+@media (max-width: 767px) {
+  .container {
+    padding: 0 0.85rem;
+  }
+  /* Auth-shell forms full-width on mobile */
+  input, select, button {
+    font-size: 16px;  /* prevents iOS zoom-on-focus */
+  }
+  /* Hide non-essential nav links on small phones */
+  .nav-hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1024px) {
+  .container {
+    padding: 0 1.15rem;
+  }
+}
+
+/* Phase 11.1 — touch-friendly tap targets per WCAG AA + Apple HIG.
+ * 44px minimum tap target on touch devices. We don't apply globally
+ * because the editor toolbar is intentionally dense for desktop. */
+@media (pointer: coarse) {
+  button, a[role="button"], [data-touch-target] {
+    min-height: 44px;
+  }
+  /* Editor toolbar exception — engineer uses with mouse on tablet */
+  .editor-toolbar button, .editor-toolbar a {
+    min-height: 32px;
+  }
+}
+
+/* Phase 11.1 — horizontal-scroll wrapper for tab bars + toolbars. */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.scroll-x::-webkit-scrollbar {
+  height: 4px;
+}
+.scroll-x::-webkit-scrollbar-thumb {
+  background: var(--border-soft);
+  border-radius: 2px;
+}
+
 .grid {
   display: grid;
   gap: 1.5rem;
