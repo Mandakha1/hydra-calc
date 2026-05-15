@@ -44,6 +44,8 @@ const WellDetail = lazy(() => import("./panels/WellDetail").then((m) => ({ defau
 const CompensatorDetail = lazy(() => import("./panels/CompensatorDetail").then((m) => ({ default: m.CompensatorDetail })));
 // Phase 8.5 — УДДТ P&ID.
 const UddtPid = lazy(() => import("./panels/UddtPid").then((m) => ({ default: m.UddtPid })));
+// Phase 9.1 — Compliance check (30+ БНбД rules).
+const ComplianceView = lazy(() => import("./panels/ComplianceView").then((m) => ({ default: m.ComplianceView })));
 
 interface Props {
   projectId?: string;
@@ -69,7 +71,10 @@ type Tab =
   | "energy"
   | "well"
   | "compensator"
-  | "pid";
+  | "pid"
+  // Phase 9.1 — Compliance check (separate cluster: stands apart
+  // from drawing details since it's project-wide verification).
+  | "compliance";
 
 export function HydraulicV5(props: Props) {
   return (
@@ -425,6 +430,11 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
         <TabBtn active={tab === "well"} onClick={() => setTab("well")}>🛢 Худаг</TabBtn>
         <TabBtn active={tab === "compensator"} onClick={() => setTab("compensator")}>🔄 Компенсатор</TabBtn>
         <TabBtn active={tab === "pid"} onClick={() => setTab("pid")}>🛠 P&amp;ID</TabBtn>
+        {/* Phase 9.1 — Compliance check cluster. Sits between detail
+            views and settings — it's project-wide verification that
+            engineer typically runs LAST before exporting Drawing Set. */}
+        <span aria-hidden style={tabDivider}>|</span>
+        <TabBtn active={tab === "compliance"} onClick={() => setTab("compliance")}>📋 Стандарт</TabBtn>
         <span aria-hidden style={tabDivider}>|</span>
         <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Тохиргоо</TabBtn>
 
@@ -546,6 +556,7 @@ function HydraulicInner({ projectId, readOnly = false, sharedData }: Props) {
             {tab === "well" && <WellDetail />}
             {tab === "compensator" && <CompensatorDetail />}
             {tab === "pid" && <UddtPid />}
+            {tab === "compliance" && <ComplianceView />}
             {tab === "settings" && <SettingsPanel readOnly={readOnly} />}
           </Suspense>
         </main>
