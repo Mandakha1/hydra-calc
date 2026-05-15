@@ -19,6 +19,7 @@
 import DxfParser from "dxf-parser";
 import type { SchemeNode, SchemePipe, ProjectSettings } from "../components/hydraulic/hydraulicTypes";
 import { PX_PER_METER } from "../components/hydraulic/nodeCatalog";
+import { buildChannelsFromDxfImport } from "./dxfChannelDetection";
 import {
   mapCadLayerToCircuit,
   detectCircuitConflict,
@@ -38,6 +39,11 @@ export interface DxfImportResult {
   state: {
     nodes: SchemeNode[];
     pipes: SchemePipe[];
+    /** Phase 12.9 — composite channels auto-detected from
+     *  ГК-23/02 СЕРИЯ Г-991-1 text annotations ("Л-4" / "Л-7" /
+     *  "Л-9" near a pipe cluster). Empty when no annotations
+     *  match or under-2 pipes per group. */
+    channels?: import("../components/hydraulic/hydraulicTypes").SchemeChannel[];
     settings: ProjectSettings;
     schemaVersion: 5;
   };
@@ -55,6 +61,10 @@ export interface DxfImportResult {
     circuitCounts?: Record<string, number>;
     /** Phase 7.3 — number of pipes whose multi-signal vote disagreed. */
     circuitConflicts?: number;
+    /** Phase 12.9 — composite channels detected from ГК-23/02 text
+     *  annotations. Counts SchemeChannel entities created, NOT the
+     *  contained pipes. */
+    channels?: number;
   };
   /** Phase 7.4 — distinct CAD layer names that contributed pipes,
    *  paired with the auto-detected circuit. Engineer uses this in
@@ -544,7 +554,10 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
   for (const ln of linesToImport) allLayers.add(ln.l);
 
   /* === 11. Stats === */
-  const stats = {
+  // Explicit type annotation so Phase 12.9 can populate `channels`
+  // after detection without TypeScript complaining about a property
+  // missing from the inferred object literal type.
+  const stats: DxfImportResult["stats"] = {
     pipes: pipes.length,
     nodes: nodes.length,
     junctions: nodes.filter((n) => n.kind === "junction").length,
@@ -578,8 +591,37 @@ export function importDxfJson(extracted: ExtractedDxf, opts: {
   }
   distinctBlocks.sort((a, b) => b.nodeCount - a.nodeCount);
 
+  /* === 12. Phase 12.9 — Composite channel auto-detection ===
+   * Scan DXF text annotations for ГК-23/02 "Л-4 / Л-7 / Л-9"
+   * patterns and group nearby pipes into SchemeChannel entities.
+   * Mutates pipe.channelId back-references in place. Empty when no
+   * annotations match or under-2 pipes per cluster — falls back to
+   * the engineer drawing channels manually post-import. */
+  const channelDetect = buildChannelsFromDxfImport({
+    texts: extracted.texts,
+    pipes,
+    nodes,
+    pxPerMeter: PX_PER_METER,
+  });
+  for (const [pipeId, channelId] of channelDetect.pipePatches.entries()) {
+    const p = pipes.find((pp) => pp.id === pipeId);
+    if (p) p.channelId = channelId;
+  }
+  warnings.push(...channelDetect.warnings);
+  if (channelDetect.channels.length > 0) {
+    stats.channels = channelDetect.channels.length;
+  }
+
   return {
-    state: { nodes, pipes, settings, schemaVersion: 5 },
+    state: {
+      nodes,
+      pipes,
+      ...(channelDetect.channels.length > 0
+        ? { channels: channelDetect.channels }
+        : {}),
+      settings,
+      schemaVersion: 5,
+    },
     stats,
     distinctLayers,
     distinctBlocks,
