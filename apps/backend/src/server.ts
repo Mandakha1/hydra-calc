@@ -15,6 +15,7 @@ import { healthRoutes } from "./routes/health.js";
 import { adminRoutes } from "./routes/admin.js";
 import { calcRoutes } from "./routes/calc.js";
 import { auditRoutes } from "./routes/audit.js";
+import { teamRoutes } from "./routes/team.js";
 import { runAuditCleanup } from "./lib/auditCleanup.js";
 import { bootstrapAdmin } from "./db/seed-admin.js";
 
@@ -72,6 +73,7 @@ export async function buildApp() {
       await api.register(adminRoutes);
       await api.register(calcRoutes);
       await api.register(auditRoutes);
+      await api.register(teamRoutes);
     },
     { prefix: "/api" },
   );
