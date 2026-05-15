@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq, gt, isNull } from "drizzle-orm";
+import { z } from "zod";
 import { registerSchema, loginSchema, RATE_LIMITS } from "shared";
 import { db, schema } from "../db/client.js";
 import { hashPassword, verifyPassword } from "../auth/bcrypt.js";
@@ -12,6 +13,14 @@ import { setRefreshCookie, clearRefreshCookie, REFRESH_COOKIE } from "../auth/co
 import { requireAuth } from "../auth/middleware.js";
 import { errors } from "../lib/errors.js";
 import { env } from "../config/env.js";
+import { sendEmail, generateEmailToken } from "../lib/email.js";
+
+/** Phase 10.1 — base URL the frontend serves the verify/reset routes from.
+ *  Comes from the CORS_ORIGIN env (already validated) so it works for
+ *  localhost dev + production single-domain deploys without extra config. */
+function publicAppBaseUrl(): string {
+  return env.CORS_ORIGIN.split(",")[0]!.trim().replace(/\/$/, "");
+}
 
 function publicUser(row: schema.User) {
   return {
@@ -60,15 +69,32 @@ export async function authRoutes(app: FastifyInstance) {
       if (existing) throw errors.conflict("Энэ и-мэйл бүртгэлтэй байна");
 
       const passwordHash = await hashPassword(input.data.password);
+      // Phase 10.1 — generate email verification token at signup; the
+      // user's `verified` stays false until they click the link.
+      const verifyToken = generateEmailToken();
       const [created] = await db
         .insert(schema.users)
         .values({
           email: input.data.email,
           passwordHash,
           name: input.data.name ?? null,
+          emailVerificationToken: verifyToken,
         })
         .returning();
       if (!created) throw errors.internal("Бүртгэл үүсгэж чадсангүй");
+
+      // Fire-and-forget email (dev mode logs to console). Don't block
+      // the response — engineer can refresh /verify-email page from
+      // their inbox after the email lands.
+      const verifyLink = `${publicAppBaseUrl()}/verify-email?token=${verifyToken}`;
+      void sendEmail({
+        to: created.email,
+        template: "welcome",
+        recipientName: created.name ?? undefined,
+        data: { verifyLink },
+      }).catch((err: unknown) => {
+        app.log.warn({ err, userId: created.id }, "register email failed");
+      });
 
       await db.insert(schema.auditLog).values({
         userId: created.id,
@@ -202,4 +228,111 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user) throw errors.unauthorized();
     return { user: publicUser(user) };
   });
+
+  /* ---------------- verify-email (Phase 10.1) ---------------- */
+  app.post(
+    "/auth/verify-email",
+    { config: { rateLimit: RATE_LIMITS.login } },
+    async (req, _reply) => {
+      const schemaIn = z.object({ token: z.string().min(10).max(200) });
+      const input = schemaIn.safeParse(req.body);
+      if (!input.success) throw errors.validation(input.error.flatten());
+      const user = await db.query.users.findFirst({
+        where: eq(schema.users.emailVerificationToken, input.data.token),
+      });
+      if (!user) throw errors.unauthorized("Холбоос хүчингүй");
+      await db
+        .update(schema.users)
+        .set({ verified: true, emailVerificationToken: null })
+        .where(eq(schema.users.id, user.id));
+      await db.insert(schema.auditLog).values({
+        userId: user.id,
+        action: "email.verified",
+        ip: req.ip,
+      });
+      return { ok: true };
+    },
+  );
+
+  /* ---------------- forgot password (Phase 10.1) ---------------- */
+  app.post(
+    "/auth/forgot",
+    { config: { rateLimit: RATE_LIMITS.register } },
+    async (req, _reply) => {
+      const schemaIn = z.object({ email: z.string().email() });
+      const input = schemaIn.safeParse(req.body);
+      if (!input.success) throw errors.validation(input.error.flatten());
+      const user = await db.query.users.findFirst({
+        where: eq(schema.users.email, input.data.email),
+      });
+      // Always return ok — don't leak whether email exists.
+      if (user) {
+        const token = generateEmailToken();
+        const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        await db
+          .update(schema.users)
+          .set({ passwordResetToken: token, passwordResetExpires: expires })
+          .where(eq(schema.users.id, user.id));
+        const resetLink = `${publicAppBaseUrl()}/reset-password?token=${token}`;
+        void sendEmail({
+          to: user.email,
+          template: "reset_password",
+          recipientName: user.name ?? undefined,
+          data: { resetLink },
+        }).catch((err: unknown) => {
+          app.log.warn({ err, userId: user.id }, "forgot email failed");
+        });
+        await db.insert(schema.auditLog).values({
+          userId: user.id,
+          action: "password.reset.requested",
+          ip: req.ip,
+        });
+      }
+      return { ok: true };
+    },
+  );
+
+  /* ---------------- reset password (Phase 10.1) ---------------- */
+  app.post(
+    "/auth/reset",
+    { config: { rateLimit: RATE_LIMITS.register } },
+    async (req, _reply) => {
+      const schemaIn = z.object({
+        token: z.string().min(10).max(200),
+        newPassword: z.string().min(8).max(120),
+      });
+      const input = schemaIn.safeParse(req.body);
+      if (!input.success) throw errors.validation(input.error.flatten());
+      const user = await db.query.users.findFirst({
+        where: and(
+          eq(schema.users.passwordResetToken, input.data.token),
+          gt(schema.users.passwordResetExpires, new Date()),
+        ),
+      });
+      if (!user) throw errors.unauthorized("Холбоос хүчингүй эсвэл хугацаа дууссан");
+      const passwordHash = await hashPassword(input.data.newPassword);
+      await db
+        .update(schema.users)
+        .set({
+          passwordHash,
+          passwordResetToken: null,
+          passwordResetExpires: null,
+        })
+        .where(eq(schema.users.id, user.id));
+      // Revoke all sessions on password reset — security best practice.
+      await db
+        .update(schema.sessions)
+        .set({ revokedAt: new Date() })
+        .where(and(
+          eq(schema.sessions.userId, user.id),
+          isNull(schema.sessions.revokedAt),
+        ));
+      await db.insert(schema.auditLog).values({
+        userId: user.id,
+        action: "password.reset.completed",
+        ip: req.ip,
+      });
+      return { ok: true };
+    },
+  );
 }
