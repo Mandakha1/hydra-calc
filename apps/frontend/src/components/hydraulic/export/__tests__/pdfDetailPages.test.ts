@@ -191,8 +191,10 @@ describe("renderPidPage", () => {
 /* ─── Drawing set integration ──────────────────────────────────── */
 
 describe("DEFAULT_DRAWING_SET_PAGES + drawingSetPageLabel", () => {
-  it("default order is plan → profile → energy → well → compensator → pid", () => {
-    expect(DEFAULT_DRAWING_SET_PAGES).toEqual([
+  it("default order starts plan → profile → energy → well → compensator → pid", () => {
+    // Phase 9.4 appends "compliance" as the 7th page; older tests asserted
+    // 6 pages, now asserts the first 6 in canonical order.
+    expect(DEFAULT_DRAWING_SET_PAGES.slice(0, 6)).toEqual([
       "plan",
       "profile",
       "energy",
