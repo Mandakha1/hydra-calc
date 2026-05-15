@@ -35,6 +35,10 @@ import { AddressSearch } from "./AddressSearch";
 import { DrawingHud } from "../scheme/DrawingHud";
 import { formatLength } from "../scheme/dimensionFormat";
 import {
+  buildTagAsParams,
+  TAG_AS_KIND_OPTIONS,
+} from "../scheme/outlineTag";
+import {
   computeSymbolRadiusPx,
   computePipeStrokeWidthPx,
   resolveEntityKind,
@@ -199,11 +203,13 @@ export function SchemeEditor({ readOnly }: Props) {
   const leafletMapRef = useRef<L.Map | null>(null);
   /** Bumped on map move/zoom to force a render so geo-anchored nodes reposition. */
   const [mapTick, setMapTick] = useState(0);
-  /** Right-click context menu — shown next to a target element. */
+  /** Right-click context menu — shown next to a target element.
+   *  Phase 12.4 — target.kind extended to include "building" so the
+   *  outline-first workflow can wire engineer's right-click → tag-as. */
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
-    target: { kind: "node" | "pipe"; id: string };
+    target: { kind: "node" | "pipe" | "building"; id: string };
   } | null>(null);
   /** Pipe waypoint drag state — index identifies which middle point is being moved. */
   const [waypointDrag, setWaypointDrag] = useState<{ pipeId: string; index: number } | null>(null);
@@ -1173,16 +1179,23 @@ export function SchemeEditor({ readOnly }: Props) {
     [readOnly, snap, toSvg, nodes, updatePipe],
   );
 
-  /** Right-click on a node or pipe — open context menu. */
+  /** Right-click on a node / pipe / building — open context menu.
+   *  Phase 12.4 — extended to support building target for tag-as. */
   const onContextMenuTarget = useCallback(
-    (e: MouseEvent, target: { kind: "node" | "pipe"; id: string }) => {
+    (e: MouseEvent, target: { kind: "node" | "pipe" | "building"; id: string }) => {
       if (readOnly) return;
       e.preventDefault();
       e.stopPropagation();
-      select(target);
+      // select() only accepts node/pipe/... not building directly in
+      // some legacy paths — use selectBuilding for buildings.
+      if (target.kind === "building") {
+        selectBuilding(target.id);
+      } else {
+        select(target);
+      }
       setContextMenu({ x: e.clientX, y: e.clientY, target });
     },
-    [readOnly, select],
+    [readOnly, select, selectBuilding],
   );
 
   /** Duplicate the currently-selected node, offset by 30px. */
@@ -2354,6 +2367,7 @@ export function SchemeEditor({ readOnly }: Props) {
                         selectBuilding(b.id);
                       }
                     }}
+                    onContextMenu={(e) => onContextMenuTarget(e, { kind: "building", id: b.id })}
                     style={{ cursor: mode === "select" ? "pointer" : undefined }}
                   >
                     {isMultiSelected && (
@@ -3563,10 +3577,19 @@ export function SchemeEditor({ readOnly }: Props) {
             const target = contextMenu.target;
             const cur = target.kind === "node"
               ? nodes.find((n) => n.id === target.id)?.label
-              : pipes.find((p) => p.id === target.id)?.id;
+              : target.kind === "building"
+                ? (buildings ?? []).find((b) => b.id === target.id)?.label
+                : pipes.find((p) => p.id === target.id)?.id;
             const next = window.prompt("Шинэ нэр:", cur ?? "");
             if (next !== null && next.trim()) {
               if (target.kind === "node") updateNode(target.id, { label: next.trim() });
+              else if (target.kind === "building") {
+                useHydraulicStore.setState((s) => ({
+                  buildings: (s.buildings ?? []).map((b) =>
+                    b.id === target.id ? { ...b, label: next.trim() } : b,
+                  ),
+                }));
+              }
               // pipes don't have label; skip for now
             }
             setContextMenu(null);
@@ -3575,6 +3598,14 @@ export function SchemeEditor({ readOnly }: Props) {
             const target = contextMenu.target;
             if (!window.confirm("Энэ элементийг устгах уу?")) return;
             if (target.kind === "node") removeNode(target.id);
+            else if (target.kind === "building") {
+              // Phase 12.4 — also delete the tagged node if present
+              const b = (buildings ?? []).find((bb) => bb.id === target.id);
+              if (b?.taggedAsNodeId) removeNode(b.taggedAsNodeId);
+              useHydraulicStore.setState((s) => ({
+                buildings: (s.buildings ?? []).filter((bb) => bb.id !== target.id),
+              }));
+            }
             else removePipe(target.id);
             setContextMenu(null);
           }}
@@ -3624,6 +3655,53 @@ export function SchemeEditor({ readOnly }: Props) {
             contextMenu.target.kind === "pipe" &&
             (pipes.find((p) => p.id === contextMenu.target.id)?.waypoints?.length ?? 0) > 0
           }
+          isBuilding={contextMenu.target.kind === "building"}
+          taggedKind={
+            contextMenu.target.kind === "building"
+              ? (buildings ?? []).find((b) => b.id === contextMenu.target.id)?.taggedAsKind
+              : undefined
+          }
+          onTagAs={(kind: string) => {
+            const target = contextMenu.target;
+            if (target.kind !== "building") return;
+            const building = (buildings ?? []).find((b) => b.id === target.id);
+            if (!building) return;
+            // Phase 12.4 — atomic tag-as: build params then dispatch
+            // addNode + patchBuilding so undo treats both as one op.
+            const { node, buildingPatch } = buildTagAsParams(
+              building,
+              kind,
+              useHydraulicStore.getState().nodes,
+            );
+            const store = useHydraulicStore.getState();
+            store.addNode(node);
+            // Patch building inline via setState since the store doesn't
+            // have a dedicated updateBuilding action yet.
+            useHydraulicStore.setState((s) => ({
+              buildings: (s.buildings ?? []).map((b) =>
+                b.id === target.id ? { ...b, ...buildingPatch } : b,
+              ),
+            }));
+            setContextMenu(null);
+          }}
+          onUntag={() => {
+            const target = contextMenu.target;
+            if (target.kind !== "building") return;
+            const building = (buildings ?? []).find((b) => b.id === target.id);
+            if (!building) return;
+            const store = useHydraulicStore.getState();
+            if (building.taggedAsNodeId) {
+              store.removeNode(building.taggedAsNodeId);
+            }
+            useHydraulicStore.setState((s) => ({
+              buildings: (s.buildings ?? []).map((b) =>
+                b.id === target.id
+                  ? { ...b, taggedAsKind: undefined, taggedAsNodeId: undefined }
+                  : b,
+              ),
+            }));
+            setContextMenu(null);
+          }}
         />
       )}
     </div>
@@ -3638,9 +3716,11 @@ function ContextMenu({
   onClose,
   isPipe, hasWaypoints,
   groupSize, onDeleteGroup, onDeselectAll,
+  // Phase 12.4 — building tag-as workflow
+  isBuilding, onTagAs, onUntag, taggedKind,
 }: {
   x: number; y: number;
-  target: { kind: "node" | "pipe"; id: string };
+  target: { kind: "node" | "pipe" | "building"; id: string };
   onRename: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -3654,7 +3734,15 @@ function ContextMenu({
   groupSize: number;
   onDeleteGroup: () => void;
   onDeselectAll: () => void;
+  /** Phase 12.4 — true when target is a SchemeBuilding. Shows the
+   *  "Энэ юу вэ?" submenu and Phase 12.1 tag-as wiring. */
+  isBuilding?: boolean;
+  onTagAs?: (kind: string) => void;
+  onUntag?: () => void;
+  taggedKind?: string;
 }) {
+  // Phase 12.4 — sub-menu state for the "Энэ юу вэ?" tag-as submenu
+  const [tagSubmenuOpen, setTagSubmenuOpen] = useState(false);
   // Click-outside dismissal
   useEffect(() => {
     const dismiss = () => onClose();
@@ -3682,8 +3770,51 @@ function ContextMenu({
       <div style={{ padding: "6px 10px", fontSize: 11, color: "var(--bp-text-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
         {groupSize > 1
           ? `Группдээ ${groupSize} элемент`
-          : target.kind === "node" ? "Зангилаа" : "Хоолой"}
+          : target.kind === "node" ? "Зангилаа"
+          : target.kind === "building" ? "Барилга"
+          : "Хоолой"}
       </div>
+      {/* Phase 12.4 — building tag-as submenu (the headline feature
+          that wires Phase 12.1's outline-first workflow). */}
+      {isBuilding && !tagSubmenuOpen && (
+        <>
+          <CtxBtn
+            icon="❓"
+            onClick={() => setTagSubmenuOpen(true)}
+            data-testid="ctx-tag-as"
+          >
+            Энэ юу вэ? ▶
+          </CtxBtn>
+          {taggedKind && onUntag && (
+            <CtxBtn icon="✂" onClick={onUntag} data-testid="ctx-untag">
+              Тагийг арилгах
+            </CtxBtn>
+          )}
+          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
+        </>
+      )}
+      {/* Phase 12.4 — tag-as kind submenu */}
+      {isBuilding && tagSubmenuOpen && onTagAs && (
+        <>
+          <div style={{ padding: "6px 10px", fontSize: 11, color: "var(--bp-text-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Энэ барилга юу вэ?
+          </div>
+          {TAG_AS_KIND_OPTIONS.map((opt) => (
+            <CtxBtn
+              key={opt.kind}
+              icon=""
+              onClick={() => { onTagAs(opt.kind); setTagSubmenuOpen(false); }}
+              data-testid={`ctx-tag-${opt.kind}`}
+            >
+              {opt.label}
+            </CtxBtn>
+          ))}
+          <CtxBtn icon="←" onClick={() => setTagSubmenuOpen(false)}>
+            Буцах
+          </CtxBtn>
+          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
+        </>
+      )}
       {/* Phase 6.5.1 — group operations appear FIRST when 2+ selected. */}
       {groupSize > 1 && (
         <>
@@ -3714,10 +3845,18 @@ function ContextMenu({
   );
 }
 
-function CtxBtn({ icon, onClick, children, danger, kbd }: { icon: string; onClick: () => void; children: ReactNode; danger?: boolean; kbd?: string }) {
+function CtxBtn({ icon, onClick, children, danger, kbd, "data-testid": testid }: {
+  icon: string;
+  onClick: () => void;
+  children: ReactNode;
+  danger?: boolean;
+  kbd?: string;
+  "data-testid"?: string;
+}) {
   return (
     <button
       onClick={onClick}
+      data-testid={testid}
       style={{
         display: "flex",
         alignItems: "center",
