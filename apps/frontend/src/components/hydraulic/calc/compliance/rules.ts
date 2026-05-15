@@ -34,6 +34,8 @@ import {
   pipeResult,
   nodeResult,
 } from "./ruleEngine";
+// Phase 12.12 — channel-aware compliance rules.
+import { CHANNEL_RULES } from "./channelRules";
 
 /* ─── Constants (mirror Phase 5 NORM_THRESHOLDS) ─────────────────── */
 
@@ -1141,6 +1143,8 @@ export const ALL_RULES: ReadonlyArray<Rule> = [
   projectMetadataComplete,  // Phase 9.3
   projectScaleSet,          // Phase 9.3
   projectPaperSet,          // Phase 9.3
+  // Phase 12.12 — composite channel rules (ГК-23/02 / БНбД 41-02-13 §6)
+  ...CHANNEL_RULES,
 ];
 
 /** Constants re-exported for tests + future rule implementations. */

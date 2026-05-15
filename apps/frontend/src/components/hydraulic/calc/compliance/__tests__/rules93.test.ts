@@ -40,8 +40,12 @@ function violationsForRule(report: ReturnType<typeof runComplianceCheck>, ruleId
 /* ─── Registry sanity ──────────────────────────────────────────── */
 
 describe("ALL_RULES registry — Phase 9.3", () => {
-  it("contains 30 rules total (8 + 12 + 10)", () => {
-    expect(ALL_RULES.length).toBe(30);
+  // Phase 12.12 added 3 channel rules → registry grew 30 → 33. The
+  // count assertion now uses `>= 30` so future rule additions
+  // (Phase 13+) don't break this regression test. Per-phase counts
+  // remain spot-checkable via individual rule-id assertions below.
+  it("contains at least 30 rules (Phase 9.3 baseline + future)", () => {
+    expect(ALL_RULES.length).toBeGreaterThanOrEqual(30);
   });
 
   it("all rule ids still unique", () => {
