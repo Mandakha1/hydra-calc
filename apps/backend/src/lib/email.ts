@@ -15,6 +15,7 @@
  * keys are NEVER committed — supplied via env in production.
  */
 
+import { randomBytes } from "node:crypto";
 import { env } from "../config/env.js";
 
 export type EmailTemplate = "welcome" | "verify_email" | "reset_password";
@@ -185,9 +186,10 @@ export async function sendEmail(payload: EmailPayload): Promise<{ messageId: str
 
 /** Generate a URL-safe random token (32 bytes / 256 bits → 43 char base64url). */
 export function generateEmailToken(): string {
-  // Node's crypto is synchronous + secure. Use it directly so we
-  // don't pull in another lib.
-  const bytes = require("node:crypto").randomBytes(32) as Buffer;
+  // Node's crypto is synchronous + secure. ES-module import via
+  // top-of-file `import { randomBytes } from "node:crypto"` instead of
+  // `require()` keeps `@typescript-eslint/no-require-imports` happy.
+  const bytes = randomBytes(32);
   return bytes
     .toString("base64")
     .replace(/\+/g, "-")

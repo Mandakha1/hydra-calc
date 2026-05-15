@@ -66,6 +66,9 @@ import {
   selectDimension,
 } from "../scheme/dimensionApplier";
 import { strokeDasharrayForStyle } from "../scheme/constructionLines";
+// Phase 12.5 — composite-channel render helpers + atomic build.
+import { channelPipeCountBadge, buildChannelFromDraw } from "../scheme/channelOperations";
+import { channelTypeLabel } from "../scheme/channelTypes";
 import {
   addConstructionLine,
   selectConstructionLine,
@@ -114,6 +117,7 @@ type Mode =
   | "select"
   | "addNode"
   | "addPipe"
+  | "addChannel"
   | "drawBuilding"
   | "measure"
   | "pickBuilding"
@@ -133,12 +137,20 @@ const RULER_PX = 24; // ruler thickness
 export function SchemeEditor({ readOnly }: Props) {
   const nodes = useHydraulicStore((s) => s.nodes);
   const pipes = useHydraulicStore((s) => s.pipes);
+  // Phase 12.5 — composite underground channels (Л-4 / Л-7 / Л-9 per
+  // ГК-23/02). Renders ONE thick gray polyline per channel that visually
+  // replaces the contained pipes on the plan. Cross-section + label
+  // panel are deferred to Phase 12.6 / 12.7. Defaulted to [] so legacy
+  // projects without the `channels` array still render unchanged.
+  const channels = useHydraulicStore((s) => s.channels);
   const selection = useHydraulicStore((s) => s.selection);
   const results = useHydraulicStore((s) => s.results);
   const violations = useHydraulicStore((s) => s.violations);
   const settings = useHydraulicStore((s) => s.settings);
   const addNode = useHydraulicStore((s) => s.addNode);
   const addPipe = useHydraulicStore((s) => s.addPipe);
+  // Phase 12.5 — composite channel atomic insertion.
+  const addChannel = useHydraulicStore((s) => s.addChannel);
   const updateNode = useHydraulicStore((s) => s.updateNode);
   const updatePipe = useHydraulicStore((s) => s.updatePipe);
   const removeNode = useHydraulicStore((s) => s.removeNode);
@@ -166,6 +178,12 @@ export function SchemeEditor({ readOnly }: Props) {
   const [pendingCircuit, setPendingCircuit] = useState<PipeCircuit>("heating_supply");
   const [angleMode, setAngleMode] = useState<AngleMode>("ortho90");
   const [pipeFrom, setPipeFrom] = useState<string | null>(null);
+  // Phase 12.5 — first endpoint while drawing a composite channel.
+  // Mirrors `pipeFrom` semantics: click first node → setChannelFrom,
+  // click second node → buildChannelFromDraw + addChannel atomically.
+  // For v1 the channel type defaults to Л-7 with the 4 standard
+  // circuits (D2.1/D2.2/D3/D4); engineer adjusts via Inspector later.
+  const [channelFrom, setChannelFrom] = useState<string | null>(null);
   const [polygon, setPolygon] = useState<Point[]>([]); // polyline being drawn
   const [pendingFootprint, setPendingFootprint] = useState<Point[] | null>(null);
   const [showPalette, setShowPalette] = useState<NodeCategory | null>(null);
@@ -1092,6 +1110,38 @@ export function SchemeEditor({ readOnly }: Props) {
           setPipeLengthInput("");
           setMode("select");
         }
+      } else if (mode === "addChannel") {
+        // Phase 12.5 — two-click channel placement. First click picks
+        // the start node; second click (on a different node) builds
+        // a Л-7 channel with the 4 standard circuits (D2.1/D2.2/D3/D4)
+        // — the most common Mongolian district-heating configuration
+        // per ГК-23/02. Engineer can adjust channel type + add/remove
+        // pipes via Inspector / right-click after creation.
+        if (!channelFrom) {
+          setChannelFrom(node.id);
+        } else if (channelFrom !== node.id) {
+          const from = nodes.find((n) => n.id === channelFrom);
+          const measuredLen = from
+            ? pxToM(Math.hypot(from.x - node.x, from.y - node.y))
+            : 0;
+          const length_m = Math.max(0.5, Math.round(measuredLen * 10) / 10);
+          const { channel, pipes: newPipes } = buildChannelFromDraw({
+            fromNodeId: channelFrom,
+            toNodeId: node.id,
+            channelType: "Л-7",
+            pipeCircuits: [
+              "heating_supply",
+              "heating_return",
+              "dhw_supply",
+              "dhw_recirc",
+            ],
+            defaultDn: 100,
+            length_m,
+          });
+          addChannel(channel, newPipes);
+          setChannelFrom(null);
+          setMode("select");
+        }
       } else {
         // Phase 6.5.1 — modifier-click semantics:
         //   - Ctrl/Cmd+click → toggle in multi-selection (no drag)
@@ -1117,6 +1167,9 @@ export function SchemeEditor({ readOnly }: Props) {
     [
       mode,
       pipeFrom,
+      // Phase 12.5 — channel draw deps.
+      channelFrom,
+      addChannel,
       nodes,
       addPipe,
       toSvg,
@@ -1657,6 +1710,8 @@ export function SchemeEditor({ readOnly }: Props) {
         setMode("select");
         setShowPalette(null);
         setPipeFrom(null);
+        // Phase 12.5 — cancel any in-flight channel draw.
+        setChannelFrom(null);
         setPolygon([]);
         setPendingFootprint(null);
         setMeasurePoints([]);
@@ -1881,6 +1936,24 @@ export function SchemeEditor({ readOnly }: Props) {
             }}
             icon="／"
             label="Хоолой"
+          />
+          {/* Phase 12.5 — composite channel (Л-4/Л-7/Л-9 per ГК-23/02).
+              Click button → click first node → click second node. The
+              channel defaults to Л-7 with 4 standard circuits
+              (D2.1/D2.2/D3/D4) — Mongolian medium-branch most-common
+              case. Channel type + pipe set can be adjusted via
+              Inspector / right-click after creation (Phase 12.6 polish). */}
+          <SideBtn
+            active={mode === "addChannel"}
+            onClick={() => {
+              setMode("addChannel");
+              setChannelFrom(null);
+              setShowPalette(null);
+            }}
+            icon="▤"
+            label="Суваг"
+            color="#666"
+            title="Газар доорх бетон суваг (Л-4 / Л-7 / Л-9) — олон хоолойг нэг трэйнчид багтаасан зураг"
           />
           <SideBtn
             active={mode === "measure"}
@@ -2151,7 +2224,7 @@ export function SchemeEditor({ readOnly }: Props) {
             // didn't set"; investigation hypothesis is engineer-
             // missing-the-hit-zone due to ambiguous cursor + Leaflet
             // pointer-events handoff. Crosshair narrows the target.
-            : (mode === "drawBuilding" || mode === "measure" || mode === "addPipe" ? "crosshair"
+            : (mode === "drawBuilding" || mode === "measure" || mode === "addPipe" || mode === "addChannel" ? "crosshair"
             : showMap && mode === "select" ? "grab"
             : "default"),
           position: "relative",
@@ -2862,8 +2935,129 @@ export function SchemeEditor({ readOnly }: Props) {
               </g>
             )}
 
+            {/* Phase 12.5 — composite underground channels (Л-4/Л-7/Л-9
+                per ГК-23/02). Renders ONE thick gray polyline per
+                channel that visually REPLACES the contained pipes on
+                the plan view; individual pipes inside a channel skip
+                their own render below (filter via p.channelId).
+                The cross-section detail view (Phase 12.6) and
+                AutoCAD-style label panel (Phase 12.7) are layered on
+                later. Click handling for now: clicking the channel
+                selects the FIRST contained pipe so InspectorPanel
+                shows pipe-level fields (DN, material, length). */}
+            {(channels ?? []).map((ch) => {
+              const a = nodes.find((n) => n.id === ch.fromNodeId);
+              const b = nodes.find((n) => n.id === ch.toNodeId);
+              if (!a || !b) return null;
+              const aPos = displayPos(a);
+              const bPos = displayPos(b);
+              const points: Point[] = [{ x: aPos.x, y: aPos.y }];
+              if (ch.bendPoints?.length) {
+                for (const bp of ch.bendPoints) points.push({ x: bp.x, y: bp.y });
+              }
+              points.push({ x: bPos.x, y: bPos.y });
+              const pathD = points
+                .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+                .join(" ");
+              // Midpoint for the "Nп" badge + type label.
+              const midIdx = Math.max(1, Math.floor(points.length / 2));
+              const midX = (points[midIdx - 1]!.x + points[midIdx]!.x) / 2;
+              const midY = (points[midIdx - 1]!.y + points[midIdx]!.y) / 2;
+
+              const firstPipeId = ch.pipeIds[0];
+              const isSelected =
+                selection?.kind === "pipe" &&
+                firstPipeId != null &&
+                selection.id === firstPipeId;
+              // Channel render width is GENEROUSLY thicker than the
+              // contained pipes so the visual hierarchy reads
+              // "trench > pipes inside" at a glance. Engineer can
+              // still hit individual pipes via the cross-section view.
+              const channelWidth = isSelected ? 18 : 14;
+              const fill = "#666";
+              const stroke = isSelected ? "var(--accent)" : "#2A2A2A";
+              const badgeText = channelPipeCountBadge(ch);
+              const typeText = channelTypeLabel(
+                ch.channelType,
+                ch.crossSectionWidth_mm,
+                ch.crossSectionHeight_mm,
+              );
+
+              return (
+                <g key={`ch_${ch.id}`}>
+                  {/* Wide hit area — clicking selects the first pipe so
+                      InspectorPanel surfaces something meaningful. */}
+                  <path
+                    d={pathD}
+                    stroke="transparent"
+                    strokeWidth={Math.max(20, channelWidth + 8)}
+                    fill="none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (firstPipeId)
+                        select({ kind: "pipe", id: firstPipeId });
+                    }}
+                    onContextMenu={(e) => {
+                      if (firstPipeId)
+                        onContextMenuTarget(e, { kind: "pipe", id: firstPipeId });
+                    }}
+                    style={{ cursor: "pointer", pointerEvents: "stroke" }}
+                  />
+                  {/* Channel underlay — dark stroke for crisp border. */}
+                  <path
+                    d={pathD}
+                    stroke={stroke}
+                    strokeWidth={channelWidth + 2}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                  />
+                  {/* Channel fill — concrete-gray. */}
+                  <path
+                    d={pathD}
+                    stroke={fill}
+                    strokeWidth={channelWidth}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                  />
+                  {/* Midpoint badge — "4п" pipe count + channel type. */}
+                  <g pointerEvents="none">
+                    <rect
+                      x={midX - 30}
+                      y={midY - 11}
+                      width={60}
+                      height={22}
+                      rx={4}
+                      fill="white"
+                      stroke="#333"
+                      strokeWidth={1}
+                      opacity={0.95}
+                    />
+                    <text
+                      x={midX}
+                      y={midY + 4}
+                      textAnchor="middle"
+                      fontSize={11}
+                      fontWeight={600}
+                      fill="#222"
+                    >
+                      {badgeText} · {typeText.replace(/\s\(.*$/, "")}
+                    </text>
+                  </g>
+                </g>
+              );
+            })}
+
             {/* pipes */}
             {pipes.map((p) => {
+              // Phase 12.5 — pipes inside a composite channel are
+              // rendered by the channel polyline above (one thick gray
+              // line representing the whole trench). Skip individual
+              // render here so the visual hierarchy stays clean.
+              if (p.channelId) return null;
               const a = nodes.find((n) => n.id === p.fromNodeId);
               const b = nodes.find((n) => n.id === p.toNodeId);
               if (!a || !b) return null;

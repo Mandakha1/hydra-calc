@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { HydraulicState, SchemeNode, SchemePipe, ProjectSettings } from "./hydraulicTypes";
+import type {
+  HydraulicState,
+  SchemeNode,
+  SchemePipe,
+  ProjectSettings,
+  SchemeChannel,
+} from "./hydraulicTypes";
 import { emptyState } from "./hydraulicTypes";
 import {
   buildClipboardPayload,
@@ -100,6 +106,32 @@ interface StoreActions {
   addPipe(pipe: SchemePipe): void;
   updatePipe(id: string, patch: Partial<SchemePipe>): void;
   removePipe(id: string): void;
+
+  /* ============== Phase 12.5 — composite pipe channels ==================
+   * UI-only grouping: 1-5 SchemePipe entities share geometry inside a
+   * concrete underground channel (Л-4 / Л-7 / Л-9 per ГК-23/02).
+   *
+   * Atomic semantics: `addChannel` pushes ONE undo snapshot and inserts
+   * the channel + N new pipes in a single setState. `updateChannel` and
+   * `removeChannel` follow the same caller-driven-snapshot convention as
+   * updatePipe / removePipe (caller pushes if part of a larger batch).
+   */
+  /** Add a channel + its newly-created contained pipes atomically.
+   *  One snapshot, one setState. Returns nothing — caller already has
+   *  the channel.id from the build helper. */
+  addChannel(channel: SchemeChannel, newPipes: SchemePipe[]): void;
+  /** Patch a channel by id. No snapshot (batch ops push externally).
+   *  Channel geometry changes (bendPoints, anglePolicy) ALSO patch the
+   *  contained pipes so geometry stays in sync — that mirroring is
+   *  handled by the caller via patchPipe loops; this action only
+   *  touches the channel row itself. */
+  updateChannel(id: string, patch: Partial<SchemeChannel>): void;
+  /** Remove a channel. By default also deletes the contained pipes
+   *  (the engineer-visible "remove channel" gesture). Pass
+   *  `keepPipes: true` to preserve the pipes (e.g. demote to plain
+   *  pipes — they keep their geometry, `channelId` cleared by caller). */
+  removeChannel(id: string, options?: { keepPipes?: boolean }): void;
+
   updateSettings(patch: Partial<ProjectSettings>): void;
   setResults(results: HydraulicState["results"], violations: HydraulicState["violations"]): void;
   /** Select a single node, pipe, dimension (6.6.1) or construction
@@ -190,6 +222,10 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
         annotations: [],
         // Phase 6.8.6 — reference buildings.
         buildings: [],
+        // Phase 12.5 — composite channels are scoped to a project, so
+        // a fresh project starts with none. When `state` is passed
+        // in (project load), preserve its channels via the spread above.
+        ...(state?.channels === undefined ? { channels: [] } : {}),
       }),
 
     addNode: (node) => {
@@ -279,6 +315,68 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
           buildingIds: s.multiSelection.buildingIds ?? [],
         },
       })),
+
+    /* ============== Phase 12.5 — channel actions ============== */
+
+    addChannel: (channel, newPipes) => {
+      // ONE snapshot covers the channel + all newly-created pipes.
+      _pushUndoSnapshotInline(
+        "Сувагт хоолой нэмсэн",
+        1 + newPipes.length,
+      );
+      set((s) => ({
+        channels: [...(s.channels ?? []), channel],
+        pipes: [...s.pipes, ...newPipes],
+      }));
+    },
+
+    updateChannel: (id, patch) =>
+      // Caller-pushed snapshot (matches updatePipe convention). The
+      // engineer-facing channel edits (rename / change type / move
+      // bend point) push from the calling handler so a multi-field
+      // edit collapses into one Ctrl+Z.
+      set((s) => ({
+        channels: (s.channels ?? []).map((c) =>
+          c.id === id ? { ...c, ...patch } : c,
+        ),
+      })),
+
+    removeChannel: (id, options) =>
+      // Caller-pushed snapshot. Cascade-delete the contained pipes by
+      // default — channel is engineer's mental model for "the trench",
+      // and the trench going away takes its contents with it. Pass
+      // `{ keepPipes: true }` to demote the contents to standalone
+      // pipes (e.g. retrofit reversal).
+      set((s) => {
+        const channel = (s.channels ?? []).find((c) => c.id === id);
+        const containedPipeIds = new Set(channel?.pipeIds ?? []);
+        const keepPipes = options?.keepPipes ?? false;
+        return {
+          channels: (s.channels ?? []).filter((c) => c.id !== id),
+          pipes: keepPipes
+            ? // Clear channelId back-references so demoted pipes
+              // render as plain pipes again.
+              s.pipes.map((p) =>
+                containedPipeIds.has(p.id)
+                  ? { ...p, channelId: undefined }
+                  : p,
+              )
+            : s.pipes.filter((p) => !containedPipeIds.has(p.id)),
+          selection: s.selection?.id === id ? null : s.selection,
+          multiSelection: {
+            nodeIds: s.multiSelection.nodeIds,
+            pipeIds: keepPipes
+              ? s.multiSelection.pipeIds
+              : s.multiSelection.pipeIds.filter(
+                  (pid) => !containedPipeIds.has(pid),
+                ),
+            dimensionIds: s.multiSelection.dimensionIds ?? [],
+            constructionLineIds: s.multiSelection.constructionLineIds ?? [],
+            annotationIds: s.multiSelection.annotationIds ?? [],
+            buildingIds: s.multiSelection.buildingIds ?? [],
+          },
+        };
+      }),
 
     updateSettings: (patch) =>
       set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -686,6 +784,8 @@ function _pushUndoSnapshotInline(label: string, affectedCount: number): void {
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<typeof s.constructionLines>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<typeof s.annotations>,
     buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<typeof s.buildings>,
+    // Phase 12.5 — composite channels.
+    channels: JSON.parse(JSON.stringify(s.channels ?? [])) as NonNullable<typeof s.channels>,
   };
   const existing = s.undoStack ?? [];
   const next = [...existing, snap];

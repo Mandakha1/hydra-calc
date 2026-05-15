@@ -86,6 +86,8 @@ export function pushUndoSnapshot(label: string, affectedCount: number): void {
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
     buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<UndoSnapshot["buildings"]>,
+    // Phase 12.5 — composite channels snapshot.
+    channels: JSON.parse(JSON.stringify(s.channels ?? [])) as NonNullable<UndoSnapshot["channels"]>,
   };
   const existing = s.undoStack ?? [];
   const next = [...existing, snap];
@@ -132,6 +134,7 @@ export function undo(): { label: string; affectedCount: number } | null {
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
     buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<UndoSnapshot["buildings"]>,
+    channels: JSON.parse(JSON.stringify(s.channels ?? [])) as NonNullable<UndoSnapshot["channels"]>,
   };
 
   // Apply the snapshot. Drafting aids restored only when the
@@ -147,6 +150,7 @@ export function undo(): { label: string; affectedCount: number } | null {
     ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
     ...(top.annotations !== undefined ? { annotations: top.annotations } : {}),
     ...(top.buildings !== undefined ? { buildings: top.buildings } : {}),
+    ...(top.channels !== undefined ? { channels: top.channels } : {}),
     undoStack: stack.slice(0, stack.length - 1),
     redoStack: [...(s.redoStack ?? []), currentSnap],
   });
@@ -185,6 +189,7 @@ export function redo(): { label: string; affectedCount: number } | null {
     constructionLines: JSON.parse(JSON.stringify(s.constructionLines ?? [])) as NonNullable<UndoSnapshot["constructionLines"]>,
     annotations: JSON.parse(JSON.stringify(s.annotations ?? [])) as NonNullable<UndoSnapshot["annotations"]>,
     buildings: JSON.parse(JSON.stringify(s.buildings ?? [])) as NonNullable<UndoSnapshot["buildings"]>,
+    channels: JSON.parse(JSON.stringify(s.channels ?? [])) as NonNullable<UndoSnapshot["channels"]>,
   };
 
   useHydraulicStore.setState({
@@ -196,6 +201,7 @@ export function redo(): { label: string; affectedCount: number } | null {
     ...(top.constructionLines !== undefined ? { constructionLines: top.constructionLines } : {}),
     ...(top.annotations !== undefined ? { annotations: top.annotations } : {}),
     ...(top.buildings !== undefined ? { buildings: top.buildings } : {}),
+    ...(top.channels !== undefined ? { channels: top.channels } : {}),
     undoStack: [...(s.undoStack ?? []), currentSnap],
     redoStack: stack.slice(0, stack.length - 1),
   });

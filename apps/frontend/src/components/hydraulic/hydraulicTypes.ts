@@ -231,6 +231,13 @@ export interface SchemePipe {
    *  'snap_90' — snaps to 0/90/180/270° only
    *  Shift key during drag temporarily activates snap_45 regardless. */
   anglePolicy?: "free" | "snap_45" | "snap_90";
+  /** Phase 12.5 — reference to the parent SchemeChannel when this pipe
+   *  is contained inside a composite underground channel (Л-4/Л-7/Л-9
+   *  per ГК-23/02). When set, the channel renders one thick polyline
+   *  representing all contained pipes; individual pipes don't render
+   *  separately on the plan (the channel covers visually). Calc engine
+   *  still processes each pipe individually — channel is UI-only. */
+  channelId?: string;
 
   /* ============== ZULU-COMPATIBLE PIPE FIELDS ============== */
   /** Zulu (_uch.Dpod): supply line diameter in mm — separate from return. */
@@ -736,6 +743,69 @@ export interface SchemeBuilding {
 }
 
 /**
+ * Phase 12.5 — Composite underground pipe channel.
+ *
+ * Represents the physical concrete channel (Л-4 / Л-7 / Л-9 per
+ * ГК-23/02 series Г-991-1) that contains 1-5 SchemePipe entities
+ * sharing geometry. Engineer draws ONE polyline = creates the channel
+ * + N contained pipes atomically.
+ *
+ * Per the GK-23/02 reference:
+ *   Л-4 600×450 — small branch (2 pipes: D2.1 + D2.2)
+ *   Л-7 1200×580 — medium branch (4-5 pipes: + D3 + D4 + optional У1)
+ *   Л-9 1500×610 — main trunk (5 pipes: all circuits)
+ *
+ * Channel is UI grouping ONLY — calc engine processes each contained
+ * pipe individually (Hardy-Cross loops, Darcy-Weisbach, etc.). The
+ * channel just provides shared geometry + composite rendering on plan +
+ * cross-section detail view (Phase 12.6) + label panel (Phase 12.7).
+ *
+ * Geo-anchoring follows the Phase 6.8.2 / 12.3 pattern — bendPoints
+ * may carry optional {lat, lon} for map tracking.
+ */
+export interface SchemeChannel {
+  id: string;
+  type?: "channel";  // discriminant for future polymorphism
+  fromNodeId: string;
+  toNodeId: string;
+  /** Intermediate bend points (same shape as SchemePipe.bendPoints).
+   *  Channel polyline renders through these points; contained pipes
+   *  inherit the geometry. */
+  bendPoints?: Array<{ x: number; y: number; lat?: number; lon?: number }>;
+  /** Same convention as SchemePipe.anglePolicy. */
+  anglePolicy?: "free" | "snap_45" | "snap_90";
+
+  /* ===== Channel physical properties (from GK_DATA.channelTypes) ===== */
+  /** Channel series per Mongolian СЕРИЯ Г-991-1. 'custom' lets engineer
+   *  define own dimensions (e.g. retrofit work with non-standard channel). */
+  channelType?: "Л-4" | "Л-7" | "Л-9" | "custom";
+  /** Concrete channel inside width in millimetres. Set automatically
+   *  from CHANNEL_TYPE_REGISTRY when channelType is standard. */
+  crossSectionWidth_mm?: number;
+  /** Concrete channel inside height in millimetres. */
+  crossSectionHeight_mm?: number;
+  /** Burial depth from grade in metres (used by Phase 8.1 longitudinal
+   *  profile when the channel intersects the magistral path). */
+  burialDepth_m?: number;
+
+  /* ===== Contained pipes ===== */
+  /** Ordered list of SchemePipe IDs sharing this channel's geometry.
+   *  Phase 12 minimum: 1 pipe. Maximum: 5 (D2.1 + D2.2 + D3 + D4 + У1).
+   *  Order doesn't affect calc — it controls visual position inside
+   *  the cross-section detail view (Phase 12.6). */
+  pipeIds: string[];
+
+  /* ===== Phase 12.7 label panel positioning ===== */
+  /** Engineer-manual offset for the AutoCAD-style label panel rendered
+   *  adjacent to the channel midpoint. Default: 20px perpendicular to
+   *  channel direction. */
+  labelOffset?: { dx: number; dy: number };
+  /** Per-channel toggle — overrides global ProjectSettings.showPipeLabels.
+   *  Default undefined (inherit global). */
+  labelVisible?: boolean;
+}
+
+/**
  * Phase 6.6.3 — Text annotation entity.
  *
  * Free-positioned drafting text — engineer-typed notes, axis labels,
@@ -829,6 +899,10 @@ export interface UndoSnapshot {
   annotations?: SchemeAnnotation[];
   /** Phase 6.8.6 — reference buildings snapshot for batched op undo. */
   buildings?: SchemeBuilding[];
+  /** Phase 12.5 — composite-channel snapshot for batched op undo.
+   *  Optional so pre-12.5 snapshots that somehow leaked into a project
+   *  rollback don't lose existing channels (they stay untouched). */
+  channels?: SchemeChannel[];
 }
 
 export type HydraulicState = {
@@ -859,6 +933,11 @@ export type HydraulicState = {
    *  drawn on the canvas / map). Optional so legacy projects
    *  load cleanly. */
   buildings?: SchemeBuilding[];
+  /** Phase 12.5 — composite pipe channels (Л-4 / Л-7 / Л-9 per
+   *  ГК-23/02 СЕРИЯ Г-991-1). Each channel groups 1-5 SchemePipe
+   *  entities sharing geometry. Additive — Phase 6/7/8 projects
+   *  without channels load cleanly. */
+  channels?: SchemeChannel[];
 };
 
 /** Default state for a fresh project. */
