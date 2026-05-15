@@ -165,6 +165,25 @@ hydra-calc/
 | 11 | Hatch fills | 6 patterns: solid/diag45/diag135/cross/brick/dots/none |
 | 12 | Pipe length input | Manual L (m) override in addPipe mode |
 | 13 | Darkhan TPP verify | 0.0% deviation against 2013 hydraulic test data |
+| 14 | DXF pipe-role detect (Phase 7.3) | Multi-signal voter: layer name + ACI + linetype |
+| 15 | DXF review pane (Phase 7.4) | Engineer overrides + single Ctrl+Z undo restore |
+| 16 | Bayangol regression (Phase 7.5) | 247-node baseline locked in test suite |
+| 17 | Detail views (Phase 8) | Profile + Energy + Well + Compensator + P&ID — 6-page Drawing Set |
+| 18 | Compliance engine (Phase 9) | 30 БНбД rules → 7th-page Compliance Report PDF |
+| 19 | Email verify + reset (Phase 10.1) | Postmark/SendGrid + dev console fallback |
+| 20 | Backend calc API (Phase 10.2) | /api/calc/compliance fully implemented, hydraulic stubbed |
+| 21 | Share dialog (Phase 10.3) | 5 expiry options + revoke + active token list |
+| 22 | Activity feed (Phase 10.4) | Per-project audit trail + 90-day retention |
+| 23 | Team roles (Phase 10.5) | engineer/checker/approver + approval workflow |
+| 24 | Mobile responsive (Phase 11.1) | Hamburger Navbar + 44px touch targets |
+| 25 | PDF tile math (Phase 11.2) | Multi-page Plan math (renderer wire-up deferred) |
+| 26 | Compliance 270× speedup (Phase 11.3) | 1000-node check 13.5s → 49ms (hot Map cache + Dijkstra-once) |
+| 27 | Web Worker compliance (Phase 11.3) | Off-main-thread + fallback |
+| 28 | Lazy route chunks (Phase 11.4) | Initial bundle -140 KB raw / -48 KB gz |
+| 29 | Onboarding tour (Phase 11.5) | 5-step Mongolian first-time engineer carousel |
+
+**Test counts**: 681 → **1026** (Phase 9-11). PRs merged: **48 total**.
+**Initial bundle**: 418 → 285 KB raw / 133 → 85 KB gz (-36% gz post Phase 11.4).
 
 ---
 
