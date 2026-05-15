@@ -475,6 +475,15 @@ export interface ProjectSettings {
    *  Default true. The live HUD next to the cursor shows during
    *  active drawing regardless of this setting. */
   showLiveDimensions?: boolean;
+  /** Phase 12.8 — when true, every node shows the engineering cross-
+   *  reference number badge ("01", "02", …) at upper-right. Default
+   *  true. Engineer turns off for cleaner low-zoom overview prints. */
+  showNodeNumbers?: boolean;
+  /** Phase 12.8 — when true, every pipe shows a small chevron at the
+   *  midpoint indicating flow direction (geometric or solver-driven).
+   *  Default true. Channel-contained pipes always skip arrows since
+   *  the channel renders its own direction cue. */
+  showFlowArrows?: boolean;
 
   /* ===== Map / OSM background (Phase 5B.1) ===== */
   /** Tile-layer provider key (from MAP_PROVIDERS). Persisted so each
