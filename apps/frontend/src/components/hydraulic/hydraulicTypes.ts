@@ -484,6 +484,10 @@ export interface ProjectSettings {
    *  Default true. Channel-contained pipes always skip arrows since
    *  the channel renders its own direction cue. */
   showFlowArrows?: boolean;
+  /** Phase 12.8b — project-wide toggle for the Phase 12.7 channel
+   *  label panels. When false every channel hides its 3-line callout
+   *  regardless of per-channel `labelVisible`. Default true. */
+  showChannelLabels?: boolean;
 
   /* ===== Map / OSM background (Phase 5B.1) ===== */
   /** Tile-layer provider key (from MAP_PROVIDERS). Persisted so each
