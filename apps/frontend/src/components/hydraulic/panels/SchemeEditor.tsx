@@ -69,6 +69,12 @@ import { strokeDasharrayForStyle } from "../scheme/constructionLines";
 // Phase 12.5 — composite-channel render helpers + atomic build.
 import { channelPipeCountBadge, buildChannelFromDraw } from "../scheme/channelOperations";
 import { channelTypeLabel } from "../scheme/channelTypes";
+// Phase 12.7 — engineer-facing per-channel label panel.
+import {
+  buildChannelLabel,
+  isLabelVisible,
+  labelDimensions,
+} from "../scheme/channelLabelPanel";
 import {
   addConstructionLine,
   selectConstructionLine,
@@ -3047,6 +3053,82 @@ export function SchemeEditor({ readOnly }: Props) {
                       {badgeText} · {typeText.replace(/\s\(.*$/, "")}
                     </text>
                   </g>
+                </g>
+              );
+            })}
+
+            {/* Phase 12.7 — Per-channel engineering label panel.
+                AutoCAD-style 3-line callout (type + pipes + meta) at
+                engineer-positioned offset from the channel midpoint
+                with a thin leader line. Hidden when channel has
+                labelVisible=false. Project-wide visibility default is
+                ON (no settings flag wired yet — Phase 12.8 polish).
+                Channel-contained pipes are NOT individually rendered
+                (they're inside the channel polyline above), so labels
+                here are the only per-pipe metadata visible on plan. */}
+            {(channels ?? []).map((ch) => {
+              if (!isLabelVisible(ch, undefined)) return null;
+              const label = buildChannelLabel(ch, nodes, pipes);
+              if (!label) return null;
+              const dims = labelDimensions(label);
+              if (dims.width === 0) return null;
+              // Apply display-pos transforms to anchor for map mode.
+              // Channel anchor uses raw scheme-px (no per-channel geo),
+              // matching the channel render above.
+              const ax = label.anchorX;
+              const ay = label.anchorY;
+              const lx = ax + label.offsetDx;
+              const ly = ay + label.offsetDy;
+              // Slightly shift line endpoints so leader doesn't overlap text
+              const lineEndX = lx > ax ? lx - 4 : lx + dims.width + 4;
+              const lineEndY = ly > ay ? ly - 4 : ly + dims.height + 4;
+              const lines = [label.typeLine, label.pipesLine, label.metaLine].filter(
+                (l) => l.length > 0,
+              );
+              return (
+                <g
+                  key={`chlbl_${ch.id}`}
+                  data-testid={`channel-label-${ch.id}`}
+                  pointerEvents="none"
+                >
+                  {/* Leader line — channel midpoint → label box edge */}
+                  <line
+                    x1={ax}
+                    y1={ay}
+                    x2={lineEndX}
+                    y2={lineEndY}
+                    stroke="#555"
+                    strokeWidth={0.75}
+                    strokeDasharray="2 2"
+                  />
+                  {/* Tiny dot at the channel anchor (engineer cue:
+                      "this label belongs to this channel") */}
+                  <circle cx={ax} cy={ay} r={1.5} fill="#555" />
+                  {/* Label background — soft cream tone so it reads
+                      against both the channel and the map. */}
+                  <rect
+                    x={lx}
+                    y={ly}
+                    width={dims.width}
+                    height={dims.height}
+                    fill="#FFF8E1"
+                    stroke="#5B4F33"
+                    strokeWidth={0.6}
+                    rx={3}
+                    opacity={0.96}
+                  />
+                  {lines.map((line, i) => (
+                    <text
+                      key={i}
+                      x={lx + 6}
+                      y={ly + 12 + i * 14}
+                      fontSize={11}
+                      fontWeight={i === 0 ? 700 : 400}
+                      fill="#222"
+                    >
+                      {line}
+                    </text>
+                  ))}
                 </g>
               );
             })}
