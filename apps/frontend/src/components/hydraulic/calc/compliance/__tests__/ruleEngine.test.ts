@@ -70,6 +70,12 @@ function basicProject(): HydraulicState {
   s.pipes = [
     makePipe({ id: "p1", fromNodeId: "src", toNodeId: "aos1", dn: 100, length_m: 50 }),
   ];
+  // Phase 9.3 — seed project-level metadata so the project-completeness
+  // rules don't fire on the "clean project" fixture.
+  s.settings.titleBlock = { engineer: "Болд", checker: "Сүх", company: "Гэрлэлт ХХК" };
+  s.settings.printScale = "1:500";
+  s.settings.printPaperSize = "A3";
+  s.settings.printOrientation = "landscape";
   return s;
 }
 

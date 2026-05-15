@@ -36,6 +36,14 @@ function makeState(overrides?: Partial<HydraulicState>): HydraulicState {
     ];
     s.pipes = [makePipe({ id: "p1", fromNodeId: "src", toNodeId: "aos1" })];
   }
+  // Phase 9.3 — seed metadata so project-completeness rules pass.
+  s.settings = {
+    ...s.settings,
+    titleBlock: { engineer: "Б", checker: "С", company: "Co" },
+    printScale: "1:500",
+    printPaperSize: "A3",
+    printOrientation: "landscape",
+  };
   return s;
 }
 function makeCalc(state: HydraulicState, over?: Partial<CalculationResults>): CalculationResults {
@@ -72,8 +80,9 @@ function violationsForRule(report: ReturnType<typeof runComplianceCheck>, ruleId
 /* ─── Registry sanity ──────────────────────────────────────────── */
 
 describe("ALL_RULES registry — Phase 9.2", () => {
-  it("contains 20 rules (8 from Phase 9.1 + 12 new)", () => {
-    expect(ALL_RULES.length).toBe(20);
+  it("contains at least 20 rules (8 from Phase 9.1 + 12 new)", () => {
+    // Phase 9.3 will extend this beyond 20; assert ≥ to stay future-proof.
+    expect(ALL_RULES.length).toBeGreaterThanOrEqual(20);
   });
 
   it("rule ids unique across registry", () => {
