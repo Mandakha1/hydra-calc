@@ -117,6 +117,7 @@ import {
 import {
   addBuilding,
   selectBuilding,
+  updateBuilding,
 } from "../scheme/buildingApplier";
 import { ScaleBar } from "../scheme/ScaleBar";
 import {
@@ -263,6 +264,23 @@ export function SchemeEditor({ readOnly }: Props) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [drag, setDrag] = useState<{ nodeId: string; offX: number; offY: number } | null>(null);
+  // Phase 13.2 — building polygon drag handle. Engineer mousedowns on
+  // any vertex of a tagged building (Phase 12.4 outline + tag-as
+  // workflow) and drags the WHOLE polygon (+ its taggedAsNodeId
+  // companion node) to a new position. Captures the start mouse pt +
+  // the starting polygon vertices + tagged node pos, then onMouseMove
+  // patches every vertex / the node by the same translation delta.
+  // Mouseup commits with ONE pushUndoSnapshot so Ctrl+Z reverts the
+  // whole drag in a single step.
+  const [buildingDrag, setBuildingDrag] = useState<{
+    buildingId: string;
+    startMouse: Point;
+    startPolygon: Array<{ x: number; y: number; lat?: number; lon?: number }>;
+    /** Tagged node (when present) — moves alongside the polygon so the
+     *  centroid label + pipe endpoints stay in sync. */
+    taggedNodeId?: string;
+    startNodePos?: { x: number; y: number };
+  } | null>(null);
   const [mousePos, setMousePos] = useState<Point | null>(null);
   /** Phase 12.2 — viewport-space cursor position (clientX / clientY)
    *  for the floating DrawingHud overlay, which positions itself in
@@ -1447,6 +1465,61 @@ export function SchemeEditor({ readOnly }: Props) {
           if (ll) patch.geo = { lat: ll.lat, lon: ll.lon };
         }
         updateNode(drag.nodeId, patch);
+        // Phase 13.2 — when the dragged node is the tagged-as anchor
+        // of a building, translate the building's polygon vertices by
+        // the same delta so the outline + centroid stay in sync.
+        const taggedBuilding = (buildings ?? []).find(
+          (b) => b.taggedAsNodeId === drag.nodeId,
+        );
+        if (taggedBuilding) {
+          const dx = patch.x! - (nodes.find((n) => n.id === drag.nodeId)?.x ?? patch.x!);
+          const dy = patch.y! - (nodes.find((n) => n.id === drag.nodeId)?.y ?? patch.y!);
+          if (dx !== 0 || dy !== 0) {
+            const translated = taggedBuilding.polygon.map((v) => ({
+              ...v,
+              x: Math.round(v.x + dx),
+              y: Math.round(v.y + dy),
+              ...(showMap
+                ? svgToLatLon({ x: v.x + dx, y: v.y + dy }) ?? {}
+                : {}),
+            }));
+            updateBuilding(taggedBuilding.id, { polygon: translated });
+          }
+        }
+      } else if (buildingDrag) {
+        // Phase 13.2 — building polygon drag. Translate every vertex
+        // by the cursor delta from the drag start; mirror the
+        // translation onto the tagged-as node so its centroid label +
+        // pipe endpoints follow. Geo re-stamped per vertex / node when
+        // the map is visible so the building tracks pan/zoom after
+        // the drag ends. No undo push here — onMouseUp does it once.
+        const rawDx = pt.x - buildingDrag.startMouse.x;
+        const rawDy = pt.y - buildingDrag.startMouse.y;
+        // Snap the centroid translation to grid for tidy positioning.
+        const snappedCentroid = snap({ x: rawDx, y: rawDy });
+        const dx = Math.round(snappedCentroid.x);
+        const dy = Math.round(snappedCentroid.y);
+        const translated = buildingDrag.startPolygon.map((v) => {
+          const nx = v.x + dx;
+          const ny = v.y + dy;
+          return {
+            ...v,
+            x: nx,
+            y: ny,
+            ...(showMap ? svgToLatLon({ x: nx, y: ny }) ?? {} : {}),
+          };
+        });
+        updateBuilding(buildingDrag.buildingId, { polygon: translated });
+        if (buildingDrag.taggedNodeId && buildingDrag.startNodePos) {
+          const nx = buildingDrag.startNodePos.x + dx;
+          const ny = buildingDrag.startNodePos.y + dy;
+          const nodePatch: Partial<SchemeNode> = { x: nx, y: ny };
+          if (showMap) {
+            const ll = svgToLatLon({ x: nx, y: ny });
+            if (ll) nodePatch.geo = ll;
+          }
+          updateNode(buildingDrag.taggedNodeId, nodePatch);
+        }
       } else if (waypointDrag) {
         const snapped = snap(pt);
         const pipe = pipes.find((p) => p.id === waypointDrag.pipeId);
@@ -1507,6 +1580,9 @@ export function SchemeEditor({ readOnly }: Props) {
       // Phase 12.8b — channel label drag deps.
       channelLabelDrag,
       updateChannel,
+      // Phase 13.2 — building polygon drag deps.
+      buildingDrag,
+      buildings,
     ],
   );
 
@@ -1547,6 +1623,14 @@ export function SchemeEditor({ readOnly }: Props) {
     if (channelLabelDrag) {
       pushUndoSnapshot("Сувгийн тайлбар зөөгдсөн", 1);
       setChannelLabelDrag(null);
+    }
+    // Phase 13.2 — finalize the building polygon drag. The polygon +
+    // tagged-node positions were updated live in onMouseMove; here we
+    // push ONE undo snapshot so Ctrl+Z reverts the whole gesture, and
+    // clear the drag state. Cheap no-op when no drag was in flight.
+    if (buildingDrag) {
+      pushUndoSnapshot("Барилгыг зөөсөн", 1);
+      setBuildingDrag(null);
     }
     // Phase 6.5.1 — Resolve rubber-band on mouseup: hit-test all
     // visible nodes + pipes, populate multiSelection.
@@ -1608,7 +1692,7 @@ export function SchemeEditor({ readOnly }: Props) {
       });
       setRubberBand(null);
     }
-  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection, channelLabelDrag]);
+  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection, channelLabelDrag, buildingDrag]);
 
   const onWheel = useCallback((e: WheelEvent<SVGSVGElement>) => {
     if (Math.abs(e.deltaY) < 1) return;
@@ -2627,10 +2711,32 @@ export function SchemeEditor({ readOnly }: Props) {
                           return;
                         }
                         selectBuilding(b.id);
+                        // Phase 13.2 — plain click also primes the
+                        // polygon drag so a click+drag gesture moves
+                        // the whole building (and its tagged node).
+                        // Only in "select" mode — drawBuilding mode
+                        // is reserved for vertex placement.
+                        if (mode === "select" && !readOnly) {
+                          const pt = toSvg(e);
+                          const taggedNode = b.taggedAsNodeId
+                            ? nodes.find((n) => n.id === b.taggedAsNodeId)
+                            : null;
+                          setBuildingDrag({
+                            buildingId: b.id,
+                            startMouse: pt,
+                            startPolygon: b.polygon.map((v) => ({ ...v })),
+                            ...(taggedNode
+                              ? {
+                                  taggedNodeId: taggedNode.id,
+                                  startNodePos: { x: taggedNode.x, y: taggedNode.y },
+                                }
+                              : {}),
+                          });
+                        }
                       }
                     }}
                     onContextMenu={(e) => onContextMenuTarget(e, { kind: "building", id: b.id })}
-                    style={{ cursor: mode === "select" ? "pointer" : undefined }}
+                    style={{ cursor: mode === "select" ? "move" : undefined }}
                   >
                     {isMultiSelected && (
                       <rect
