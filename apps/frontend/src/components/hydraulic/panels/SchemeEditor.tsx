@@ -1171,7 +1171,7 @@ export function SchemeEditor({ readOnly }: Props) {
       const buildingType = tags["building:type"] ?? buildingTag;
       const levels = parseInt(tags["building:levels"] ?? "0") || undefined;
       const name = tags.name ?? tags["addr:housenumber"] ?? `OSM-${closest.id}`;
-      const kind = (() => {
+      const inferredKind = (() => {
         const t = (buildingType + " " + (tags.amenity ?? "")).toLowerCase();
         if (t.includes("apartment") || t.includes("residential") || buildingTag === "apartments") return "consumer_apartment";
         if (t.includes("hospital")) return "consumer_hospital";
@@ -1182,10 +1182,64 @@ export function SchemeEditor({ readOnly }: Props) {
         if (t.includes("house")) return "consumer_house";
         return "consumer_apartment";
       })();
-      // Open BuildingDialog with pre-filled footprint + lat/lon + suggested kind.
+      // Phase 13.11 — when the engineer already picked a building-like
+      // kind from the palette (Phase 13.1 polygon flow OR clicked OSM
+      // 🏘 directly), route the fetched OSM footprint to the new
+      // Phase 13.1 SchemeBuilding + tag-as workflow instead of the
+      // legacy BuildingDialog. Engineer report: "Газрын зураг дээрх
+      // барилга дээр давхарлаж зурах үед яг цэвэр хүрээг нь дагаж
+      // зурагдахгүй байна." Manual polygon snap can't match OSM
+      // building corners pixel-perfect — OSM tracing draws the
+      // building's exact outline AND tags it with the engineer's
+      // chosen kind in one click.
+      const tagAsKind = isBuildingLikeKind(pendingKind) ? pendingKind : inferredKind;
+      if (tagAsKind) {
+        const buildingId = uid("bld");
+        const buildingsCount = (useHydraulicStore.getState().buildings ?? []).length;
+        const draft = {
+          id: buildingId,
+          polygon: footprint,
+          label: name && name.length > 0 ? name : `Барилга-${buildingsCount + 1}`,
+          layerKey: "D" as const,
+        };
+        const { node, buildingPatch } = buildTagAsParams(
+          draft,
+          tagAsKind,
+          useHydraulicStore.getState().nodes,
+        );
+        // Width / height from polygon bbox so InspectorPanel + render
+        // (Phase 13.0b) show realistic dims immediately.
+        const bx = bbox(footprint.map((p) => ({ x: p.x, y: p.y })));
+        const width_m = (bx.maxX - bx.minX) / PX_PER_METER;
+        const height_m = (bx.maxY - bx.minY) / PX_PER_METER;
+        pushUndoSnapshot("OSM-аас барилга + tag-as", 2);
+        addBuilding({ ...draft, ...buildingPatch });
+        addNode({
+          ...node,
+          ...(width_m > 0 ? { width_m } : {}),
+          ...(height_m > 0 ? { height_m } : {}),
+          // Phase 13.10 — stamp geo so the centroid icon tracks the
+          // map alongside the polygon. OSM polygon vertices all
+          // carry exact lat/lon; centroid is the average.
+          geo: centroid,
+          // Floors auto-fill from OSM tag when available — saves the
+          // engineer a manual edit in Inspector.
+          ...(levels && levels > 0 ? { floors: levels } : {}),
+        });
+        select({ kind: "node", id: node.id });
+        setMode("select");
+        setToast({
+          text: `${node.label} — OSM-аас татаж тэмдэглэв (${Math.round(areaM2)} м²)`,
+          key: Date.now(),
+          tone: "success",
+        });
+        return;
+      }
+      // Legacy BuildingDialog path — kept for engineers who entered
+      // OSM mode without picking a kind first.
       setPendingFootprint(footprint);
       setOsmPickPreset({
-        kind,
+        kind: inferredKind,
         label: name,
         floors: levels,
         geo: centroid,
@@ -2847,6 +2901,38 @@ export function SchemeEditor({ readOnly }: Props) {
         <div style={hintStyle}>
           Polygon-ы өнцгүүдийг дараалан дарна. {polygon.length >= 3 ? "Эхний цэг рүү буцаж эсвэл Enter — хаах" : "≥3 цэг хэрэгтэй"}.
           {polygon.length > 0 && ` (${polygon.length} өнцөг)`}
+          {/* Phase 13.11 — when the engineer is drawing a building-like
+              kind AND the map is visible, offer a one-click switch to
+              OSM-trace mode so they don't have to manually snap to the
+              real building footprint. */}
+          {showMap && isBuildingLikeKind(pendingKind) && polygon.length === 0 && (
+            <button
+              onClick={() => {
+                setMode("pickBuilding");
+                setPolygon([]);
+                setToast({
+                  text: "OSM-аас татах — газрын зураг дээрх барилгын дотор дарна",
+                  key: Date.now(),
+                  tone: "neutral",
+                });
+              }}
+              style={{
+                marginLeft: 10,
+                padding: "2px 10px",
+                background: "var(--bp-blue, #1f5faa)",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+              data-testid="hint-osm-trace"
+              title="OSM газрын зургаас барилгын яг хэлбэрийг татаж тэмдэглэх"
+            >
+              🏘 OSM-аас татах
+            </button>
+          )}
         </div>
       )}
 
@@ -2939,7 +3025,14 @@ export function SchemeEditor({ readOnly }: Props) {
           {measurePoints.length > 0 && ` (${measurePoints.length} цэг)`}
         </div>
       )}
-      {mode === "pickBuilding" && (
+      {mode === "pickBuilding" && isBuildingLikeKind(pendingKind) && (
+        <div style={hintStyle}>
+          🏘 OSM-аас <strong>{getNodeKind(pendingKind)?.shortLabel ?? "барилга"}</strong> татах
+          — газрын зураг дээрх барилгын дотор дарна. Footprint + цэгийн geo
+          автоматаар тэмдэгтэй болно.
+        </div>
+      )}
+      {mode === "pickBuilding" && !isBuildingLikeKind(pendingKind) && (
         <div style={hintStyle}>
           🏘 OSM Барилга татах — газрын зураг дээр барилгын дотор дарна. OSM-аас ойролцоох барилгын footprint-г татаж тэмдэглэнэ.
           {osmLoading && <span style={{ marginLeft: 8, color: "var(--bp-amber)" }}>… татаж байна</span>}
