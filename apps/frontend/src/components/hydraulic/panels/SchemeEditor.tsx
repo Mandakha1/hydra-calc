@@ -1279,6 +1279,27 @@ export function SchemeEditor({ readOnly }: Props) {
           const next = last ? snap(constrain(last, pt)) : pt;
           return [...prev, next];
         });
+      } else if (mode === "addPipe" && !pipeFrom) {
+        // Phase 13.12 — Zulu-style pipe drawing extension:
+        // engineer report "Шугам хоолойг барилгагүй хоосон хэсэгт
+        // ч зурж болно." Empty-canvas FIRST click in addPipe mode
+        // now drops a junction node at the click point AND sets it
+        // as the pipe's `from` endpoint, so the engineer can start
+        // a pipe from any free position (no need to pre-place a
+        // node). Building-polygon clicks continue to anchor at the
+        // tagged-as node (Phase 13.8).
+        const id = uid("j");
+        const llStart = showMap ? svgToLatLon(pt) : null;
+        addNode({
+          id,
+          kind: "junction",
+          label: `J-${nodes.length + 1}`,
+          x: Math.round(pt.x),
+          y: Math.round(pt.y),
+          ...(llStart ? { geo: { lat: llStart.lat, lon: llStart.lon } } : {}),
+        });
+        setPipeFrom(id);
+        setPipeBendPts([]);
       } else if (mode === "addPipe" && pipeFrom) {
         // Phase 13.8 — Zulu-style mid-pipe bend points. Empty-canvas
         // clicks between the from-node and the to-node accumulate
@@ -2350,6 +2371,69 @@ export function SchemeEditor({ readOnly }: Props) {
       } else if (e.key === "Enter" && mode === "drawBuilding" && polygon.length >= 3) {
         // Phase 6.8.6 — direct-commit SchemeBuilding on Enter (no dialog).
         commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
+      } else if (e.key === "Enter" && mode === "addPipe" && pipeFrom) {
+        // Phase 13.12 — Enter terminates an in-flight pipe at the
+        // last captured bend point (or the cursor position when
+        // mousePos is known). Engineer no longer needs to click on
+        // a node/building to end the pipe — they can finish it
+        // anywhere on empty canvas. A junction node is auto-created
+        // at the termination point.
+        e.preventDefault();
+        const termPt: Point | null = pipeBendPts.length > 0
+          ? { x: pipeBendPts[pipeBendPts.length - 1]!.x, y: pipeBendPts[pipeBendPts.length - 1]!.y }
+          : mousePos
+            ? snap(mousePos)
+            : null;
+        if (!termPt) {
+          setToast({
+            text: "Эцсийн цэг тогтоохын тулд хоосон газар нэг удаа дарна уу",
+            key: Date.now(),
+            tone: "neutral",
+          });
+        } else {
+          const fromNode = nodes.find((n) => n.id === pipeFrom);
+          if (fromNode) {
+            // The LAST bend (or cursor) becomes the to-node. If there
+            // are >0 captured bends, the last one IS the terminal
+            // junction (drop it from bendPoints[] so it's not a
+            // duplicate vertex).
+            const carryBends = pipeBendPts.length > 0 ? pipeBendPts.slice(0, -1) : [];
+            const toId = uid("j");
+            const llTerm = showMap ? svgToLatLon(termPt) : null;
+            addNode({
+              id: toId,
+              kind: "junction",
+              label: `J-${nodes.length + 1}`,
+              x: Math.round(termPt.x),
+              y: Math.round(termPt.y),
+              ...(llTerm ? { geo: { lat: llTerm.lat, lon: llTerm.lon } } : {}),
+            });
+            // Polyline length sum (from → bends → term)
+            let measuredLen = 0;
+            let prev: { x: number; y: number } = { x: fromNode.x, y: fromNode.y };
+            for (const b of carryBends) {
+              measuredLen += pxToM(Math.hypot(prev.x - b.x, prev.y - b.y));
+              prev = b;
+            }
+            measuredLen += pxToM(Math.hypot(prev.x - termPt.x, prev.y - termPt.y));
+            const manualLen = parseFloat(pipeLengthInput);
+            const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
+            addPipe({
+              id: uid("pipe"),
+              fromNodeId: pipeFrom,
+              toNodeId: toId,
+              materialKey: "steel_aged",
+              dn: 50,
+              length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
+              circuit: pendingCircuit,
+              ...(carryBends.length > 0 ? { bendPoints: carryBends } : {}),
+            });
+            setPipeFrom(null);
+            setPipeBendPts([]);
+            setPipeLengthInput("");
+            setMode("select");
+          }
+        }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
         e.preventDefault();
         duplicateSelected();
@@ -2877,8 +2961,8 @@ export function SchemeEditor({ readOnly }: Props) {
       {/* Mode hints */}
       {mode === "addPipe" && pipeFrom && (
         <div style={hintStyle}>
-          Хоолойн төгсгөлийн зангилаа эсвэл барилгын дээр дарна.
-          {" "}Замдаа дарж <strong>булан нэмнэ</strong> · ESC цуцлах.
+          Зангилаа / барилга / хоосон газар дарж <strong>дуусгана</strong>.
+          {" "}Замдаа дарж <strong>булан</strong> нэмнэ · <strong>Enter</strong> — одоогийн цэгт дуусгах · ESC цуцлах.
           {pipeBendPts.length > 0 && (
             <span style={{ marginLeft: 8, color: "var(--warning)", fontWeight: 700 }}>
               · {pipeBendPts.length} булан
@@ -2892,7 +2976,9 @@ export function SchemeEditor({ readOnly }: Props) {
         </div>
       )}
       {mode === "addPipe" && !pipeFrom && (
-        <div style={hintStyle}>Эх зангилаа эсвэл барилгын дээр дарна (Zulu-стиль).</div>
+        <div style={hintStyle}>
+          Эх цэг сонгох: зангилаа, барилгын полигон, эсвэл <strong>хоосон газар</strong> (Zulu-стиль) дээр дарна.
+        </div>
       )}
       {mode === "addNode" && (
         <div style={hintStyle}>{getNodeKind(pendingKind)?.name} — canvas дээр дарна</div>
