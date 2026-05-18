@@ -121,6 +121,8 @@ import {
 } from "../scheme/buildingApplier";
 // Phase 13.3 — polygon vertex editing helpers.
 import { setVertex, polygonBboxMetres } from "../scheme/polygonVertexEdit";
+// Phase 13.5 — AutoCAD-style direct dimension input math.
+import { polarOffsetPoint, parseDimensionInput } from "../scheme/polarOffset";
 import { ScaleBar } from "../scheme/ScaleBar";
 import {
   DEFAULT_SCALE,
@@ -291,6 +293,19 @@ export function SchemeEditor({ readOnly }: Props) {
     buildingId: string;
     vertexIndex: number;
   } | null>(null);
+  /**
+   * Phase 13.5 — AutoCAD-style direct-distance input. While a draw is
+   * in progress (drawBuilding with ≥1 vertex OR addPipe with a `from`
+   * node), engineer types LENGTH (м) + ANGLE (°) into a floating
+   * panel and Enter commits the next vertex / pipe endpoint at the
+   * polar offset. Stored as strings so partial input ("1." / "") is
+   * tolerated without resetting to NaN.
+   */
+  const [dimensionInputLen, setDimensionInputLen] = useState<string>("");
+  const [dimensionInputAng, setDimensionInputAng] = useState<string>("0");
+  /** Which input field is focused: "length" (default after first
+   *  vertex) or "angle". Tab swaps. */
+  const [dimensionInputFocus, setDimensionInputFocus] = useState<"length" | "angle">("length");
   const [mousePos, setMousePos] = useState<Point | null>(null);
   /** Phase 12.2 — viewport-space cursor position (clientX / clientY)
    *  for the floating DrawingHud overlay, which positions itself in
@@ -796,6 +811,98 @@ export function SchemeEditor({ readOnly }: Props) {
    * One click puts a known starting shape on the canvas; the
    * engineer drags vertices / edits metadata to suit.
    */
+  /**
+   * Phase 13.5 — commit the engineer-typed (length, angle) as the
+   * NEXT vertex / pipe endpoint relative to the current anchor.
+   *
+   * Active anchor resolution:
+   *   - drawBuilding mode → last polygon vertex (polygon[length-1])
+   *   - addPipe mode      → the `from` node's display position
+   *
+   * On success the inputs reset (length cleared so the engineer can
+   * type the next segment immediately; angle preserved as a
+   * "polar tracking" default — common AutoCAD habit). On invalid
+   * input the panel emits a toast and stays focused.
+   */
+  const commitDimensionInput = useCallback(() => {
+    if (readOnly) return;
+    const parsed = parseDimensionInput(dimensionInputLen, dimensionInputAng);
+    if (!parsed) {
+      setToast({
+        text: "Урт нь >0 м, өнцөг тоо байх ёстой",
+        key: Date.now(),
+        tone: "neutral",
+      });
+      return;
+    }
+    let from: Point | null = null;
+    if (mode === "drawBuilding" && polygon.length > 0) {
+      from = polygon[polygon.length - 1]!;
+    } else if (mode === "addPipe" && pipeFrom) {
+      const fromNode = nodes.find((n) => n.id === pipeFrom);
+      if (fromNode) from = { x: fromNode.x, y: fromNode.y };
+    }
+    if (!from) {
+      setToast({
+        text: "Зурах горимд эх цэг алга — эхлээд эх цэг сонгоно уу",
+        key: Date.now(),
+        tone: "neutral",
+      });
+      return;
+    }
+    const next = polarOffsetPoint(from, parsed.length_m, parsed.angle_deg, PX_PER_METER);
+    if (mode === "drawBuilding") {
+      // Push the next polygon vertex. If we hit ≥3 vertices the
+      // existing Enter / click-on-first-vertex closing flow takes
+      // over from here.
+      const withGeo = showMap
+        ? { ...next, ...(svgToLatLon(next) ?? {}) }
+        : next;
+      setPolygon((cur) => [...cur, withGeo]);
+    } else if (mode === "addPipe" && pipeFrom) {
+      // Create a destination node at the polar-offset point, then
+      // draw the pipe to it. Length on the pipe = engineer-typed
+      // length_m (so the typed value lands in length_m directly,
+      // not the px-derived approximation).
+      const nodeId = uid("dim");
+      const geo = showMap ? svgToLatLon(next) ?? undefined : undefined;
+      addNode({
+        id: nodeId,
+        kind: "junction",
+        label: `J-${nodes.length + 1}`,
+        x: Math.round(next.x),
+        y: Math.round(next.y),
+        ...(geo ? { geo } : {}),
+      });
+      addPipe({
+        id: uid("pipe"),
+        fromNodeId: pipeFrom,
+        toNodeId: nodeId,
+        materialKey: "steel_aged",
+        dn: 50,
+        length_m: parsed.length_m,
+        circuit: pendingCircuit,
+      });
+      setPipeFrom(nodeId); // chain — engineer can keep typing
+    }
+    // Reset length but KEEP angle (engineers iterate same direction).
+    setDimensionInputLen("");
+    setDimensionInputFocus("length");
+  }, [
+    readOnly,
+    dimensionInputLen,
+    dimensionInputAng,
+    mode,
+    polygon,
+    pipeFrom,
+    nodes,
+    showMap,
+    svgToLatLon,
+    addNode,
+    addPipe,
+    pendingCircuit,
+  ]);
+
   const placeBuildingTemplate = useCallback(() => {
     if (readOnly) return;
     // Viewport centre → scheme coords. Falls back to (0, 0) when
@@ -2551,6 +2658,90 @@ export function SchemeEditor({ readOnly }: Props) {
           {polygon.length > 0 && ` (${polygon.length} өнцөг)`}
         </div>
       )}
+
+      {/* Phase 13.5 — AutoCAD-style direct dimension input. Floating
+          panel docked top-right of the canvas while a draw is in
+          progress (≥1 polygon vertex placed OR addPipe has a `from`
+          node). Engineer types length (m) + angle (°) → Enter places
+          the next vertex / pipe endpoint at the polar offset.
+          Convention: 0° east, 90° north, CCW positive. Tab cycles
+          between fields. */}
+      {!readOnly &&
+        ((mode === "drawBuilding" && polygon.length > 0) ||
+          (mode === "addPipe" && pipeFrom)) && (
+          <div
+            style={dimensionInputPanelStyle}
+            data-testid="dimension-input-panel"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                commitDimensionInput();
+              } else if (e.key === "Tab") {
+                e.preventDefault();
+                e.stopPropagation();
+                setDimensionInputFocus((f) => (f === "length" ? "angle" : "length"));
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setDimensionInputLen("");
+              }
+            }}
+          >
+            <div style={{ fontSize: 11, color: "var(--fg-muted)", marginBottom: 4 }}>
+              📐 CAD оролт — Tab солих · Enter зурах
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <label style={{ fontSize: 11 }}>
+                Урт:
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0.1}
+                  value={dimensionInputLen}
+                  placeholder="м"
+                  data-testid="dimension-input-length"
+                  ref={(el) => {
+                    if (el && dimensionInputFocus === "length" && document.activeElement !== el) {
+                      // Auto-focus when the panel opens or focus moves back here
+                    }
+                  }}
+                  autoFocus={dimensionInputFocus === "length"}
+                  onFocus={() => setDimensionInputFocus("length")}
+                  onChange={(e) => setDimensionInputLen(e.target.value)}
+                  style={dimensionInputBoxStyle}
+                />
+                <span style={{ marginLeft: 2 }}>м</span>
+              </label>
+              <label style={{ fontSize: 11 }}>
+                Өнцөг:
+                <input
+                  type="number"
+                  step={1}
+                  value={dimensionInputAng}
+                  placeholder="°"
+                  data-testid="dimension-input-angle"
+                  autoFocus={dimensionInputFocus === "angle"}
+                  onFocus={() => setDimensionInputFocus("angle")}
+                  onChange={(e) => setDimensionInputAng(e.target.value)}
+                  style={dimensionInputBoxStyle}
+                />
+                <span style={{ marginLeft: 2 }}>°</span>
+              </label>
+              <button
+                onClick={commitDimensionInput}
+                style={dimensionInputBtnStyle}
+                data-testid="dimension-input-commit"
+                title="Enter — зурах"
+              >
+                ↳
+              </button>
+            </div>
+            <div style={{ fontSize: 10, color: "var(--fg-muted)", marginTop: 4 }}>
+              Конвенц: 0° зүүн (восток) · 90° хойд · CCW эерэг
+            </div>
+          </div>
+        )}
       {mode === "measure" && (
         <div style={hintStyle}>
           📏 Хэмжих хэрэгсэл — цэгүүдийг дараалан дарна. {measurePoints.length >= 1 ? `Σ урт live харагдана. ESC цуцлах.` : "Эхний цэг дээр дарна."}
@@ -5271,6 +5462,38 @@ const hintStyle: CSSProperties = {
   padding: "0.4rem 0.75rem",
   borderRadius: 6,
   fontSize: 12,
+};
+
+/* Phase 13.5 — CAD-style dimension input panel styles. */
+const dimensionInputPanelStyle: CSSProperties = {
+  position: "absolute",
+  top: 105,
+  left: 80,
+  zIndex: 6,
+  background: "var(--bg, white)",
+  border: "1px solid var(--accent, #1f5faa)",
+  borderRadius: 6,
+  padding: "8px 12px",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+  minWidth: 280,
+};
+const dimensionInputBoxStyle: CSSProperties = {
+  marginLeft: 4,
+  width: 60,
+  padding: "3px 6px",
+  fontSize: 12,
+  border: "1px solid var(--border-soft, #ccc)",
+  borderRadius: 4,
+};
+const dimensionInputBtnStyle: CSSProperties = {
+  padding: "4px 10px",
+  background: "var(--accent, #1f5faa)",
+  color: "white",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 600,
 };
 
 function prettyName(kind: string, n: number): string {
