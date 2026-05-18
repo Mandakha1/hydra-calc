@@ -1147,9 +1147,12 @@ export function SchemeEditor({ readOnly }: Props) {
       } else if (mode === "drawBuilding") {
         // Polygon drawing — add vertex; close if click on first vertex
         if (polygon.length >= 3 && nearPoint(pt, polygon[0]!, 12)) {
-          // Phase 6.8.6 — commit DIRECTLY as a SchemeBuilding (no dialog).
-          // Canvas-mode vertices don't carry geo, so the polygon lives in
-          // scheme-pixel space and stays put when the map toggles on/off.
+          // Phase 6.8.6 — commit DIRECTLY as a SchemeBuilding (no
+          // dialog). Phase 13.5c — when the map is visible, vertices
+          // below ALSO carry lat/lon so the polygon tracks the map
+          // through pan/zoom (previously only the leaflet-onMapClick
+          // path stamped geo; canvas-overlay clicks did not, leaving
+          // polygons stuck in scheme-pixel space when the map moved).
           commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
           return;
         }
@@ -1157,7 +1160,21 @@ export function SchemeEditor({ readOnly }: Props) {
         if (polygon.length > 0) {
           nextPoint = snap(constrain(polygon[polygon.length - 1]!, pt));
         }
-        setPolygon([...polygon, nextPoint]);
+        // Phase 13.5c — engineer report: "Сургуулийн барилгыг газрын
+        // зураг дээр зурсанч цуг хөдлөхгүй, scale zoom хийгдэхгүй
+        // байна." Root cause: canvas-overlay click handler dropped
+        // the lat/lon stamp. Fix: when showMap is on, project the
+        // snap'd point back to lat/lon via svgToLatLon so every
+        // polygon vertex carries geo. Polygon render then projects
+        // via leaflet on every mapTick → real-scale tracking works.
+        const llCanvas = showMap ? svgToLatLon(nextPoint) : null;
+        const stampedNextPoint = llCanvas
+          ? { ...nextPoint, lat: llCanvas.lat, lon: llCanvas.lon }
+          : nextPoint;
+        setPolygon([
+          ...polygon,
+          stampedNextPoint as Point & { lat?: number; lon?: number },
+        ]);
       } else if (mode === "drawDimension") {
         // Phase 6.6.1 — empty-canvas click in drawDimension mode is a
         // no-op (dimensions require node endpoint snap). Toast hints.
