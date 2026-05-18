@@ -382,14 +382,18 @@ export interface ProjectSettings {
   printScale?: "1:200" | "1:500" | "1:1000" | "1:2000";
 
   /** Phase 6.8.3 — project-wide symbol-size preset.
-   *  Multiplies every entity's computed radius:
+   *  Multiplies every entity's computed radius. Phase 13.0 widened
+   *  from 3 tiers → 5 per engineer feedback (АОС/Source хэт том):
+   *    - "xs"     → 0.5×  (dense overview — symbols don't obscure OSM footprints)
    *    - "small"  → 0.7×  (overview / dense cluster diagrams)
    *    - "medium" → 1.0×  (default — calibrated for typical UB
    *                        residential plans at zoom 16)
    *    - "large"  → 1.3×  (presentation / hand-signed prints)
+   *    - "xl"     → 1.6×  (large-format print / projector display)
    *  Per-entity `size_scale` multiplies on top, so a single oversized
-   *  ЦТП can still be tamed without dragging the whole project. */
-  symbolSizePreset?: "small" | "medium" | "large";
+   *  ЦТП can still be tamed without dragging the whole project.
+   *  Keyboard `[` / `]` cycles through tiers in SchemeEditor. */
+  symbolSizePreset?: "xs" | "small" | "medium" | "large" | "xl";
   /** Paper size — only A3 + A4 are supported in 6.7. */
   printPaperSize?: "A3" | "A4";
   /** Paper orientation. Default "landscape" (the Mongolian convention

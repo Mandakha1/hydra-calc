@@ -79,8 +79,14 @@ export type EntityKind =
  *  (where 35 m × 0.626 px/m / 2 ≈ 11 px) lands IN BAND rather than
  *  clamping to the old 12 px floor and looking the same size as a
  *  junction marker. Ceiling dropped 80 → 60 to keep close-zoom
- *  symbols from dominating the OSM building footprints they sit on. */
-export const MIN_SYMBOL_PX = 6;
+ *  symbols from dominating the OSM building footprints they sit on.
+ *
+ *  Phase 13.0: floor lowered 6 → 4 so the new XS preset (0.5×) can
+ *  ACTUALLY shrink symbols past the prior MIN — engineers viewing
+ *  dense overviews needed markers small enough not to obscure OSM
+ *  building footprints. Ceiling kept at 60 (still legible at print
+ *  scale; XL preset uses the multiplier headroom). */
+export const MIN_SYMBOL_PX = 4;
 export const MAX_SYMBOL_PX = 60;
 
 /** Stroke-width clamping for pipes (narrower band — pipes go from
@@ -146,14 +152,59 @@ export function resolveEntityKind(
  * are applied AT the final radius (so MIN/MAX clamps still bracket
  * the result and the smallest entities can't disappear).
  */
-export type SymbolSizePreset = "small" | "medium" | "large";
+/**
+ * Phase 13.0 — expanded from 3 → 5 tiers per engineer feedback:
+ *   "АОС / Эх үүсвэрийн хэмжээ хэт том" — Small (0.7×) was the
+ *   smallest available, still too large for dense cluster overviews.
+ *   XS (0.5×) lets engineers shrink markers far enough to see the
+ *   underlying OSM building footprints clearly. XL (1.6×) is the
+ *   inverse — for printed presentation copies where the engineer
+ *   wants the network to dominate the page.
+ *
+ *   Keyboard `[` / `]` cycles through the 5 tiers without opening
+ *   the SettingsPanel (see SchemeEditor key handler).
+ */
+export type SymbolSizePreset = "xs" | "small" | "medium" | "large" | "xl";
 export const SYMBOL_SIZE_PRESETS: Record<SymbolSizePreset, number> = {
+  xs: 0.5,
   small: 0.7,
   medium: 1.0,
   large: 1.3,
+  xl: 1.6,
+};
+/** Ordered tiers — used by the `[` / `]` shortcuts to step through. */
+export const SYMBOL_SIZE_PRESET_ORDER: ReadonlyArray<SymbolSizePreset> = [
+  "xs",
+  "small",
+  "medium",
+  "large",
+  "xl",
+];
+/** Engineer-facing Mongolian label for each tier. */
+export const SYMBOL_SIZE_PRESET_LABELS: Record<SymbolSizePreset, string> = {
+  xs: "Маш жижиг",
+  small: "Жижиг",
+  medium: "Дунд",
+  large: "Том",
+  xl: "Маш том",
 };
 /** Default when ProjectSettings.symbolSizePreset is unset (legacy projects). */
 export const DEFAULT_SYMBOL_SIZE_PRESET: SymbolSizePreset = "medium";
+
+/** Step to the next/previous preset tier. Saturates at the bounds —
+ *  pressing `[` on "xs" stays "xs"; pressing `]` on "xl" stays "xl". */
+export function steppedPreset(
+  current: SymbolSizePreset | undefined,
+  direction: "decrease" | "increase",
+): SymbolSizePreset {
+  const cur = current ?? DEFAULT_SYMBOL_SIZE_PRESET;
+  const idx = SYMBOL_SIZE_PRESET_ORDER.indexOf(cur);
+  if (idx < 0) return DEFAULT_SYMBOL_SIZE_PRESET;
+  if (direction === "decrease") {
+    return SYMBOL_SIZE_PRESET_ORDER[Math.max(0, idx - 1)]!;
+  }
+  return SYMBOL_SIZE_PRESET_ORDER[Math.min(SYMBOL_SIZE_PRESET_ORDER.length - 1, idx + 1)]!;
+}
 
 /**
  * Compute the visible symbol radius in SVG pixels for a given entity

@@ -44,7 +44,9 @@ import {
   resolveEntityKind,
   MIN_SYMBOL_PX,
   SYMBOL_SIZE_PRESETS,
+  SYMBOL_SIZE_PRESET_LABELS,
   DEFAULT_SYMBOL_SIZE_PRESET,
+  steppedPreset,
 } from "../scheme/symbolSize";
 import {
   findEndpointSnap,
@@ -1766,6 +1768,23 @@ export function SchemeEditor({ readOnly }: Props) {
             text: "Clipboard хоосон",
             key: Date.now(),
             tone: "neutral",
+          });
+        }
+      } else if (e.key === "[" || e.key === "]") {
+        // Phase 13.0 — keyboard shortcut to step through symbol-size
+        // presets without opening SettingsPanel. `[` shrinks, `]`
+        // grows. Saturates at xs / xl bounds. Engineer-feedback fix
+        // for "АОС / Эх үүсвэрийн хэмжээ хэт том" — discoverable +
+        // fast iteration. Toast feedback shows the new tier label.
+        e.preventDefault();
+        const direction: "decrease" | "increase" = e.key === "[" ? "decrease" : "increase";
+        const next = steppedPreset(settings.symbolSizePreset, direction);
+        if (next !== (settings.symbolSizePreset ?? DEFAULT_SYMBOL_SIZE_PRESET)) {
+          updateSettings({ symbolSizePreset: next });
+          setToast({
+            text: `Тэмдэгийн хэмжээ: ${SYMBOL_SIZE_PRESET_LABELS[next]} (${Math.round(SYMBOL_SIZE_PRESETS[next] * 100)}%)`,
+            key: Date.now(),
+            tone: "success",
           });
         }
       } else if (e.key === "Escape") {
