@@ -17,6 +17,8 @@ import {
 } from "../scheme/titleBlockMeta";
 import {
   SYMBOL_SIZE_PRESETS,
+  SYMBOL_SIZE_PRESET_ORDER,
+  SYMBOL_SIZE_PRESET_LABELS,
   DEFAULT_SYMBOL_SIZE_PRESET,
   type SymbolSizePreset,
 } from "../scheme/symbolSize";
@@ -212,16 +214,23 @@ export function SettingsPanel({ readOnly }: { readOnly?: boolean }) {
           disabled={readOnly}
           onChange={(e) => update({ symbolSizePreset: e.target.value as SymbolSizePreset })}
           style={inputStyle}
+          data-testid="symbol-size-preset"
         >
-          <option value="small">Жижиг — {Math.round(SYMBOL_SIZE_PRESETS.small * 100)}% (төслийн ерөнхий зураг)</option>
-          <option value="medium">Дунд — {Math.round(SYMBOL_SIZE_PRESETS.medium * 100)}% (default)</option>
-          <option value="large">Том — {Math.round(SYMBOL_SIZE_PRESETS.large * 100)}% (танилцуулга / гарын үсэгтэй хуулбар)</option>
+          {SYMBOL_SIZE_PRESET_ORDER.map((key) => (
+            <option key={key} value={key}>
+              {SYMBOL_SIZE_PRESET_LABELS[key]} — {Math.round(SYMBOL_SIZE_PRESETS[key] * 100)}%
+              {key === "medium" ? " (default)" : ""}
+              {key === "xs" ? " (нягт overview)" : ""}
+              {key === "xl" ? " (танилцуулга / print)" : ""}
+            </option>
+          ))}
         </select>
       </Field>
       <p style={{ fontSize: 12, color: "var(--fg-muted)", margin: "0.3rem 0 0" }}>
         Шинэ зурдаг тэмдэгүүдэд preset нь шууд хэрэглэгдэнэ. Аль хэдийн
         зурсан тэмдгийн хэмжээг тус тусад нь өөрчилөхдөө Inspector-ын
-        {" «Хэмжээний хувь» "}талбарыг ашиглана.
+        {" «Хэмжээний хувь» "}талбарыг ашиглана. <strong>[</strong> / <strong>]</strong>
+        дарж preset-ийг зургийн дотроос шууд солино.
       </p>
 
       {/* Phase 12.8b — Plan-view overlay toggles. Three independent

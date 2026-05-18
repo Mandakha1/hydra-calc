@@ -220,6 +220,11 @@ describe("symbol-size preset multipliers (Phase 6.8.3)", () => {
     expect(SYMBOL_SIZE_PRESETS.small).toBeCloseTo(0.7, 6);
     expect(SYMBOL_SIZE_PRESETS.medium).toBeCloseTo(1.0, 6);
     expect(SYMBOL_SIZE_PRESETS.large).toBeCloseTo(1.3, 6);
+    // Phase 13.0 — engineer feedback "Орон сууц / Эх үүсвэр хэт том"
+    // added two extra tiers so the preset range covers both
+    // overview-density and presentation-scale use cases.
+    expect(SYMBOL_SIZE_PRESETS.xs).toBeCloseTo(0.5, 6);
+    expect(SYMBOL_SIZE_PRESETS.xl).toBeCloseTo(1.6, 6);
   });
 
   it("DEFAULT_SYMBOL_SIZE_PRESET is 'medium' (preserves Phase 6A behaviour)", () => {
@@ -295,5 +300,58 @@ describe("symbol-size preset multipliers (Phase 6.8.3)", () => {
     const pxPerM = pxPerMeterAtZoom(17);
     const r = computeSymbolRadiusPx("consumer", pxPerM, 0);
     expect(r).toBeGreaterThanOrEqual(MIN_SYMBOL_PX);
+  });
+});
+
+/* ─── Phase 13.0 — 5-tier expansion + keyboard shortcuts ──────── */
+
+describe("steppedPreset — Phase 13.0 [ / ] keyboard stepper", () => {
+  it("SYMBOL_SIZE_PRESET_ORDER lists 5 tiers smallest → largest", async () => {
+    const mod = await import("../symbolSize");
+    expect(mod.SYMBOL_SIZE_PRESET_ORDER).toEqual([
+      "xs", "small", "medium", "large", "xl",
+    ]);
+  });
+
+  it("SYMBOL_SIZE_PRESET_LABELS provides Mongolian copy for each tier", async () => {
+    const mod = await import("../symbolSize");
+    expect(mod.SYMBOL_SIZE_PRESET_LABELS.xs).toBe("Маш жижиг");
+    expect(mod.SYMBOL_SIZE_PRESET_LABELS.small).toBe("Жижиг");
+    expect(mod.SYMBOL_SIZE_PRESET_LABELS.medium).toBe("Дунд");
+    expect(mod.SYMBOL_SIZE_PRESET_LABELS.large).toBe("Том");
+    expect(mod.SYMBOL_SIZE_PRESET_LABELS.xl).toBe("Маш том");
+  });
+
+  it("steppedPreset decreases through the tier order", async () => {
+    const { steppedPreset } = await import("../symbolSize");
+    expect(steppedPreset("xl", "decrease")).toBe("large");
+    expect(steppedPreset("large", "decrease")).toBe("medium");
+    expect(steppedPreset("medium", "decrease")).toBe("small");
+    expect(steppedPreset("small", "decrease")).toBe("xs");
+  });
+
+  it("steppedPreset increases through the tier order", async () => {
+    const { steppedPreset } = await import("../symbolSize");
+    expect(steppedPreset("xs", "increase")).toBe("small");
+    expect(steppedPreset("small", "increase")).toBe("medium");
+    expect(steppedPreset("medium", "increase")).toBe("large");
+    expect(steppedPreset("large", "increase")).toBe("xl");
+  });
+
+  it("steppedPreset saturates at the bounds (xs stays xs on decrease, xl stays xl on increase)", async () => {
+    const { steppedPreset } = await import("../symbolSize");
+    expect(steppedPreset("xs", "decrease")).toBe("xs");
+    expect(steppedPreset("xl", "increase")).toBe("xl");
+  });
+
+  it("steppedPreset falls back to default when current is undefined", async () => {
+    const { steppedPreset } = await import("../symbolSize");
+    // Undefined → treat as "medium", then step from there.
+    expect(steppedPreset(undefined, "decrease")).toBe("small");
+    expect(steppedPreset(undefined, "increase")).toBe("large");
+  });
+
+  it("Phase 13.0 — MIN_SYMBOL_PX lowered to 4 so XS can shrink below the Phase 6.8.3 floor", () => {
+    expect(MIN_SYMBOL_PX).toBe(4);
   });
 });
