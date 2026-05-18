@@ -227,6 +227,17 @@ export function steppedPreset(
  *                          a tiny junction marker below the floor
  *                          (clamps step in) and a "Large" preset can
  *                          push a source past the cap (clamps cap it).
+ * @param opts.maxDiameter_m
+ *                          Phase 13.15 — cap the EFFECTIVE real-world
+ *                          diameter at this value. Used when the node
+ *                          is tag-linked to a SchemeBuilding (Phase
+ *                          12.4 outline) so the centroid symbol sits
+ *                          PROPORTIONALLY INSIDE the polygon instead
+ *                          of using the generic 35 m consumer / 18 m
+ *                          source reference (which dwarfs a small
+ *                          15 m × 20 m health-centre polygon). Caller
+ *                          typically passes `0.4 × min(width_m, height_m)`.
+ *                          MIN/MAX clamps still apply.
  * @returns                 Symbol radius (half-width) in pixels,
  *                          clamped.
  */
@@ -234,6 +245,7 @@ export function computeSymbolRadiusPx(
   entity: EntityKind,
   pxPerMeter: number | null,
   scaleMultiplier: number = 1.0,
+  opts?: { maxDiameter_m?: number },
 ): number {
   if (!pxPerMeter || pxPerMeter <= 0) {
     // Schematic-mode floor still respects the multiplier so a Small
@@ -241,9 +253,20 @@ export function computeSymbolRadiusPx(
     // (rather than ignoring the engineer's setting).
     return clamp(MIN_SYMBOL_PX * scaleMultiplier, MIN_SYMBOL_PX * 0.5, MAX_SYMBOL_PX);
   }
-  const real_m = ENTITY_REAL_SIZE_M[entity];
+  const baseReal_m = ENTITY_REAL_SIZE_M[entity];
+  // Phase 13.15 — building-bound cap. Tagged-to-building nodes (Phase
+  // 12.4 outline workflow) hand us the polygon's min plan dimension so
+  // the centroid logo never blankets the building rect on the map.
+  // We pick the SMALLER of the generic reference and the building cap
+  // so when the building IS bigger than the kind default (e.g. ТЭЦ 80 m
+  // in a tagged 100 m polygon), the kind-typical 18 m still wins —
+  // engineers expect the kind icon, not a polygon-sized logo.
+  const effectiveReal_m =
+    typeof opts?.maxDiameter_m === "number" && opts.maxDiameter_m > 0
+      ? Math.min(baseReal_m, opts.maxDiameter_m)
+      : baseReal_m;
   // Reference SIZE is a diameter, so divide by 2 for radius.
-  const radius_px = ((real_m * pxPerMeter) / 2) * scaleMultiplier;
+  const radius_px = ((effectiveReal_m * pxPerMeter) / 2) * scaleMultiplier;
   return clamp(radius_px, MIN_SYMBOL_PX, MAX_SYMBOL_PX);
 }
 
