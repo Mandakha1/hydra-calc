@@ -321,7 +321,12 @@ export function SchemeEditor({ readOnly }: Props) {
    * service rooms, equipment bays, or odd-shaped real-world buildings.
    */
   const [fineSnap, setFineSnap] = useState(false);
-  const [showMap, setShowMap] = useState(false);
+  // Phase 13.6 — map ON by default. Engineers reported they almost
+  // always want the OSM background underneath their drawings (per-
+  // node geo-anchoring + real-scale building math both depend on the
+  // map being visible). The 🗺 toggle button remains for engineers
+  // who want pure-schematic mode (PDF prints / overview snapshots).
+  const [showMap, setShowMap] = useState(true);
   // Map provider + opacity are persisted on ProjectSettings (Phase 5B.1a)
   // so each project remembers the engineer's preferred tile style across
   // page reloads. Default to OSM / 1.0 opacity if the project never had
