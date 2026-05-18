@@ -760,9 +760,9 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             <Field label="Өргөн (м)">
               <input
                 type="number"
-                min={1}
+                min={0.1}
                 max={500}
-                step={1}
+                step={0.1}
                 value={node.width_m ?? 0}
                 disabled={readOnly}
                 onChange={(e) => {
@@ -778,9 +778,9 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             <Field label="Урт (м)">
               <input
                 type="number"
-                min={1}
+                min={0.1}
                 max={500}
-                step={1}
+                step={0.1}
                 value={node.height_m ?? 0}
                 disabled={readOnly}
                 onChange={(e) => {
