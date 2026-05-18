@@ -90,6 +90,11 @@ import {
 // Phase 12.8 — engineering cross-reference numbers + flow arrows.
 import { assignNodeNumbers, nodeNumberBadge } from "../scheme/nodeNumbering";
 import { buildAllArrows } from "../scheme/flowArrows";
+// Phase 13.1 — pipe endpoint clipping at building polygon perimeter.
+import {
+  findTaggedBuilding,
+  clipPipeEndpointAtBuilding,
+} from "../scheme/pipePolygonClip";
 // Phase 12.5b — channel-create modal opened on second click.
 import {
   ChannelCreateDialog,
@@ -154,6 +159,26 @@ type AngleMode = "free" | "ortho90" | "ortho45";
 
 interface Props {
   readOnly?: boolean;
+}
+
+/**
+ * Phase 13.1 — kinds that should enter polygon-draw mode (AutoCAD-style)
+ * when picked from the side palette, instead of single-click placement.
+ *
+ * Source + consumer categories carry physical extent (ТЭЦ defaults to
+ * 80×50 m, АОС to 30×15 m, etc.) — drawing them as polygon outlines
+ * gives engineers a true-to-scale plan view with any-angle vertices.
+ * Wells / chambers / valves / sensors stay single-click (they have no
+ * meaningful real-world footprint at typical drawing scales).
+ *
+ * Engineer-feedback driven: "Эх үүсвэр, олон хэрэглэгчийг яг үүн шиг
+ * polygon-аар зурдаг болго" (turn building-like placement into an
+ * AutoCAD-style polygon flow).
+ */
+function isBuildingLikeKind(kind: string): boolean {
+  const def = getNodeKind(kind);
+  if (!def) return false;
+  return def.category === "source" || def.category === "consumer";
 }
 
 const GRID_M = 1; // 1 meter grid
@@ -641,14 +666,64 @@ export function SchemeEditor({ readOnly }: Props) {
     const cur = useHydraulicStore.getState();
     const buildingsCount = (cur.buildings ?? []).length;
     const id = uid("bld");
+    const cleanedPolygon = vertices.map((v) => ({
+      x: Math.round(v.x),
+      y: Math.round(v.y),
+      ...(typeof v.lat === "number" ? { lat: v.lat } : {}),
+      ...(typeof v.lon === "number" ? { lon: v.lon } : {}),
+    }));
+
+    // Phase 13.1 — when the engineer entered drawBuilding from a
+    // source/consumer palette pick (isBuildingLikeKind(pendingKind)),
+    // auto-tag the building with that kind and create the linked
+    // SchemeNode at the polygon centroid. This mirrors the Phase 12.4
+    // right-click "Энэ юу вэ?" workflow but happens immediately at
+    // commit time, giving the engineer an AutoCAD-style "select kind →
+    // draw outline → done" placement gesture for buildings.
+    const buildingLikeKind = isBuildingLikeKind(pendingKind) ? pendingKind : null;
+    if (buildingLikeKind) {
+      const draft = {
+        id,
+        polygon: cleanedPolygon,
+        label: `Барилга-${buildingsCount + 1}`,
+        layerKey: "D" as const,
+      };
+      const { node, buildingPatch } = buildTagAsParams(
+        draft,
+        buildingLikeKind,
+        cur.nodes,
+      );
+      // Also dimension-tag the new node so InspectorPanel's Phase 13.0b
+      // width_m / height_m fields show realistic defaults (polygon
+      // bounding-box converted to metres via PX_PER_METER).
+      const bx = bbox(cleanedPolygon.map((p) => ({ x: p.x, y: p.y })));
+      const width_m = (bx.maxX - bx.minX) / PX_PER_METER;
+      const height_m = (bx.maxY - bx.minY) / PX_PER_METER;
+      pushUndoSnapshot("Барилга + tag-as", 2);
+      addBuilding({ ...draft, ...buildingPatch });
+      addNode({
+        ...node,
+        ...(width_m > 0 ? { width_m } : {}),
+        ...(height_m > 0 ? { height_m } : {}),
+      });
+      select({ kind: "node", id: node.id });
+      setPolygon([]);
+      setMode("select");
+      // Phase 13.1 — clear pendingKind back to a neutral default so
+      // the engineer's next "single-click placement" gesture (junction,
+      // valve, etc.) doesn't accidentally trigger another polygon draw.
+      setPendingKind("consumer_apartment");
+      setToast({
+        text: `${node.label} — барилга + tag үүсгэв`,
+        key: Date.now(),
+        tone: "success",
+      });
+      return;
+    }
+
     addBuilding({
       id,
-      polygon: vertices.map((v) => ({
-        x: Math.round(v.x),
-        y: Math.round(v.y),
-        ...(typeof v.lat === "number" ? { lat: v.lat } : {}),
-        ...(typeof v.lon === "number" ? { lon: v.lon } : {}),
-      })),
+      polygon: cleanedPolygon,
       label: `Барилга-${buildingsCount + 1}`,
       layerKey: "D",
     });
@@ -660,7 +735,7 @@ export function SchemeEditor({ readOnly }: Props) {
       key: Date.now(),
       tone: "success",
     });
-  }, [readOnly]);
+  }, [readOnly, pendingKind, addBuilding, addNode, select]);
 
   /**
    * Phase 6.8.7 — Quick-fill "standard apartment" building template.
@@ -2153,6 +2228,23 @@ export function SchemeEditor({ readOnly }: Props) {
               onClick={() => {
                 setPendingKind(k.key);
                 setShowPalette(null);
+                // Phase 13.1 — source/consumer kinds enter polygon-
+                // draw mode so the engineer outlines the real building
+                // footprint AutoCAD-style instead of dropping a single
+                // centered point. Wells / valves / sensors keep the
+                // legacy click-to-place behaviour. The polygon's
+                // commit handler auto-creates the tagged node + sets
+                // width_m / height_m from the bbox so InspectorPanel's
+                // dimension inputs show realistic defaults.
+                if (isBuildingLikeKind(k.key)) {
+                  setMode("drawBuilding");
+                  setPolygon([]);
+                  setToast({
+                    text: `${k.shortLabel} — газрын зураг дээр контур зурна (Enter → дуусгах)`,
+                    key: Date.now(),
+                    tone: "neutral",
+                  });
+                }
               }}
               title={k.description}
               style={{
@@ -3241,8 +3333,33 @@ export function SchemeEditor({ readOnly }: Props) {
               const a = nodes.find((n) => n.id === p.fromNodeId);
               const b = nodes.find((n) => n.id === p.toNodeId);
               if (!a || !b) return null;
-              const aPos = displayPos(a);
-              const bPos = displayPos(b);
+              let aPos = displayPos(a);
+              let bPos = displayPos(b);
+              // Phase 13.1 — clip pipe endpoints at the building polygon
+              // perimeter when one (or both) endpoints are tagged to a
+              // SchemeBuilding (Phase 12.1 outline workflow). Engineer
+              // expects pipes to enter through walls, not appear from
+              // the geometric centre. The polygon is in scheme-space
+              // px coords; for map-anchored buildings we use the same
+              // polygon (Phase 6.8.2 keeps it in sync via lat/lon
+              // round-trip; the displayPos pipeline shifts the WHOLE
+              // group, polygon included, so no extra conversion).
+              const aBuilding = findTaggedBuilding(a.id, buildings);
+              const bBuilding = findTaggedBuilding(b.id, buildings);
+              if (aBuilding) {
+                aPos = clipPipeEndpointAtBuilding({
+                  endpointAt: aPos,
+                  otherEndpoint: bPos,
+                  building: aBuilding,
+                });
+              }
+              if (bBuilding) {
+                bPos = clipPipeEndpointAtBuilding({
+                  endpointAt: bPos,
+                  otherEndpoint: aPos,
+                  building: bBuilding,
+                });
+              }
               const isSelected = selection?.kind === "pipe" && selection.id === p.id;
               const isBad = violatingPipeIds.has(p.id);
               const r = results?.pipes.find((x) => x.pipeId === p.id);
