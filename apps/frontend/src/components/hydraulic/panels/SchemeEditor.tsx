@@ -244,6 +244,17 @@ export function SchemeEditor({ readOnly }: Props) {
   const [pendingCircuit, setPendingCircuit] = useState<PipeCircuit>("heating_supply");
   const [angleMode, setAngleMode] = useState<AngleMode>("ortho90");
   const [pipeFrom, setPipeFrom] = useState<string | null>(null);
+  /**
+   * Phase 13.8 — Zulu-style pipe drawing: bend points captured between
+   * the first-node click and the final-node click. Engineer can drop
+   * any number of intermediate corners by clicking empty canvas; the
+   * pipe commits with `bendPoints: pipeBendPts` so the calc engine
+   * treats the whole polyline as ONE pipe with bends (Phase 12.3
+   * length_m authoritative invariant preserved). Clicking a second
+   * node terminates the drawing and dispatches addPipe.
+   */
+  const [pipeBendPts, setPipeBendPts] = useState<Array<{ x: number; y: number; lat?: number; lon?: number }>>([]);
+
   // Phase 12.5 — first endpoint while drawing a composite channel.
   // Mirrors `pipeFrom` semantics: click first node → setChannelFrom,
   // click second node → buildChannelFromDraw + addChannel atomically.
@@ -1185,6 +1196,27 @@ export function SchemeEditor({ readOnly }: Props) {
           const next = last ? snap(constrain(last, pt)) : pt;
           return [...prev, next];
         });
+      } else if (mode === "addPipe" && pipeFrom) {
+        // Phase 13.8 — Zulu-style mid-pipe bend points. Empty-canvas
+        // clicks between the from-node and the to-node accumulate
+        // as `pipeBendPts` and become the pipe's bendPoints[] on
+        // commit. Engineer draws an arbitrary polyline; calc still
+        // treats it as ONE pipe with `length_m` authoritative
+        // (Phase 12.3 invariant). Constrain to the previous anchor
+        // so engineer can also engage angleMode "ortho90" if they
+        // want crisp 90° corners along the way.
+        const prevAnchor = pipeBendPts.length > 0
+          ? pipeBendPts[pipeBendPts.length - 1]!
+          : (() => {
+              const fromNode = nodes.find((n) => n.id === pipeFrom);
+              return fromNode ? { x: fromNode.x, y: fromNode.y } : pt;
+            })();
+        const constrained = snap(constrain(prevAnchor, pt));
+        const llBend = showMap ? svgToLatLon(constrained) : null;
+        const bend = llBend
+          ? { ...constrained, lat: llBend.lat, lon: llBend.lon }
+          : constrained;
+        setPipeBendPts([...pipeBendPts, bend]);
       } else if (mode === "drawBuilding") {
         // Polygon drawing — add vertex; close if click on first vertex
         if (polygon.length >= 3 && nearPoint(pt, polygon[0]!, 12)) {
@@ -1434,12 +1466,24 @@ export function SchemeEditor({ readOnly }: Props) {
       if (mode === "addPipe") {
         if (!pipeFrom) {
           setPipeFrom(node.id);
+          setPipeBendPts([]);
         } else if (pipeFrom !== node.id) {
           const from = nodes.find((n) => n.id === pipeFrom);
-          // Manual length override — if user typed a value, use that; otherwise
-          // measure pixel distance between nodes.
+          // Phase 13.8 — pipe length sums the FULL polyline:
+          // from-node → bend[0] → bend[1] → … → to-node. Engineer's
+          // intermediate bend clicks add to the real-world distance.
+          // Manual length override still wins when the engineer
+          // typed a value into the pipeLengthInput field.
           const manualLen = parseFloat(pipeLengthInput);
-          const measuredLen = from ? pxToM(Math.hypot(from.x - node.x, from.y - node.y)) : 0;
+          let measuredLen = 0;
+          if (from) {
+            let prev: { x: number; y: number } = { x: from.x, y: from.y };
+            for (const b of pipeBendPts) {
+              measuredLen += pxToM(Math.hypot(prev.x - b.x, prev.y - b.y));
+              prev = b;
+            }
+            measuredLen += pxToM(Math.hypot(prev.x - node.x, prev.y - node.y));
+          }
           const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
           addPipe({
             id: uid("pipe"),
@@ -1449,8 +1493,14 @@ export function SchemeEditor({ readOnly }: Props) {
             dn: 50,
             length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
             circuit: pendingCircuit,
+            // Phase 13.8 — calc engine reads length_m as authoritative
+            // (Phase 12.3 invariant). bendPoints are visual + drift-
+            // advisory only; the engineer can drag them post-commit
+            // via the Phase 12.3 bendPoint handles.
+            ...(pipeBendPts.length > 0 ? { bendPoints: pipeBendPts } : {}),
           });
           setPipeFrom(null);
+          setPipeBendPts([]);
           setPipeLengthInput("");
           setMode("select");
         }
@@ -2197,6 +2247,9 @@ export function SchemeEditor({ readOnly }: Props) {
         setMode("select");
         setShowPalette(null);
         setPipeFrom(null);
+        // Phase 13.8 — also drop any captured mid-pipe bend points
+        // so a follow-up pipe draw starts with a clean slate.
+        setPipeBendPts([]);
         // Phase 12.5 — cancel any in-flight channel draw.
         setChannelFrom(null);
         // Phase 12.5b — also dismiss the channel-create modal if open.
@@ -2461,7 +2514,13 @@ export function SchemeEditor({ readOnly }: Props) {
             onClick={() => {
               setMode("addPipe");
               setPipeFrom(null);
+              setPipeBendPts([]);
               setShowPalette(null);
+              // Phase 13.8 — Zulu-style flexibility: default to free
+              // angles when the engineer enters pipe-draw mode. They
+              // can still flip to ortho90 / ortho45 from the top
+              // toolbar for grid-aligned mains.
+              setAngleMode("free");
             }}
             icon="／"
             label="Хоолой"
@@ -2735,7 +2794,13 @@ export function SchemeEditor({ readOnly }: Props) {
       {/* Mode hints */}
       {mode === "addPipe" && pipeFrom && (
         <div style={hintStyle}>
-          Хоолойн төгсгөлийн зангилаа дээр дарна. ESC цуцлах.
+          Хоолойн төгсгөлийн зангилаа эсвэл барилгын дээр дарна.
+          {" "}Замдаа дарж <strong>булан нэмнэ</strong> · ESC цуцлах.
+          {pipeBendPts.length > 0 && (
+            <span style={{ marginLeft: 8, color: "var(--warning)", fontWeight: 700 }}>
+              · {pipeBendPts.length} булан
+            </span>
+          )}
           {parseFloat(pipeLengthInput) > 0 && (
             <span style={{ marginLeft: 8, color: "var(--bp-blue)", fontWeight: 700 }}>
               · L = {pipeLengthInput}м (тогтсон)
@@ -2744,7 +2809,7 @@ export function SchemeEditor({ readOnly }: Props) {
         </div>
       )}
       {mode === "addPipe" && !pipeFrom && (
-        <div style={hintStyle}>Эх зангилаа дээр дарна.</div>
+        <div style={hintStyle}>Эх зангилаа эсвэл барилгын дээр дарна (Zulu-стиль).</div>
       )}
       {mode === "addNode" && (
         <div style={hintStyle}>{getNodeKind(pendingKind)?.name} — canvas дээр дарна</div>
@@ -3093,6 +3158,56 @@ export function SchemeEditor({ readOnly }: Props) {
                     key={b.id}
                     data-testid={`building-${b.id}`}
                     onMouseDown={(e) => {
+                      // Phase 13.8 — addPipe mode: clicking on a
+                      // building polygon uses its tagged-as node as
+                      // the pipe endpoint. Engineer doesn't need to
+                      // aim at the tiny centroid symbol — the entire
+                      // polygon footprint is now the click target
+                      // (Zulu Thermo convention). The Phase 13.1
+                      // pipe-polygon-clip helper draws the visible
+                      // line up to the polygon perimeter automatically.
+                      if (mode === "addPipe" && b.taggedAsNodeId) {
+                        e.stopPropagation();
+                        const targetNodeId = b.taggedAsNodeId;
+                        if (!pipeFrom) {
+                          setPipeFrom(targetNodeId);
+                          setPipeBendPts([]);
+                          setToast({
+                            text: `${b.label} — эх цэг тогтоосон`,
+                            key: Date.now(),
+                            tone: "neutral",
+                          });
+                        } else if (pipeFrom !== targetNodeId) {
+                          // Commit pipe with bend points + sum length
+                          const fromNode = nodes.find((n) => n.id === pipeFrom);
+                          const toNode = nodes.find((n) => n.id === targetNodeId);
+                          if (!fromNode || !toNode) return;
+                          let measuredLen = 0;
+                          let prev: { x: number; y: number } = { x: fromNode.x, y: fromNode.y };
+                          for (const bp of pipeBendPts) {
+                            measuredLen += pxToM(Math.hypot(prev.x - bp.x, prev.y - bp.y));
+                            prev = bp;
+                          }
+                          measuredLen += pxToM(Math.hypot(prev.x - toNode.x, prev.y - toNode.y));
+                          const manualLen = parseFloat(pipeLengthInput);
+                          const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
+                          addPipe({
+                            id: uid("pipe"),
+                            fromNodeId: pipeFrom,
+                            toNodeId: targetNodeId,
+                            materialKey: "steel_aged",
+                            dn: 50,
+                            length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
+                            circuit: pendingCircuit,
+                            ...(pipeBendPts.length > 0 ? { bendPoints: pipeBendPts } : {}),
+                          });
+                          setPipeFrom(null);
+                          setPipeBendPts([]);
+                          setPipeLengthInput("");
+                          setMode("select");
+                        }
+                        return;
+                      }
                       if (mode === "select" || mode === "drawBuilding") {
                         e.stopPropagation();
                         if (e.ctrlKey || e.metaKey) {
@@ -4064,13 +4179,23 @@ export function SchemeEditor({ readOnly }: Props) {
               );
             })}
 
-            {/* Pipe preview */}
+            {/* Pipe preview — Phase 13.8 includes accumulated bend points
+                so engineer sees the polyline they're drawing in real time. */}
             {livePipeInfo && (() => {
               const from = nodes.find((n) => n.id === pipeFrom);
               if (!from) return null;
               const to = livePipeInfo.to;
               const points: Point[] = [{ x: from.x, y: from.y }];
-              if (angleMode === "ortho90" && Math.abs(from.x - to.x) > 1 && Math.abs(from.y - to.y) > 1) {
+              // Phase 13.8 — captured bend points (Zulu-style mid-
+              // pipe corners) render in order so the engineer sees
+              // every clicked anchor in the live preview.
+              for (const bp of pipeBendPts) points.push({ x: bp.x, y: bp.y });
+              if (
+                pipeBendPts.length === 0 &&
+                angleMode === "ortho90" &&
+                Math.abs(from.x - to.x) > 1 &&
+                Math.abs(from.y - to.y) > 1
+              ) {
                 points.push({ x: to.x, y: from.y });
               }
               points.push(to);
@@ -4079,8 +4204,13 @@ export function SchemeEditor({ readOnly }: Props) {
               return (
                 <>
                   <path d={pathD} stroke={circuit.color} strokeWidth={3} fill="none" strokeDasharray="6 4" opacity="0.65" strokeLinecap="round" strokeLinejoin="round" />
+                  {/* Phase 13.8 — small warning-coloured dots at each captured bend point */}
+                  {pipeBendPts.map((bp, i) => (
+                    <circle key={`bend-${i}`} cx={bp.x} cy={bp.y} r={4} fill="var(--warning)" stroke="white" strokeWidth={1.5} />
+                  ))}
                   <text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 12} fontSize="12" fontFamily="var(--font-mono)" fill="var(--accent)" textAnchor="middle" fontWeight="600">
                     {formatLength(livePipeInfo.len_m)} · {livePipeInfo.ang.toFixed(1)}°
+                    {pipeBendPts.length > 0 && ` · ${pipeBendPts.length} булан`}
                   </text>
                 </>
               );
