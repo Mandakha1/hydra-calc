@@ -749,6 +749,53 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
           </Field>
         )}
 
+        {/* Phase 13.0b — physical dimension editing for building-rendered
+            entities (source_tec defaults 80×50 m, consumer_industrial,
+            etc.). When the engineer wants to PERMANENTLY shrink a TЭЦ
+            symbol (not just scale-multiply it), they edit these
+            directly. Visible only when width_m / height_m are set,
+            i.e. for entities currently rendering as building rectangles. */}
+        {(node.width_m != null && node.height_m != null) && (
+          <>
+            <Field label="Өргөн (м)">
+              <input
+                type="number"
+                min={1}
+                max={500}
+                step={1}
+                value={node.width_m ?? 0}
+                disabled={readOnly}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (!Number.isFinite(v) || v <= 0) return;
+                  updateNode(node.id, { width_m: v });
+                }}
+                style={inputStyle}
+                data-testid="inspector-width-m"
+                title="Физик хэмжээ метрээр — preset / size_scale-аас тусдаа"
+              />
+            </Field>
+            <Field label="Урт (м)">
+              <input
+                type="number"
+                min={1}
+                max={500}
+                step={1}
+                value={node.height_m ?? 0}
+                disabled={readOnly}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (!Number.isFinite(v) || v <= 0) return;
+                  updateNode(node.id, { height_m: v });
+                }}
+                style={inputStyle}
+                data-testid="inspector-height-m"
+                title="Физик хэмжээ метрээр — preset / size_scale-аас тусдаа"
+              />
+            </Field>
+          </>
+        )}
+
         {/* Phase 6.8.3 — per-entity size override. Multiplies the
             project-wide preset; default 1.0 means "no override".
             Range deliberately wide (0.3..2.5) so the engineer can
