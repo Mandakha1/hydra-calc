@@ -1525,9 +1525,103 @@ export function SchemeEditor({ readOnly }: Props) {
         e.preventDefault();
         // Phase 6.8.6 — direct-commit SchemeBuilding (no dialog).
         commitDrawnBuilding(polygon as Array<Point & { lat?: number; lon?: number }>);
+        return;
+      }
+      // Phase 13.16 — engineer report: "Шугамыг барилгагүй газарт
+      // зурхад хадгалагдахгүй байна." Root cause: in addPipe mode,
+      // empty-space single clicks add bend points (Phase 13.8) but
+      // nothing committed the pipe — engineer expected the click to
+      // also END the pipe (the hint text used to promise this).
+      // Fix: empty-canvas DOUBLE-CLICK terminates the pipe at the
+      // click point. Auto-creates a terminal junction (with geo when
+      // the map is on) and commits via addPipe. The two preceding
+      // single clicks of the dblclick gesture already added two bend
+      // points at the same coords — we drop the LAST bend and use
+      // its position as the terminal, mirroring the Enter handler.
+      if (mode === "addPipe" && pipeFrom) {
+        const fromNode = nodes.find((n) => n.id === pipeFrom);
+        if (!fromNode) return;
+        e.preventDefault();
+        const lastBend = pipeBendPts.length > 0
+          ? pipeBendPts[pipeBendPts.length - 1]!
+          : null;
+        const clickPt = snap(toSvg(e));
+        const termPt: { x: number; y: number; lat?: number; lon?: number } = lastBend
+          ? {
+              x: lastBend.x,
+              y: lastBend.y,
+              ...(typeof lastBend.lat === "number" ? { lat: lastBend.lat } : {}),
+              ...(typeof lastBend.lon === "number" ? { lon: lastBend.lon } : {}),
+            }
+          : (() => {
+              const ll = showMap ? svgToLatLon(clickPt) : null;
+              return ll
+                ? { x: clickPt.x, y: clickPt.y, lat: ll.lat, lon: ll.lon }
+                : { x: clickPt.x, y: clickPt.y };
+            })();
+        const carryBends = pipeBendPts.length > 0
+          ? pipeBendPts.slice(0, -1)
+          : [];
+        const toId = uid("j");
+        addNode({
+          id: toId,
+          kind: "junction",
+          label: `J-${nodes.length + 1}`,
+          x: Math.round(termPt.x),
+          y: Math.round(termPt.y),
+          ...(typeof termPt.lat === "number" && typeof termPt.lon === "number"
+            ? { geo: { lat: termPt.lat, lon: termPt.lon } }
+            : {}),
+        });
+        // Polyline length via the map-aware geometry helper so on-map
+        // pipes record correct length_m even after pan/zoom.
+        const polyline = displayPipePolyline(
+          fromNode,
+          carryBends,
+          { x: termPt.x, y: termPt.y, ...(termPt.lat != null ? { lat: termPt.lat, lon: termPt.lon } : {}) },
+          projectorCtx,
+        );
+        const measuredLen = pxToM(polylineLengthPx(polyline));
+        const manualLen = parseFloat(pipeLengthInput);
+        const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
+        addPipe({
+          id: uid("pipe"),
+          fromNodeId: pipeFrom,
+          toNodeId: toId,
+          materialKey: "steel_aged",
+          dn: 50,
+          length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
+          circuit: pendingCircuit,
+          ...(carryBends.length > 0 ? { bendPoints: carryBends } : {}),
+        });
+        setPipeFrom(null);
+        setPipeBendPts([]);
+        setPipeLengthInput("");
+        setMode("select");
+        setToast({
+          text: "Шугам үүсгэв (хоосон газарт дуусгав)",
+          key: Date.now(),
+          tone: "success",
+        });
       }
     },
-    [mode, polygon, commitDrawnBuilding],
+    [
+      mode,
+      polygon,
+      commitDrawnBuilding,
+      pipeFrom,
+      pipeBendPts,
+      nodes,
+      addNode,
+      addPipe,
+      snap,
+      toSvg,
+      svgToLatLon,
+      showMap,
+      pipeLengthInput,
+      pendingCircuit,
+      projectorCtx,
+    ],
   );
 
   const onNodeMouseDown = useCallback(
@@ -3030,8 +3124,8 @@ export function SchemeEditor({ readOnly }: Props) {
       {/* Mode hints */}
       {mode === "addPipe" && pipeFrom && (
         <div style={hintStyle}>
-          Зангилаа / барилга / хоосон газар дарж <strong>дуусгана</strong>.
-          {" "}Замдаа дарж <strong>булан</strong> нэмнэ · <strong>Enter</strong> — одоогийн цэгт дуусгах · ESC цуцлах.
+          Зангилаа / барилга дарж <strong>шууд дуусгана</strong>.
+          {" "}Хоосон газар нэг удаа = <strong>булан</strong> · хоёр удаа (<em>double-click</em>) эсвэл <strong>Enter</strong> = дуусгах · ESC цуцлах.
           {pipeBendPts.length > 0 && (
             <span style={{ marginLeft: 8, color: "var(--warning)", fontWeight: 700 }}>
               · {pipeBendPts.length} булан
@@ -4273,18 +4367,26 @@ export function SchemeEditor({ readOnly }: Props) {
               // perimeter when one (or both) endpoints are tagged to a
               // SchemeBuilding (Phase 12.1 outline workflow). Engineer
               // expects pipes to enter through walls, not appear from
-              // the geometric centre. The polygon is in scheme-space
-              // px coords; for map-anchored buildings we use the same
-              // polygon (Phase 6.8.2 keeps it in sync via lat/lon
-              // round-trip; the displayPos pipeline shifts the WHOLE
-              // group, polygon included, so no extra conversion).
+              // the geometric centre.
+              // Phase 13.16 — when the map is on, the building polygon
+              // is rendered at projected (lat/lon → SVG) coords but
+              // its stored x/y stays frozen. Pass the PROJECTED polygon
+              // to clipPipeEndpointAtBuilding so the intersection math
+              // matches the on-screen polygon perimeter at the current
+              // pan/zoom. Without this the pipe enters the building's
+              // ORIGINAL position (often off-screen) after any map move.
               const aBuilding = findTaggedBuilding(a.id, buildings);
               const bBuilding = findTaggedBuilding(b.id, buildings);
+              const projectBuildingPolygon = (b2: typeof aBuilding) => {
+                if (!b2) return undefined;
+                return b2.polygon.map((v) => displayVertex(v, projectorCtx));
+              };
               if (aBuilding) {
                 aPos = clipPipeEndpointAtBuilding({
                   endpointAt: aPos,
                   otherEndpoint: bPos,
                   building: aBuilding,
+                  displayPolygon: projectBuildingPolygon(aBuilding),
                 });
               }
               if (bBuilding) {
@@ -4292,6 +4394,7 @@ export function SchemeEditor({ readOnly }: Props) {
                   endpointAt: bPos,
                   otherEndpoint: aPos,
                   building: bBuilding,
+                  displayPolygon: projectBuildingPolygon(bBuilding),
                 });
               }
               const isSelected = selection?.kind === "pipe" && selection.id === p.id;
