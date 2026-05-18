@@ -4170,7 +4170,14 @@ export function SchemeEditor({ readOnly }: Props) {
               const bPos = displayPos(b);
               const points: Point[] = [{ x: aPos.x, y: aPos.y }];
               if (ch.bendPoints?.length) {
-                for (const bp of ch.bendPoints) points.push({ x: bp.x, y: bp.y });
+                // Phase 13.17 — same fix as the saved-pipe renderer:
+                // project bend lat/lon at the current pan/zoom so the
+                // composite channel polyline tracks the map alongside
+                // its endpoint nodes.
+                for (const bp of ch.bendPoints) {
+                  const dp = displayVertex(bp, projectorCtx);
+                  points.push({ x: dp.x, y: dp.y });
+                }
               }
               points.push({ x: bPos.x, y: bPos.y });
               const pathD = points
@@ -4518,46 +4525,61 @@ export function SchemeEditor({ readOnly }: Props) {
                       pointerEvents="none"
                     />
                   )}
-                  {/* Waypoint handles — visible only when pipe is selected */}
-                  {isSelected && p.waypoints?.map((wp, i) => (
-                    <circle
-                      key={`wp-${p.id}-${i}`}
-                      cx={wp.x}
-                      cy={wp.y}
-                      r={5}
-                      fill="var(--bp-bg)"
-                      stroke="var(--bp-blue)"
-                      strokeWidth={2}
-                      style={{ cursor: "move" }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        setWaypointDrag({ pipeId: p.id, index: i });
-                      }}
-                    />
-                  ))}
+                  {/* Waypoint handles — visible only when pipe is selected.
+                      Phase 13.17: route through displayVertex so geo-aware
+                      waypoints follow the map under pan/zoom. Legacy non-geo
+                      waypoints fall back to stored x/y. */}
+                  {isSelected && p.waypoints?.map((wp, i) => {
+                    const dp = displayVertex(wp, projectorCtx);
+                    return (
+                      <circle
+                        key={`wp-${p.id}-${i}`}
+                        cx={dp.x}
+                        cy={dp.y}
+                        r={5}
+                        fill="var(--bp-bg)"
+                        stroke="var(--bp-blue)"
+                        strokeWidth={2}
+                        style={{ cursor: "move" }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          setWaypointDrag({ pipeId: p.id, index: i });
+                        }}
+                      />
+                    );
+                  })}
                   {/* Phase 12.3 — bend point handles. Rendered when pipe
                       is selected. Drag to reposition; right-click on
                       handle deletes (wired in 12.4 context menu). For
                       now MVP: just visible markers, full drag handler
-                      to follow once context menu lands. */}
-                  {isSelected && p.bendPoints?.map((bp, i) => (
-                    <circle
-                      key={`bp-${p.id}-${i}`}
-                      cx={bp.x}
-                      cy={bp.y}
-                      r={5}
-                      fill="var(--accent, #1f5faa)"
-                      stroke="var(--bg, white)"
-                      strokeWidth={2}
-                      data-testid={`bend-point-${p.id}-${i}`}
-                      data-bend-index={i}
-                      style={{ cursor: "move" }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        setBendPointDrag({ pipeId: p.id, index: i });
-                      }}
-                    />
-                  ))}
+                      to follow once context menu lands.
+                      Phase 13.17: handles project from bp.geo so they
+                      stay aligned with the rendered pipe path on the
+                      map. Without this the handle sat at the bend's
+                      ORIGINAL pan/zoom coords while the pipe line
+                      moved with the map — drag started from the
+                      wrong place. */}
+                  {isSelected && p.bendPoints?.map((bp, i) => {
+                    const dp = displayVertex(bp, projectorCtx);
+                    return (
+                      <circle
+                        key={`bp-${p.id}-${i}`}
+                        cx={dp.x}
+                        cy={dp.y}
+                        r={5}
+                        fill="var(--accent, #1f5faa)"
+                        stroke="var(--bg, white)"
+                        strokeWidth={2}
+                        data-testid={`bend-point-${p.id}-${i}`}
+                        data-bend-index={i}
+                        style={{ cursor: "move" }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          setBendPointDrag({ pipeId: p.id, index: i });
+                        }}
+                      />
+                    );
+                  })}
                   {/* Phase 12.2 — persistent dimension label toggleable
                       via 'D' shortcut. Default true; engineers who want
                       a cleaner canvas (large districts) press D to hide. */}
