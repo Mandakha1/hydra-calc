@@ -119,6 +119,8 @@ import {
   selectBuilding,
   updateBuilding,
 } from "../scheme/buildingApplier";
+// Phase 13.3 — polygon vertex editing helpers.
+import { setVertex, polygonBboxMetres } from "../scheme/polygonVertexEdit";
 import { ScaleBar } from "../scheme/ScaleBar";
 import {
   DEFAULT_SCALE,
@@ -281,6 +283,14 @@ export function SchemeEditor({ readOnly }: Props) {
     taggedNodeId?: string;
     startNodePos?: { x: number; y: number };
   } | null>(null);
+  /** Phase 13.3 — per-vertex polygon edit. When a building is
+   *  selected, small square handles render at each vertex. Engineer
+   *  mousedowns one → drags → drop reshapes the polygon. Inspector's
+   *  width_m / height_m auto-update from the new bbox on commit. */
+  const [polygonVertexDrag, setPolygonVertexDrag] = useState<{
+    buildingId: string;
+    vertexIndex: number;
+  } | null>(null);
   const [mousePos, setMousePos] = useState<Point | null>(null);
   /** Phase 12.2 — viewport-space cursor position (clientX / clientY)
    *  for the floating DrawingHud overlay, which positions itself in
@@ -288,6 +298,14 @@ export function SchemeEditor({ readOnly }: Props) {
   const [mouseViewport, setMouseViewport] = useState<{ x: number; y: number } | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [snapGrid, setSnapGrid] = useState(true);
+  /**
+   * Phase 13.3 — sub-meter snap mode. When true, polygon / pipe / node
+   * vertex placement snaps to a 0.1 m grid instead of the default 1 m
+   * grid. Engineer toggles via the top toolbar when they need
+   * precision dimensions (1.5 m / 2.5 m / 3.1 m, etc.) for narrow
+   * service rooms, equipment bays, or odd-shaped real-world buildings.
+   */
+  const [fineSnap, setFineSnap] = useState(false);
   const [showMap, setShowMap] = useState(false);
   // Map provider + opacity are persisted on ProjectSettings (Phase 5B.1a)
   // so each project remembers the engineer's preferred tile style across
@@ -595,9 +613,16 @@ export function SchemeEditor({ readOnly }: Props) {
   const snap = useCallback(
     (p: Point): Point => {
       if (!snapGrid) return p;
-      return { x: Math.round(p.x / GRID_PX) * GRID_PX, y: Math.round(p.y / GRID_PX) * GRID_PX };
+      // Phase 13.3 — fine-snap mode uses a 0.1 m grid (= GRID_PX / 10)
+      // so engineer can place vertices at 1.5 m / 2.5 m / 3.1 m / 3.6 m
+      // for real-world buildings whose dimensions aren't whole metres.
+      const step = fineSnap ? GRID_PX / 10 : GRID_PX;
+      return {
+        x: Math.round(p.x / step) * step,
+        y: Math.round(p.y / step) * step,
+      };
     },
-    [snapGrid, GRID_PX],
+    [snapGrid, GRID_PX, fineSnap],
   );
 
   const constrain = useCallback(
@@ -1486,6 +1511,28 @@ export function SchemeEditor({ readOnly }: Props) {
             updateBuilding(taggedBuilding.id, { polygon: translated });
           }
         }
+      } else if (polygonVertexDrag) {
+        // Phase 13.3 — drag a single building polygon vertex.
+        // Snap respects fine-snap (0.1 m) when on. The new vertex
+        // is committed live so the engineer sees the polygon morph
+        // under the cursor; onMouseUp pushes ONE undo snapshot.
+        const snapped = snap(pt);
+        const building = (buildings ?? []).find(
+          (b) => b.id === polygonVertexDrag.buildingId,
+        );
+        if (building) {
+          const nextVertex = {
+            x: Math.round(snapped.x * 10) / 10,
+            y: Math.round(snapped.y * 10) / 10,
+            ...(showMap ? svgToLatLon(snapped) ?? {} : {}),
+          };
+          const newPoly = setVertex(
+            building.polygon,
+            polygonVertexDrag.vertexIndex,
+            nextVertex,
+          );
+          updateBuilding(building.id, { polygon: newPoly });
+        }
       } else if (buildingDrag) {
         // Phase 13.2 — building polygon drag. Translate every vertex
         // by the cursor delta from the drag start; mirror the
@@ -1583,6 +1630,8 @@ export function SchemeEditor({ readOnly }: Props) {
       // Phase 13.2 — building polygon drag deps.
       buildingDrag,
       buildings,
+      // Phase 13.3 — per-vertex drag deps.
+      polygonVertexDrag,
     ],
   );
 
@@ -1631,6 +1680,26 @@ export function SchemeEditor({ readOnly }: Props) {
     if (buildingDrag) {
       pushUndoSnapshot("Барилгыг зөөсөн", 1);
       setBuildingDrag(null);
+    }
+    // Phase 13.3 — finalize the per-vertex polygon edit. Push ONE
+    // undo snapshot + sync width_m / height_m on the tagged node so
+    // Inspector / downstream calc reflect the new bbox dimensions.
+    if (polygonVertexDrag) {
+      pushUndoSnapshot("Барилгын оройг засав", 1);
+      const cur = useHydraulicStore.getState();
+      const b = (cur.buildings ?? []).find(
+        (bb) => bb.id === polygonVertexDrag.buildingId,
+      );
+      if (b?.taggedAsNodeId) {
+        const dims = polygonBboxMetres(b.polygon, PX_PER_METER);
+        if (dims.width_m > 0 && dims.height_m > 0) {
+          updateNode(b.taggedAsNodeId, {
+            width_m: dims.width_m,
+            height_m: dims.height_m,
+          });
+        }
+      }
+      setPolygonVertexDrag(null);
     }
     // Phase 6.5.1 — Resolve rubber-band on mouseup: hit-test all
     // visible nodes + pipes, populate multiSelection.
@@ -1692,7 +1761,7 @@ export function SchemeEditor({ readOnly }: Props) {
       });
       setRubberBand(null);
     }
-  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection, channelLabelDrag, buildingDrag]);
+  }, [rubberBand, nodes, pipes, constructionLines, annotations, displayPos, selectMany, clearSelection, channelLabelDrag, buildingDrag, polygonVertexDrag]);
 
   const onWheel = useCallback((e: WheelEvent<SVGSVGElement>) => {
     if (Math.abs(e.deltaY) < 1) return;
@@ -2323,8 +2392,15 @@ export function SchemeEditor({ readOnly }: Props) {
                 if (isBuildingLikeKind(k.key)) {
                   setMode("drawBuilding");
                   setPolygon([]);
+                  // Phase 13.3 — real buildings are rarely axis-aligned
+                  // (residential plots, ТЭЦ campus layouts, etc.). Default
+                  // to free-angle so engineer can outline the actual
+                  // footprint shape without fighting the 90° constraint.
+                  // Engineer can toggle back to ortho90 / ortho45 via the
+                  // top toolbar if they want crisp axes for a schematic.
+                  setAngleMode("free");
                   setToast({
-                    text: `${k.shortLabel} — газрын зураг дээр контур зурна (Enter → дуусгах)`,
+                    text: `${k.shortLabel} — газрын зураг дээр контур зурна (дурын өнцөг · Enter → дуусгах)`,
                     key: Date.now(),
                     tone: "neutral",
                   });
@@ -2403,6 +2479,25 @@ export function SchemeEditor({ readOnly }: Props) {
           style={{ ...topBtn, ...(snapGrid ? { color: "var(--accent)" } : {}) }}
           title="Snap (S)"
         >⊟</button>
+        {/* Phase 13.3 — fine-snap toggle. 0.1 m grid for sub-metre
+            precision (1.5 / 2.5 / 3.1 / 3.6 m dimensions). Only
+            meaningful while snapGrid is on; visually disabled
+            otherwise. */}
+        <button
+          onClick={() => setFineSnap((f) => !f)}
+          style={{
+            ...topBtn,
+            ...(fineSnap ? { color: "var(--accent)" } : {}),
+            ...(snapGrid ? {} : { opacity: 0.4 }),
+          }}
+          disabled={!snapGrid}
+          title={
+            snapGrid
+              ? `Нарийн snap (0.1м) — ${fineSnap ? "ON" : "OFF"}`
+              : "Эхлээд ⊟ Snap-ийг ассан байх ёстой"
+          }
+          data-testid="fine-snap-toggle"
+        >0.1м</button>
         <button onClick={() => setZoom((z) => Math.min(4, z * 1.2))} style={topBtn} title="Томруулах">+</button>
         <button onClick={() => setZoom((z) => Math.max(0.05, z / 1.2))} style={topBtn} title="Жижигрүүлэх">−</button>
         <button onClick={fitToContent} style={topBtn} title="Бүх схемийг үзэгдэхүйц болгох (Fit to view)">⤢</button>
@@ -2790,6 +2885,40 @@ export function SchemeEditor({ readOnly }: Props) {
                     >
                       {area_m2.toFixed(0)}м²{floorsStr}{heatStr}
                     </text>
+                    {/* Phase 13.3 — per-vertex drag handles. Only rendered
+                        when the building is the active single selection
+                        (avoids clutter when many buildings + multi-select).
+                        Each handle is a small accent square; mousedown
+                        primes polygonVertexDrag → onMouseMove reshapes →
+                        onMouseUp commits with one undo snapshot. */}
+                    {isSelected && mode === "select" && !readOnly &&
+                      movedPts.map((pt, i) => {
+                        const isActive =
+                          polygonVertexDrag?.buildingId === b.id &&
+                          polygonVertexDrag.vertexIndex === i;
+                        const handleSize = isActive ? 10 : 8;
+                        return (
+                          <rect
+                            key={`vh-${b.id}-${i}`}
+                            x={pt.x - handleSize / 2}
+                            y={pt.y - handleSize / 2}
+                            width={handleSize}
+                            height={handleSize}
+                            fill={isActive ? "var(--warning)" : "white"}
+                            stroke="var(--accent)"
+                            strokeWidth={isActive ? 2 : 1.5}
+                            data-testid={`vertex-handle-${b.id}-${i}`}
+                            style={{ cursor: "nwse-resize" }}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              setPolygonVertexDrag({
+                                buildingId: b.id,
+                                vertexIndex: i,
+                              });
+                            }}
+                          />
+                        );
+                      })}
                   </g>
                 );
               });
