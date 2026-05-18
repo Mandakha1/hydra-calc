@@ -3,6 +3,11 @@ import { useHydraulicStore } from "../hydraulicStore";
 import { PIPE_DB, PIPE_MATERIALS, CLIMATE, WALL_TYPES, GLAZING } from "shared";
 import { NODE_KINDS, CATEGORIES, getNodeKind } from "../nodeCatalog";
 import { calcHeatLoad } from "../calc/heatLoad";
+// Phase 13.13 — volumetric heat-load quick estimate (W×L×H × q_v).
+import {
+  autoVolumetricHeatLoad,
+  resolveSpecificLoad,
+} from "../calc/volumetricHeatLoad";
 import { pipeLengthFromGeometry } from "../calc/haversine";
 import { updateDimension, removeDimension } from "../scheme/dimensionApplier";
 import {
@@ -793,6 +798,13 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
                 title="Физик хэмжээ метрээр — preset / size_scale-аас тусдаа"
               />
             </Field>
+            {/* Phase 13.13 — volumetric heat-load quick estimate.
+                Engineer typed W × L → auto-compute volume × specific
+                load (kind-default). Shown alongside the dimension
+                inputs so the engineer sees the kW figure update live.
+                Specific load is engineer-overridable; heat load can
+                also be edited manually (override wins). */}
+            <VolumetricHeatLoadBlock node={node} updateNode={updateNode} readOnly={readOnly} />
           </>
         )}
 
@@ -1109,6 +1121,139 @@ function EnvelopeEditor({
         </div>
       </div>
     </details>
+  );
+}
+
+/**
+ * Phase 13.13 — Volumetric heat-load quick-estimate block.
+ *
+ * Renders below the W×L dimension inputs when the engineer's node has
+ * plan dimensions set. Shows:
+ *   - building height (resolved: explicit > floors × floorH > 9 m)
+ *   - volume = W × L × H (read-only auto-compute)
+ *   - specific load (engineer-overridable; defaults to kind-typical)
+ *   - heat load = volume × specific (engineer-overridable; auto-fills
+ *     when engineer hasn't typed a manual override)
+ *
+ * Engineer workflow:
+ *   1. Drag a TЭЦ / АОС polygon on the map (Phase 13.11 OSM trace OR
+ *      Phase 13.1 manual draw).
+ *   2. Tap the new node, then in Inspector type W × L (Phase 13.0b).
+ *   3. This block auto-fills volume + heat load using БНбД 23-02-09
+ *      typical specificLoad for the kind (АОС=45, hospital=60, etc.).
+ *   4. Engineer reviews / overrides specificLoad if their survey
+ *      yields a different q_v.
+ */
+function VolumetricHeatLoadBlock({
+  node,
+  updateNode,
+  readOnly,
+}: {
+  node: { id: string; kind: string; width_m?: number; height_m?: number; buildingHeight_m?: number; floors?: number; floorHeight_m?: number; specificLoad_w_per_m3?: number; heatLoad_w?: number; volume_m3?: number };
+  updateNode: (id: string, patch: Record<string, unknown>) => void;
+  readOnly?: boolean;
+}) {
+  const auto = autoVolumetricHeatLoad(node);
+  if (!auto) {
+    return (
+      <div style={{ fontSize: 11, color: "var(--fg-muted)", padding: "6px 8px", background: "var(--bg-soft, rgba(0,0,0,0.04))", borderRadius: 6, marginBottom: 8 }}>
+        💡 Өргөн / Урт / Өндөр оруулаад дулааны ачааллын тооцоо автоматжина (БНбД 23-02-09 §7).
+      </div>
+    );
+  }
+  const buildingHeightUsed =
+    typeof node.buildingHeight_m === "number" && node.buildingHeight_m > 0
+      ? `${node.buildingHeight_m} м (тогтсон)`
+      : typeof node.floors === "number" && node.floors > 0
+        ? `${node.floors} × ${node.floorHeight_m ?? 3} м = ${(node.floors * (node.floorHeight_m ?? 3)).toFixed(1)} м`
+        : "9 м (анхдагч)";
+  const specEffective = resolveSpecificLoad({
+    kind: node.kind,
+    override: node.specificLoad_w_per_m3,
+  });
+  return (
+    <div
+      style={{
+        marginBottom: 10,
+        padding: "8px 10px",
+        background: "var(--bg-soft, rgba(0,0,0,0.04))",
+        borderRadius: 6,
+        border: "1px dashed var(--border-soft)",
+      }}
+      data-testid="volumetric-heat-block"
+    >
+      <div style={{ fontSize: 11, color: "var(--fg-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        🧮 Дулааны ачаалал — авто (БНбД 23-02-09 §7)
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: "var(--fg)" }}>
+        <div>📏 Өндөр: <strong>{buildingHeightUsed}</strong></div>
+        <div>📦 Эзэлхүүн: <strong>{auto.volume_m3.toFixed(1)} м³</strong> = {node.width_m} × {node.height_m} × H</div>
+      </div>
+      <Field label={`Хувийн ачаалал (Вт/м³) · ${node.specificLoad_w_per_m3 ? "тогтсон" : "автомат — " + node.kind}`}>
+        <input
+          type="number"
+          min={5}
+          max={200}
+          step={1}
+          value={node.specificLoad_w_per_m3 ?? specEffective}
+          disabled={readOnly}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            if (!Number.isFinite(v) || v <= 0) return;
+            updateNode(node.id, { specificLoad_w_per_m3: v });
+          }}
+          style={inputStyle}
+          data-testid="inspector-specific-load"
+          title="БНбД 23-02-09 §7 q_v — барилгын төрлөөс хамаарсан хувийн дулааны ачаалал"
+        />
+      </Field>
+      <Field label="Дулааны ачаалал (кВт) — авто">
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input
+            type="number"
+            min={0}
+            step={0.1}
+            value={node.heatLoad_w != null ? (node.heatLoad_w / 1000).toFixed(2) : (auto.heatLoad_w / 1000).toFixed(2)}
+            disabled={readOnly}
+            onChange={(e) => {
+              const kw = Number(e.target.value);
+              if (!Number.isFinite(kw)) return;
+              updateNode(node.id, { heatLoad_w: Math.round(kw * 1000) });
+            }}
+            style={inputStyle}
+            data-testid="inspector-heat-load-kw"
+            title="W = volume_m³ × specificLoad_w_per_m³ — engineer-override-боломжтой"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              updateNode(node.id, {
+                heatLoad_w: auto.heatLoad_w,
+                volume_m3: auto.volume_m3,
+              });
+            }}
+            disabled={readOnly}
+            style={{
+              padding: "4px 8px",
+              fontSize: 11,
+              background: "var(--accent, #1f5faa)",
+              color: "white",
+              border: "none",
+              borderRadius: 4,
+              cursor: readOnly ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
+            }}
+            data-testid="inspector-heat-load-reset"
+            title="Auto-utga-aar дахин тооцоолох"
+          >
+            ⟲ Авто
+          </button>
+        </div>
+      </Field>
+      <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 4 }}>
+        💡 Авто утга: <strong>{(auto.heatLoad_w / 1000).toFixed(2)} кВт</strong> ({auto.volume_m3.toFixed(1)} м³ × {specEffective} Вт/м³)
+      </div>
+    </div>
   );
 }
 
