@@ -149,6 +149,16 @@ import { Toast } from "../scheme/Toast";
 import { BatchOpsToolbar } from "../scheme/BatchOpsToolbar";
 import { pushUndoSnapshot, undo as undoOp, redo as redoOp } from "../scheme/undoStack";
 import { projectGeoToSchemeXY } from "../scheme/projection";
+// Phase 13.14 — map-aware pipe geometry: lets live preview, bend math,
+// commit length, and saved-pipe rendering all route geo-stamped vertices
+// through the same projector so the polyline tracks pan/zoom instead of
+// snapping back to stale stored x/y.
+import {
+  displayVertex,
+  displayPipePolyline,
+  polylineLengthPx,
+  type ProjectorCtx,
+} from "../scheme/displayPipeGeometry";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type {
   SchemeNode,
@@ -676,6 +686,32 @@ export function SchemeEditor({ readOnly }: Props) {
     return projected ?? { x: point.x, y: point.y };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMap, pan, zoom, mapTick]);
+
+  /** Phase 13.14 — projector context for `displayVertex` /
+   *  `displayPipePolyline`. Closes over the live leaflet ref, the SVG
+   *  ref, and the current pan/zoom so geo-stamped bends + nodes always
+   *  render at the engineer's intended geographic position regardless
+   *  of how many times the map has been panned/zoomed since the click.
+   *
+   *  `mapTick` in deps forces re-creation on every leaflet 'move' / 'zoom'
+   *  event so React re-renders the live preview + saved pipes with
+   *  refreshed projections. (`displayPos` uses the same trick.) */
+  const projectorCtx = useMemo<ProjectorCtx>(
+    () => ({
+      showMap,
+      projectGeo: (geo) =>
+        projectGeoToSchemeXY(
+          geo,
+          leafletMapRef.current,
+          svgRef.current,
+          RULER_PX,
+          zoom,
+          pan,
+        ),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showMap, pan, zoom, mapTick],
+  );
 
   const snap = useCallback(
     (p: Point): Point => {
@@ -1309,11 +1345,16 @@ export function SchemeEditor({ readOnly }: Props) {
         // (Phase 12.3 invariant). Constrain to the previous anchor
         // so engineer can also engage angleMode "ortho90" if they
         // want crisp 90° corners along the way.
+        // Phase 13.14 — when the map is on, anchor must come from
+        // displayPos (geo-projected) NOT stored x/y, else the bend's
+        // constrain math snaps to "where the from-node USED to be"
+        // before the most recent pan/zoom. Bends already get a lat/lon
+        // stamp below so future renders track the map.
         const prevAnchor = pipeBendPts.length > 0
-          ? pipeBendPts[pipeBendPts.length - 1]!
+          ? displayVertex(pipeBendPts[pipeBendPts.length - 1]!, projectorCtx)
           : (() => {
               const fromNode = nodes.find((n) => n.id === pipeFrom);
-              return fromNode ? { x: fromNode.x, y: fromNode.y } : pt;
+              return fromNode ? displayPos(fromNode) : pt;
             })();
         const constrained = snap(constrain(prevAnchor, pt));
         const llBend = showMap ? svgToLatLon(constrained) : null;
@@ -1451,6 +1492,10 @@ export function SchemeEditor({ readOnly }: Props) {
     // [pan, zoom] — omitting them caused stale closures: after the user pans
     // the canvas, pickBuilding clicks would resolve to the OLD viewport's
     // lat/lon (wrong OSM building fetched). Adding them as deps fixes that.
+    // Phase 13.14 — pipeFrom / pipeBendPts / nodes / addNode / displayPos /
+    // projectorCtx added so the addPipe branches (empty-canvas first click
+    // + bend point clicks) see fresh state instead of the captured-on-mount
+    // versions. This fixes "хоосон газар... хоолой зурахад ажиллахгүй".
     [
       mode,
       toSvg,
@@ -1465,6 +1510,12 @@ export function SchemeEditor({ readOnly }: Props) {
       pendingConstructionAnchor,
       showMap,
       commitDrawnBuilding,
+      pipeFrom,
+      pipeBendPts,
+      nodes,
+      addNode,
+      displayPos,
+      projectorCtx,
     ],
   );
 
@@ -1578,15 +1629,16 @@ export function SchemeEditor({ readOnly }: Props) {
           // intermediate bend clicks add to the real-world distance.
           // Manual length override still wins when the engineer
           // typed a value into the pipeLengthInput field.
+          // Phase 13.14 — geometry math routes every vertex through
+          // `displayVertex` so on-map drawings measure the polyline at
+          // the current pan/zoom (stored x/y is stale once the map has
+          // moved). polylineLengthPx then sums the displayed segments;
+          // pxToM converts to engineer-facing metres.
           const manualLen = parseFloat(pipeLengthInput);
           let measuredLen = 0;
           if (from) {
-            let prev: { x: number; y: number } = { x: from.x, y: from.y };
-            for (const b of pipeBendPts) {
-              measuredLen += pxToM(Math.hypot(prev.x - b.x, prev.y - b.y));
-              prev = b;
-            }
-            measuredLen += pxToM(Math.hypot(prev.x - node.x, prev.y - node.y));
+            const polyline = displayPipePolyline(from, pipeBendPts, node, projectorCtx);
+            measuredLen = pxToM(polylineLengthPx(polyline));
           }
           const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
           addPipe({
@@ -1654,9 +1706,12 @@ export function SchemeEditor({ readOnly }: Props) {
     // it in deps, the closure captures the value at the time the user clicked
     // the FROM node — if they then typed in the L field BEFORE clicking the TO
     // node, the typed length was silently ignored. This was a real bug.
+    // Phase 13.14 — pipeBendPts + projectorCtx added so the polyline length
+    // sum sees every captured bend and the current projector (map-aware).
     [
       mode,
       pipeFrom,
+      pipeBendPts,
       // Phase 12.5 — channel draw deps.
       channelFrom,
       addChannel,
@@ -1673,6 +1728,7 @@ export function SchemeEditor({ readOnly }: Props) {
       pendingConstructionAnchor,
       showMap,
       svgToLatLon,
+      projectorCtx,
     ],
   );
 
@@ -2408,14 +2464,18 @@ export function SchemeEditor({ readOnly }: Props) {
               y: Math.round(termPt.y),
               ...(llTerm ? { geo: { lat: llTerm.lat, lon: llTerm.lon } } : {}),
             });
-            // Polyline length sum (from → bends → term)
-            let measuredLen = 0;
-            let prev: { x: number; y: number } = { x: fromNode.x, y: fromNode.y };
-            for (const b of carryBends) {
-              measuredLen += pxToM(Math.hypot(prev.x - b.x, prev.y - b.y));
-              prev = b;
-            }
-            measuredLen += pxToM(Math.hypot(prev.x - termPt.x, prev.y - termPt.y));
+            // Polyline length sum (from → bends → term).
+            // Phase 13.14 — routes through displayVertex so on-map drawings
+            // measure across the CURRENT pan/zoom (not the from-node's
+            // stored x/y from when it was originally placed). termPt is a
+            // fresh click point so it's already in current scheme coords.
+            const polyline = displayPipePolyline(
+              fromNode,
+              carryBends,
+              { x: termPt.x, y: termPt.y },
+              projectorCtx,
+            );
+            const measuredLen = pxToM(polylineLengthPx(polyline));
             const manualLen = parseFloat(pipeLengthInput);
             const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
             addPipe({
@@ -2515,12 +2575,21 @@ export function SchemeEditor({ readOnly }: Props) {
     ? (() => {
         const from = nodes.find((n) => n.id === pipeFrom);
         if (!from) return null;
-        const to = constrain(from, mousePos);
-        const dx = to.x - from.x;
-        const dy = to.y - from.y;
+        // Phase 13.14 — anchor for the live HUD = last captured bend
+        // (if any) ELSE the from-node's CURRENT display position
+        // (`displayPos`, not stored x/y — see Phase 6.8.2 + report
+        // "хоосон газар... шугам арилж байна"). Without this, on the
+        // map the live segment drew from the from-node's stale stored
+        // x/y after any pan/zoom — looked like the pipe vanished.
+        const anchor = pipeBendPts.length > 0
+          ? displayVertex(pipeBendPts[pipeBendPts.length - 1]!, projectorCtx)
+          : displayPos(from);
+        const to = constrain(anchor, mousePos);
+        const dx = to.x - anchor.x;
+        const dy = to.y - anchor.y;
         const len_m = pxToM(Math.hypot(dx, dy));
         const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
-        return { len_m, ang, to };
+        return { len_m, ang, to, anchor };
       })()
     : null;
   const liveBuildingInfo = mode === "drawBuilding" && polygon.length > 0 && mousePos
@@ -3386,17 +3455,26 @@ export function SchemeEditor({ readOnly }: Props) {
                             tone: "neutral",
                           });
                         } else if (pipeFrom !== targetNodeId) {
-                          // Commit pipe with bend points + sum length
+                          // Commit pipe with bend points + sum length.
+                          // Phase 13.14 — building polygon commit path now
+                          // measures the polyline through displayVertex so
+                          // on-map workflows record correct length even
+                          // after the engineer pans/zooms between clicks.
+                          // Previously: from.x/.y + node.x/.y were stale
+                          // (Phase 6.8.2 geo-anchored nodes don't update
+                          // their stored XY on map move) → length math
+                          // produced wrong metres + the live polyline
+                          // appeared to "vanish".
                           const fromNode = nodes.find((n) => n.id === pipeFrom);
                           const toNode = nodes.find((n) => n.id === targetNodeId);
                           if (!fromNode || !toNode) return;
-                          let measuredLen = 0;
-                          let prev: { x: number; y: number } = { x: fromNode.x, y: fromNode.y };
-                          for (const bp of pipeBendPts) {
-                            measuredLen += pxToM(Math.hypot(prev.x - bp.x, prev.y - bp.y));
-                            prev = bp;
-                          }
-                          measuredLen += pxToM(Math.hypot(prev.x - toNode.x, prev.y - toNode.y));
+                          const polyline = displayPipePolyline(
+                            fromNode,
+                            pipeBendPts,
+                            toNode,
+                            projectorCtx,
+                          );
+                          const measuredLen = pxToM(polylineLengthPx(polyline));
                           const manualLen = parseFloat(pipeLengthInput);
                           const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
                           addPipe({
@@ -4253,8 +4331,15 @@ export function SchemeEditor({ readOnly }: Props) {
               // Phase 12.3 — prefer bendPoints (richer with lat/lon)
               // over legacy waypoints. Both fields supported for back-
               // ward compat with Phase 6 projects.
+              // Phase 13.14 — bends with lat/lon get re-projected at the
+              // CURRENT pan/zoom via displayVertex so saved pipes stay
+              // locked to the engineer's intended corners on the map
+              // (previously they snapped back to original stored x/y).
               if (p.bendPoints?.length) {
-                for (const bp of p.bendPoints) points.push({ x: bp.x, y: bp.y });
+                for (const bp of p.bendPoints) {
+                  const dp = displayVertex(bp, projectorCtx);
+                  points.push({ x: dp.x, y: dp.y });
+                }
               } else if (p.waypoints?.length) {
                 points.push(...p.waypoints);
               } else if (angleMode === "ortho90" && Math.abs(aPos.x - bPos.x) > 1 && Math.abs(aPos.y - bPos.y) > 1) {
@@ -4388,23 +4473,33 @@ export function SchemeEditor({ readOnly }: Props) {
             })}
 
             {/* Pipe preview — Phase 13.8 includes accumulated bend points
-                so engineer sees the polyline they're drawing in real time. */}
+                so engineer sees the polyline they're drawing in real time.
+                Phase 13.14: every vertex is routed through `displayVertex`
+                so geo-anchored from-nodes + bends stay glued to their
+                lat/lon even after the engineer pans / zooms the map mid-
+                draw. Without this the live line drew from the from-node's
+                STALE stored x/y → appeared to "vanish" off-screen. */}
             {livePipeInfo && (() => {
               const from = nodes.find((n) => n.id === pipeFrom);
               if (!from) return null;
+              const fromDp = displayPos(from);
               const to = livePipeInfo.to;
-              const points: Point[] = [{ x: from.x, y: from.y }];
+              const points: Point[] = [{ x: fromDp.x, y: fromDp.y }];
               // Phase 13.8 — captured bend points (Zulu-style mid-
               // pipe corners) render in order so the engineer sees
               // every clicked anchor in the live preview.
-              for (const bp of pipeBendPts) points.push({ x: bp.x, y: bp.y });
+              // Phase 13.14 — bend.geo overrides bend.x/.y when on map.
+              for (const bp of pipeBendPts) {
+                const dp = displayVertex(bp, projectorCtx);
+                points.push({ x: dp.x, y: dp.y });
+              }
               if (
                 pipeBendPts.length === 0 &&
                 angleMode === "ortho90" &&
-                Math.abs(from.x - to.x) > 1 &&
-                Math.abs(from.y - to.y) > 1
+                Math.abs(fromDp.x - to.x) > 1 &&
+                Math.abs(fromDp.y - to.y) > 1
               ) {
-                points.push({ x: to.x, y: from.y });
+                points.push({ x: to.x, y: fromDp.y });
               }
               points.push(to);
               const pathD = points.map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`).join(" ");
@@ -4413,10 +4508,13 @@ export function SchemeEditor({ readOnly }: Props) {
                 <>
                   <path d={pathD} stroke={circuit.color} strokeWidth={3} fill="none" strokeDasharray="6 4" opacity="0.65" strokeLinecap="round" strokeLinejoin="round" />
                   {/* Phase 13.8 — small warning-coloured dots at each captured bend point */}
-                  {pipeBendPts.map((bp, i) => (
-                    <circle key={`bend-${i}`} cx={bp.x} cy={bp.y} r={4} fill="var(--warning)" stroke="white" strokeWidth={1.5} />
-                  ))}
-                  <text x={(from.x + to.x) / 2} y={(from.y + to.y) / 2 - 12} fontSize="12" fontFamily="var(--font-mono)" fill="var(--accent)" textAnchor="middle" fontWeight="600">
+                  {pipeBendPts.map((bp, i) => {
+                    const dp = displayVertex(bp, projectorCtx);
+                    return (
+                      <circle key={`bend-${i}`} cx={dp.x} cy={dp.y} r={4} fill="var(--warning)" stroke="white" strokeWidth={1.5} />
+                    );
+                  })}
+                  <text x={(fromDp.x + to.x) / 2} y={(fromDp.y + to.y) / 2 - 12} fontSize="12" fontFamily="var(--font-mono)" fill="var(--accent)" textAnchor="middle" fontWeight="600">
                     {formatLength(livePipeInfo.len_m)} · {livePipeInfo.ang.toFixed(1)}°
                     {pipeBendPts.length > 0 && ` · ${pipeBendPts.length} булан`}
                   </text>
