@@ -123,6 +123,13 @@ import {
 import { setVertex, polygonBboxMetres } from "../scheme/polygonVertexEdit";
 // Phase 13.5 — AutoCAD-style direct dimension input math.
 import { polarOffsetPoint, parseDimensionInput } from "../scheme/polarOffset";
+// Phase 13.7 — view-mode (top / bottom / iso) projection + extrusion.
+import {
+  type ViewMode,
+  viewModeWrapperTransform,
+  buildingHeightPx,
+  isoWalls,
+} from "../scheme/viewMode";
 import { ScaleBar } from "../scheme/ScaleBar";
 import {
   DEFAULT_SCALE,
@@ -327,6 +334,14 @@ export function SchemeEditor({ readOnly }: Props) {
   // map being visible). The 🗺 toggle button remains for engineers
   // who want pure-schematic mode (PDF prints / overview snapshots).
   const [showMap, setShowMap] = useState(true);
+  /**
+   * Phase 13.7 — AutoCAD-style view mode:
+   *   "top"    — 2D plan (default; engineer looks straight down).
+   *   "bottom" — 2D plan flipped 180° (paper-drawing parity).
+   *   "iso"    — 60° AutoCAD isometric tilt; buildings extrude
+   *              upward by their floors × 3 m / buildingHeight_m.
+   */
+  const [viewMode, setViewMode] = useState<ViewMode>("top");
   // Map provider + opacity are persisted on ProjectSettings (Phase 5B.1a)
   // so each project remembers the engineer's preferred tile style across
   // page reloads. Default to OSM / 1.0 opacity if the project never had
@@ -500,6 +515,27 @@ export function SchemeEditor({ readOnly }: Props) {
       y: (rect.height / 2) / newZoom - cy - RULER_PX / newZoom,
     });
   }, [nodes]);
+
+  /**
+   * Phase 13.7 — sync the leaflet map container's CSS transform with
+   * the engineer-selected viewMode. The SVG canvas applies the same
+   * transform via its inline style; the map needs a JS-driven side-
+   * effect because Leaflet doesn't know about React. Both elements
+   * tilt together so engineer sees a coherent 3D scene in Iso mode.
+   *
+   * Caveat: Leaflet's pan / click coordinate math doesn't account
+   * for CSS 3D transforms — edit gestures in Iso/Bottom are
+   * unreliable. Engineers should flip back to Top to edit. This is
+   * a viewing-only feature, matching AutoCAD's Top/Bottom/Iso UX.
+   */
+  useEffect(() => {
+    const leafletEl = document.querySelector(".leaflet-container");
+    if (!(leafletEl instanceof HTMLElement)) return;
+    const css = viewModeWrapperTransform(viewMode);
+    leafletEl.style.transform = css === "none" ? "" : css;
+    leafletEl.style.transformOrigin = "center center";
+    leafletEl.style.transition = "transform 350ms ease-out";
+  }, [viewMode, showMap]);
 
   /** Auto-fit when nodes first appear (≥8 = likely an imported project). */
   const didAutoFitRef = useRef(false);
@@ -2297,6 +2333,32 @@ export function SchemeEditor({ readOnly }: Props) {
         opacity={mapOpacity}
         onOpacityChange={setMapOpacity}
       />
+
+      {/* Phase 13.7 — AutoCAD-style view selector (Top / Bottom / Iso).
+          Positioned top-right of the canvas. Engineer flips Iso to see
+          buildings extruded by their actual floor heights along with
+          the map. Note: edit gestures (click / drag / polygon-draw)
+          are reliable only in Top mode — the CSS 3D transform in
+          Iso/Bottom skews mouse coordinates; the panel surfaces a
+          hint to switch back when an edit gesture would be ambiguous. */}
+      <div style={viewSelectorStyle} data-testid="view-selector">
+        {(["top", "bottom", "iso"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setViewMode(v)}
+            style={{
+              ...viewSelectorBtnStyle,
+              ...(viewMode === v
+                ? { background: "var(--accent)", color: "white", fontWeight: 700 }
+                : {}),
+            }}
+            data-testid={`view-mode-${v}`}
+            title={v === "iso" ? "Isometric — 3D барилга газрын зурагтай" : v === "bottom" ? "Доороос (180° flip)" : "Дээрээс (default plan view)"}
+          >
+            {v === "top" ? "📐 Top" : v === "bottom" ? "🔄 Bot" : "📦 Iso"}
+          </button>
+        ))}
+      </div>
       <AddressSearch
         enabled={showMap}
         onPick={({ lat, lon, zoom }) => {
@@ -2810,6 +2872,16 @@ export function SchemeEditor({ readOnly }: Props) {
           flex: 1,
           height: "100%",
           display: "block",
+          // Phase 13.7 — apply view-mode transform. Top mode is the
+          // identity (no transform); Bottom flips 180° around the
+          // canvas centre so the engineer sees a plan-paper mirror;
+          // Iso tilts the SVG 60° so buildings render in axonometric.
+          // The transform applies to the SVG only — the leaflet map
+          // also gets a matching transform via a side-effect (see
+          // useEffect below) so they stay locked together visually.
+          transform: viewModeWrapperTransform(viewMode),
+          transformOrigin: "center center",
+          transition: "transform 350ms ease-out",
           cursor: mapPanDrag ? "grabbing"
             : drag ? "grabbing"
             // Phase 6.8.1 BUG #1 fix — crosshair in pipe-draw mode so
@@ -5497,6 +5569,31 @@ const hintStyle: CSSProperties = {
   padding: "0.4rem 0.75rem",
   borderRadius: 6,
   fontSize: 12,
+};
+
+/* Phase 13.7 — view selector (Top / Bottom / Iso) docked top-right. */
+const viewSelectorStyle: CSSProperties = {
+  position: "absolute",
+  top: 60,
+  right: 24,
+  zIndex: 6,
+  background: "var(--bg, white)",
+  border: "1px solid var(--border-soft, #ddd)",
+  borderRadius: 6,
+  padding: 2,
+  display: "flex",
+  gap: 2,
+  boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+};
+const viewSelectorBtnStyle: CSSProperties = {
+  padding: "4px 10px",
+  fontSize: 11,
+  background: "transparent",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  color: "var(--fg)",
+  fontWeight: 500,
 };
 
 /* Phase 13.5 — CAD-style dimension input panel styles. */
