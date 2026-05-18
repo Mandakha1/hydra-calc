@@ -3569,8 +3569,16 @@ export function SchemeEditor({ readOnly }: Props) {
               // clamp so engineer can still see + click it. At high zoom (street
               // level), shows true scale. Min 12 px wide / 8 px tall keeps the
               // shape recognisable.
-              const wpxRaw = wm * scaleFactor;
-              const hpxRaw = hm * scaleFactor;
+              // Phase 13.0b — building-rectangle render now honours the
+              // same scale multiplier as symbol-rendered nodes
+              // (SYMBOL_SIZE_PRESETS × node.size_scale). Engineers
+              // reported source_tec (ТЭЦ defaults 80×50 m) couldn't be
+              // shrunk via [/], SettingsPanel preset, or Inspector
+              // size_scale because the building render bypassed
+              // computeSymbolRadiusPx. Apply the same composite factor
+              // here so all three controls work on TЭЦ.
+              const wpxRaw = wm * scaleFactor * sizeScaleFactor;
+              const hpxRaw = hm * scaleFactor * sizeScaleFactor;
               const wpx = usingMapScale ? Math.max(12, wpxRaw) : wpxRaw;
               const hpx = usingMapScale ? Math.max(8, hpxRaw) : hpxRaw;
               return (
