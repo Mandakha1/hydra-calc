@@ -3906,7 +3906,24 @@ export function SchemeEditor({ readOnly }: Props) {
               // every imported DXF consumer to 30×12m, hiding the network.
               const wm = n.width_m ?? 0;
               const hm = n.height_m ?? 0;
-              const isBuilding = (def.category === "consumer" || def.category === "source") && wm >= 6 && hm >= 6;
+              // Phase 13.4 — when this node is tag-linked to a
+              // SchemeBuilding (Phase 12.4 outline workflow), the
+              // polygon outline already represents the building
+              // visually. Rendering ANOTHER big rect on top of it
+              // double-draws and hides the polygon (engineer report:
+              // "Орон сууц гэсэн tag үүссэн ба хэт том араа болон
+              // дөрвөлжин дүрс барилгыг бүхэлд нь хаагаад
+              // харагдахгүй болгочихлоо"). Suppress the building
+              // rect for tagged nodes — they render as a small
+              // centroid symbol instead, sitting INSIDE the polygon.
+              const isTaggedToBuilding = (buildings ?? []).some(
+                (b) => b.taggedAsNodeId === n.id,
+              );
+              const isBuilding =
+                !isTaggedToBuilding &&
+                (def.category === "consumer" || def.category === "source") &&
+                wm >= 6 &&
+                hm >= 6;
               // When the leaflet map is showing AND this node is geo-anchored,
               // size the building rect to the MAP's meters-per-pixel (so it
               // matches the satellite/OSM zoom level). Otherwise fall back to
