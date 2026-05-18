@@ -97,6 +97,90 @@ describe("computeSymbolRadiusPx — Phase 6A / 6.8.3", () => {
   });
 });
 
+describe("computeSymbolRadiusPx — Phase 13.15 maxDiameter_m cap", () => {
+  // Engineer report: "Эрүүл мэндийн төв зурсан, доторх барилгын дүрстэй
+  // лого хэт том халхалж байна." Tagged-to-building hospital nodes
+  // were rendering at the generic 35 m consumer reference, which
+  // blanketed small (15-20 m) building polygons. The cap lets the
+  // SchemeEditor pass the polygon's min plan dimension so the logo
+  // sits PROPORTIONALLY inside.
+
+  it("caps the effective real_m at maxDiameter_m when smaller than entity default", () => {
+    // px/m = 1 (street zoom). Without cap: 35 m / 2 = 17.5 px. With
+    // cap 6 m (= 0.4 × 15 m building): 6 / 2 = 3 px → clamped to MIN.
+    const pxPerM = 1;
+    const uncapped = computeSymbolRadiusPx("consumer", pxPerM, 1);
+    const capped = computeSymbolRadiusPx("consumer", pxPerM, 1, { maxDiameter_m: 6 });
+    expect(uncapped).toBeCloseTo(17.5, 1);
+    expect(capped).toBeLessThan(uncapped);
+    // 3 px under the floor → clamps to MIN.
+    expect(capped).toBe(MIN_SYMBOL_PX);
+  });
+
+  it("does NOT shrink when maxDiameter_m exceeds the entity default", () => {
+    // 100 m polygon for an 18 m ТЭЦ source → the kind icon stays at
+    // its engineering-typical 18 m, not blown up to fill the polygon.
+    const pxPerM = 1;
+    const uncapped = computeSymbolRadiusPx("source", pxPerM, 1);
+    const capped = computeSymbolRadiusPx("source", pxPerM, 1, { maxDiameter_m: 100 });
+    expect(capped).toBe(uncapped); // Math.min(18, 100) = 18 — no change.
+  });
+
+  it("realistic 15 m × 20 m hospital polygon: capped logo ~3 m → ~MIN_SYMBOL_PX", () => {
+    // 0.4 × 15 = 6 m maxDiameter. At zoom 17 (px/m ≈ 1.25):
+    //   without cap: 35 × 1.25 / 2 = 21.9 px (covers the polygon)
+    //   with cap:    6 × 1.25 / 2 = 3.75 px (clamps to MIN = 4)
+    const pxPerM = pxPerMeterAtZoom(17);
+    const uncapped = computeSymbolRadiusPx("consumer", pxPerM);
+    const capped = computeSymbolRadiusPx("consumer", pxPerM, 1, { maxDiameter_m: 6 });
+    expect(uncapped).toBeGreaterThan(20);
+    expect(capped).toBeLessThanOrEqual(MIN_SYMBOL_PX + 0.5);
+  });
+
+  it("realistic 50 m × 80 m apartment: cap = 20 m, still visibly smaller than uncapped", () => {
+    // 0.4 × 50 = 20 m cap. min(35, 20) = 20 m effective.
+    const pxPerM = pxPerMeterAtZoom(17);
+    const uncapped = computeSymbolRadiusPx("consumer", pxPerM);
+    const capped = computeSymbolRadiusPx("consumer", pxPerM, 1, { maxDiameter_m: 20 });
+    expect(capped).toBeLessThan(uncapped);
+    expect(capped).toBeGreaterThan(MIN_SYMBOL_PX);
+    expect(capped).toBeCloseTo(20 * pxPerM / 2, 1);
+  });
+
+  it("zero / negative / undefined maxDiameter_m → no cap", () => {
+    const pxPerM = 1;
+    const baseline = computeSymbolRadiusPx("consumer", pxPerM);
+    expect(computeSymbolRadiusPx("consumer", pxPerM, 1, undefined)).toBe(baseline);
+    expect(computeSymbolRadiusPx("consumer", pxPerM, 1, {})).toBe(baseline);
+    expect(computeSymbolRadiusPx("consumer", pxPerM, 1, { maxDiameter_m: 0 })).toBe(baseline);
+    expect(computeSymbolRadiusPx("consumer", pxPerM, 1, { maxDiameter_m: -5 })).toBe(baseline);
+  });
+
+  it("cap respects scaleMultiplier — Small preset on capped node still shrinks", () => {
+    // A 15 m hospital with the global "Small" 0.7× preset should still
+    // shrink versus the same node at 1.0×. Cap is applied to effective
+    // real_m, multiplier then trims further.
+    const pxPerM = pxPerMeterAtZoom(17);
+    const cap = 6;
+    const baseline = computeSymbolRadiusPx("consumer", pxPerM, 1.0, { maxDiameter_m: cap });
+    const small = computeSymbolRadiusPx("consumer", pxPerM, 0.7, { maxDiameter_m: cap });
+    // Both will likely clamp to MIN at this zoom — but the formula is
+    // monotonic, so `small` ≤ `baseline` regardless.
+    expect(small).toBeLessThanOrEqual(baseline);
+  });
+
+  it("MIN/MAX clamps still bracket the result", () => {
+    // Extreme cap of 200 m at zoom 22 (px/m ≈ 20): 200 / 2 × 20 = 2000 px
+    // → must clamp to MAX. min(35, 200) = 35 → 35 × 20 / 2 = 350 px also clamps.
+    const r1 = computeSymbolRadiusPx("consumer", 20, 1, { maxDiameter_m: 200 });
+    expect(r1).toBe(MAX_SYMBOL_PX);
+
+    // Tiny cap = 0.05 m at any zoom → way below MIN, clamps up.
+    const r2 = computeSymbolRadiusPx("consumer", 1, 1, { maxDiameter_m: 0.05 });
+    expect(r2).toBe(MIN_SYMBOL_PX);
+  });
+});
+
 describe("computePipeStrokeWidthPx — Phase 6A", () => {
   it("DN50 at street zoom 17 → 1.5-3 px (engineering-legible)", () => {
     const w = computePipeStrokeWidthPx(50, pxPerMeterAtZoom(17));

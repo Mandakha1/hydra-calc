@@ -4626,20 +4626,6 @@ export function SchemeEditor({ readOnly }: Props) {
               const presetMultiplier = SYMBOL_SIZE_PRESETS[presetKey];
               const perNodeScale = n.size_scale ?? 1.0;
               const sizeScaleFactor = presetMultiplier * perNodeScale;
-              const computedR = computeSymbolRadiusPx(entityKind, pxPerM_for_symbol, sizeScaleFactor);
-              const r = isSelected ? computedR + 4 : computedR;
-              void MIN_SYMBOL_PX; // imported for downstream test-friendly access
-              const isPump = def.category === "pump";
-              const isActivePump = isPump && results && !isBad;
-              const showErrorRings = isBad && animateErrors;
-              const dp = displayPos(n);
-              const hasGeo = !!n.geo;
-              // Real plan view: ONLY when the user explicitly set width_m & height_m
-              // (e.g. drew a building polygon, or typed dimensions in inspector).
-              // Defaults from nodeCatalog are NOT used here — that would expand
-              // every imported DXF consumer to 30×12m, hiding the network.
-              const wm = n.width_m ?? 0;
-              const hm = n.height_m ?? 0;
               // Phase 13.4 — when this node is tag-linked to a
               // SchemeBuilding (Phase 12.4 outline workflow), the
               // polygon outline already represents the building
@@ -4653,6 +4639,37 @@ export function SchemeEditor({ readOnly }: Props) {
               const isTaggedToBuilding = (buildings ?? []).some(
                 (b) => b.taggedAsNodeId === n.id,
               );
+              const wm = n.width_m ?? 0;
+              const hm = n.height_m ?? 0;
+              // Phase 13.15 — engineer report: "Эрүүл мэндийн төв зурсан
+              // доторх барилгын дүрстэй лого хэт том халхалж байна." For
+              // tagged-to-building nodes the centroid logo should sit
+              // PROPORTIONALLY INSIDE the polygon, not use the generic
+              // 35 m consumer / 18 m source reference (which dwarfs small
+              // 15-20 m hospital / kindergarten footprints). Cap the
+              // logo at 0.4× the polygon's shorter plan dimension; the
+              // MIN_SYMBOL_PX floor still guarantees clickability.
+              const buildingMinDim_m =
+                isTaggedToBuilding && wm > 0 && hm > 0
+                  ? Math.min(wm, hm) * 0.4
+                  : undefined;
+              const computedR = computeSymbolRadiusPx(
+                entityKind,
+                pxPerM_for_symbol,
+                sizeScaleFactor,
+                buildingMinDim_m ? { maxDiameter_m: buildingMinDim_m } : undefined,
+              );
+              const r = isSelected ? computedR + 4 : computedR;
+              void MIN_SYMBOL_PX; // imported for downstream test-friendly access
+              const isPump = def.category === "pump";
+              const isActivePump = isPump && results && !isBad;
+              const showErrorRings = isBad && animateErrors;
+              const dp = displayPos(n);
+              const hasGeo = !!n.geo;
+              // Real plan view: ONLY when the user explicitly set width_m & height_m
+              // (e.g. drew a building polygon, or typed dimensions in inspector).
+              // Defaults from nodeCatalog are NOT used here — that would expand
+              // every imported DXF consumer to 30×12m, hiding the network.
               const isBuilding =
                 !isTaggedToBuilding &&
                 (def.category === "consumer" || def.category === "source") &&
