@@ -10,6 +10,26 @@ import {
 
 const PX = 20; // 1 m = 20 px (Hydra Calc PX_PER_METER default)
 
+describe("polarOffsetPoint — REAL-SCALE on map (Phase 13.5b)", () => {
+  it("uses MAP px/м when map is shown — 5m at 0° with mapPxPerMeter=5.6 → +28 px", () => {
+    // OSM zoom 18 at УБ latitude ≈ 5.6 px/м (typical residential view).
+    const p = polarOffsetPoint({ x: 0, y: 0 }, 5, 0, 5.6);
+    expect(p.x).toBeCloseTo(28, 1);
+    expect(p.y).toBeCloseTo(0, 1);
+  });
+
+  it("uses MAP px/м at zoom 14 ≈ 0.35 px/м → 5m = 1.75 px (zoomed out view)", () => {
+    const p = polarOffsetPoint({ x: 100, y: 100 }, 5, 0, 0.35);
+    expect(p.x).toBeCloseTo(101.75, 1);
+  });
+
+  it("schematic-mode fallback PX_PER_METER (20 px/м) still works", () => {
+    // 5m at 0° with schematic 20 px/м → +100 px (legacy behaviour).
+    const p = polarOffsetPoint({ x: 0, y: 0 }, 5, 0, 20);
+    expect(p.x).toBeCloseTo(100, 1);
+  });
+});
+
 describe("polarOffsetPoint — AutoCAD convention (0° east, CCW)", () => {
   it("5 m at 0° → +100 px east, y unchanged", () => {
     const p = polarOffsetPoint({ x: 100, y: 100 }, 5, 0, PX);

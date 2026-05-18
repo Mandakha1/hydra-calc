@@ -850,7 +850,17 @@ export function SchemeEditor({ readOnly }: Props) {
       });
       return;
     }
-    const next = polarOffsetPoint(from, parsed.length_m, parsed.angle_deg, PX_PER_METER);
+    // Phase 13.5b — REAL-SCALE fix. When the map is visible, the
+    // engineer expects 5 m typed to mean 5 m on the underlying map
+    // (e.g. OSM at zoom 18 ≈ 5.6 px/м at УБ latitude). The
+    // schematic-mode PX_PER_METER (20 px/м) is wrong on the map.
+    // Use mapPxPerMeter when available, divided by `zoom` so the
+    // SVG group's scale(zoom) transform doesn't double-apply.
+    const effectivePxPerMeter =
+      showMap && mapPxPerMeter && mapPxPerMeter > 0
+        ? mapPxPerMeter / Math.max(zoom, 0.05)
+        : PX_PER_METER;
+    const next = polarOffsetPoint(from, parsed.length_m, parsed.angle_deg, effectivePxPerMeter);
     if (mode === "drawBuilding") {
       // Push the next polygon vertex. If we hit ≥3 vertices the
       // existing Enter / click-on-first-vertex closing flow takes
@@ -901,6 +911,9 @@ export function SchemeEditor({ readOnly }: Props) {
     addNode,
     addPipe,
     pendingCircuit,
+    // Phase 13.5b — real-scale fix deps.
+    mapPxPerMeter,
+    zoom,
   ]);
 
   const placeBuildingTemplate = useCallback(() => {
