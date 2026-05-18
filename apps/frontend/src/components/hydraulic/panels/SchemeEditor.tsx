@@ -809,12 +809,41 @@ export function SchemeEditor({ readOnly }: Props) {
       const bx = bbox(cleanedPolygon.map((p) => ({ x: p.x, y: p.y })));
       const width_m = (bx.maxX - bx.minX) / PX_PER_METER;
       const height_m = (bx.maxY - bx.minY) / PX_PER_METER;
+      // Phase 13.10 — stamp the tagged node with `geo` derived from
+      // the polygon's centroid in lat/lon space. Engineer report:
+      // "Барилгын зураг газрын зургыг дагаж хөдөлж байгаа ч үүсгэсэн
+      // автомат tag нь тусдаа салж хөдөлж байна." Root cause:
+      // buildTagAsParams returns a node with x/y only; without `geo`
+      // the node renderer doesn't project via leaflet on map moves,
+      // so polygon (per-vertex geo) and node centroid drift apart.
+      // We derive lat/lon by averaging the polygon vertices' lat/lon
+      // (already stamped at click time per Phase 13.5c) — that
+      // matches the polygon centroid exactly on each map redraw.
+      let nodeGeo: { lat: number; lon: number } | undefined;
+      if (showMap) {
+        const vertsWithGeo = cleanedPolygon.filter(
+          (v): v is typeof v & { lat: number; lon: number } =>
+            typeof v.lat === "number" && typeof v.lon === "number",
+        );
+        if (vertsWithGeo.length > 0) {
+          const lat = vertsWithGeo.reduce((s, v) => s + v.lat, 0) / vertsWithGeo.length;
+          const lon = vertsWithGeo.reduce((s, v) => s + v.lon, 0) / vertsWithGeo.length;
+          nodeGeo = { lat, lon };
+        } else {
+          // Fallback — project the node's x/y back via the current
+          // leaflet view. Less precise (depends on current map zoom)
+          // but works when polygon vertices weren't geo-stamped.
+          const ll = svgToLatLon({ x: node.x, y: node.y });
+          if (ll) nodeGeo = ll;
+        }
+      }
       pushUndoSnapshot("Барилга + tag-as", 2);
       addBuilding({ ...draft, ...buildingPatch });
       addNode({
         ...node,
         ...(width_m > 0 ? { width_m } : {}),
         ...(height_m > 0 ? { height_m } : {}),
+        ...(nodeGeo ? { geo: nodeGeo } : {}),
       });
       select({ kind: "node", id: node.id });
       setPolygon([]);
