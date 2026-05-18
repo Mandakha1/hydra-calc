@@ -4704,10 +4704,17 @@ export function SchemeEditor({ readOnly }: Props) {
         />
       )}
 
-      {/* Phase 6.5 batch-ops toolbar — rotate / mirror / array. Mounted
-          top-centre, above the existing top toolbar. Buttons disable
-          automatically when multiSelection is empty. */}
-      {!readOnly && (
+      {/* Phase 6.5 BatchOpsToolbar — rotate / mirror / array on multi-
+          selection. Phase 13.9 — engineer-requested hide; the same
+          actions remain available via the right-click context menu
+          and the keyboard shortcuts that BatchOpsToolbar exposed
+          (Ctrl+D duplicate, Del delete, etc.). Engineers found the
+          permanent top-of-canvas strip "Бөгөмөөр:" added clutter
+          to the editor.
+
+          NOTE: Import kept on purpose so re-enabling is a one-line
+          re-render — engineer feedback may revisit this. */}
+      {false && !readOnly && (
         <BatchOpsToolbar
           onToastMessage={(text) =>
             setToast({ text, key: Date.now(), tone: "success" })
