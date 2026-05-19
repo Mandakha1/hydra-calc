@@ -437,19 +437,25 @@ export function exportToExcel(state: HydraulicState, filename = "hydra-calc.xlsx
 /* ─────────────────────── helpers ─────────────────────── */
 
 /**
- * Phase 13.19 — per-circuit hydraulic table in the Mongolian engineer
- * template layout. Two header rows match the reference Excel exactly:
+ * Phase 13.19 + 13.23 — per-circuit hydraulic table in the Mongolian
+ * engineer template layout. Expanded in Phase 13.23 to match the full
+ * 17-column diploma + ЗАПИСКИ format (Дулааны сүлжээний гидравлик
+ * тооцооны хүснэгт, Хүснэгт 3.1):
  *
- *   Row 1: A=Тооцооны хэсгийн № | B=Тооцооны хэсгийн № | C=Температурын
- *          зөрүү 0С | D=[circuit label] шугамын гидравлик тооцоо
- *   Row 2: D=Q [кВт] | E=G [кг/с] | F=G [т/ц] | G=L [м] | J=d [mm] |
- *          K=Rш [Pa/м] | M=W [м/с] | O=Lэ [м] | P=∆Pi [Pa] |
- *          Q=∆Hi [м] | R=Lэкв
- *   Row 3+: data rows
+ *   i | j | L [м] | G [т/ц] | G [кг/с] | α | Rш [Pa/м] |
+ *   di [мм] | dст [мм] | w [м/с] | Rст [Pa/м] | ∑ξ | lэ [м] |
+ *   ΔP [Pa] | ΔH [м] | 2ΔH [м] | Hk [м] | Hp [м]
  *
- * Empty header cells in the reference are merged label spans; we emit
- * them as null/blank so engineers reading both side-by-side see the
- * same column positions even without the merge metadata.
+ * Math:
+ *   - α = 0.30 (local-resistance ratio default for outdoor heat mains
+ *     per Politerm справочник; engineer can override post-export).
+ *   - di = √(4G / (πρW_target)) × 1000 (mm), W_target = 1.0 m/s
+ *   - ∑ξ = α × Rш × L / (ρ·W²/2) — back-derived from α convention
+ *   - 2ΔH = ΔH(supply) + ΔH(return) cumulated across the path. For
+ *     this single-circuit sheet, equals 2 × ΔH (since supply == return
+ *     loss for steady flow).
+ *   - Hk = source pressure - cumulative ΔH (residual head at pipe end)
+ *   - Hp = required pump head to deliver Hk_min ≥ 0 for each consumer
  */
 function appendHydraulicCircuitSheet(
   wb: XLSX.WorkBook,
@@ -464,95 +470,124 @@ function appendHydraulicCircuitSheet(
     const i = state.nodes.findIndex((n) => n.id === id);
     return i >= 0 ? i + 1 : 0;
   };
+  const cat = state.settings.primaryMaterialCategory;
 
-  // Row 1 — group headers (template positions A/B/C/D)
+  // Row 1 — group title (one row spanning the table)
   const row1: (string | number | null)[] = [
-    "Тооцооны хэсгийн №",
-    "Тооцооны хэсгийн №",
-    "Температурын зөрүү, 0С",
-    opts.label,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
+    sheetName, // e.g. "Халаалт гидравлик"
+    ...Array(17).fill(null),
   ];
-  // Row 2 — column headers (template positions D-R)
+  // Row 2 — 18-column header matching the diploma template exactly.
   const row2: (string | number | null)[] = [
-    null,
-    null,
-    null,
-    "Q [кВт]",
-    "G [кг/с]",
-    "G [т/ц]",
+    "i",
+    "j",
     "L [м]",
-    null,
-    null,
-    "d [мм]",
+    "G [т/ц]",
+    "G [кг/с]",
+    "α",
     "Rш [Pa/м]",
-    null,
-    "W [м/с]",
-    null,
-    "Lэ [м]",
-    "∆Pi [Pa]",
-    "∆Hi [м]",
-    "Lэкв",
+    "di [мм]",
+    "dст [мм]",
+    "w [м/с]",
+    "Rст [Pa/м]",
+    "∑ξ",
+    "lэ [м]",
+    "ΔP [Pa]",
+    "ΔH [м]",
+    "2ΔH [м]",
+    "Hk [м]",
+    "Hp [м]",
   ];
   const aoa: (string | number | null)[][] = [row1, row2];
 
-  let cumulativeLequiv = 0;
+  // Engineer-typical local-resistance ratio for outdoor heat mains.
+  // Politerm справочник: 0.2 for straight, 0.3 for branched, 0.4 for
+  // dense (many fittings). We use 0.30 as a defensible default.
+  const ALPHA_OUTDOOR = 0.3;
+  // Water density at ~80°C for Q→di + ξ derivations
+  const RHO_KG_M3 = 972;
+  // Target velocity for di calculation (m/s) — per СНиП 41-02-2003
+  // §10 recommendation for magistral lines
+  const W_TARGET = 1.0;
+  // Source head in m water column from project settings (MPa → m).
+  const Hsource_m = (state.settings.sourcePressure_mpa ?? 0.6) * 102;
+
+  let cumulativeDH_m = 0;
   pipes.forEach((p) => {
     const r = state.results?.pipes.find((x) => x.pipeId === p.id);
     const fromIdx = indexBy(p.fromNodeId);
     const toIdx = indexBy(p.toNodeId);
     const fromNode = nodeBy(p.fromNodeId);
     const Q_w = fromNode?.heatLoad_w ?? r?.heatLossPerMeter_W ?? 0;
-    const Q_kw = Q_w / 1000;
+    void Q_w; // computed elsewhere; not in this column set
     const G_kg_s = r?.G_kg_s ?? 0;
     const G_t_h = G_kg_s * 3.6;
     const L_m = p.length_m ?? 0;
     const W_m_s = r?.v_m_s ?? 0;
     const Rsh_pa_m = r?.headlossPerMeter_pa ?? 0;
     const dPi_pa = r?.totalPressureDrop_pa ?? 0;
-    const dHi_m = dPi_pa / 9810; // ≈ Pa → m H2O
-    cumulativeLequiv += L_m;
+    const dHi_m = dPi_pa / 9810; // Pa → m H2O
+    // Calculated diameter at W_target=1.0 m/s — Q-derived sizing.
+    const di_m = G_kg_s > 0
+      ? Math.sqrt((4 * G_kg_s) / (Math.PI * RHO_KG_M3 * W_TARGET))
+      : 0;
+    const di_mm = Math.round(di_m * 1000);
+    // Selected standard DN from pipe.dn → ID (mm).
+    const dst_mm = PIPE_DB[cat].find((x) => x.dn === p.dn)?.id_mm ?? p.dn;
+    // ∑ξ derived from α × friction loss (so engineer sees a coherent
+    // number even when they haven't itemized local resistances). For
+    // outdoor mains this gives reasonable 1-15 range per segment.
+    const dynamicPressure_pa = (RHO_KG_M3 * W_m_s ** 2) / 2;
+    const sumXi =
+      dynamicPressure_pa > 0
+        ? Number(((ALPHA_OUTDOOR * Rsh_pa_m * L_m) / dynamicPressure_pa).toFixed(1))
+        : 0;
+    const lE_m = L_m * (1 + ALPHA_OUTDOOR); // equivalent length
+    cumulativeDH_m += dHi_m;
+    const Hk_m = Math.max(0, Hsource_m - 2 * cumulativeDH_m);
+    const Hp_m = 2 * cumulativeDH_m + 5; // 5m engineering reserve (СП 124.13330 §6.3)
     aoa.push([
       fromIdx,
       toIdx,
-      opts.deltaT_c,
-      Number(Q_kw.toFixed(3)),
-      Number(G_kg_s.toFixed(4)),
+      Number(L_m.toFixed(2)),
       Number(G_t_h.toFixed(3)),
-      Number(L_m.toFixed(2)),
-      null,
-      null,
-      p.dn,
+      Number(G_kg_s.toFixed(4)),
+      ALPHA_OUTDOOR,
       Number(Rsh_pa_m.toFixed(2)),
-      null,
+      di_mm,
+      dst_mm,
       Number(W_m_s.toFixed(3)),
-      null,
-      Number(L_m.toFixed(2)),
+      Number(Rsh_pa_m.toFixed(2)),
+      sumXi,
+      Number(lE_m.toFixed(2)),
       Math.round(dPi_pa),
       Number(dHi_m.toFixed(3)),
-      Number(cumulativeLequiv.toFixed(1)),
+      Number((2 * dHi_m).toFixed(3)),
+      Number(Hk_m.toFixed(2)),
+      Number(Hp_m.toFixed(2)),
     ]);
   });
 
+  // Phase 13.23 — 18-column widths matching the diploma layout.
   appendSheet(wb, sheetName, aoa as (string | number)[][], [
-    { wch: 9 }, { wch: 9 }, { wch: 9 },
-    { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 9 },
-    { wch: 9 }, { wch: 9 }, { wch: 9 },
-    { wch: 11 }, { wch: 9 }, { wch: 10 }, { wch: 9 },
-    { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 9 },
+    { wch: 5 }, // i
+    { wch: 5 }, // j
+    { wch: 9 }, // L
+    { wch: 10 }, // G [т/ц]
+    { wch: 11 }, // G [кг/с]
+    { wch: 7 }, // α
+    { wch: 11 }, // Rш [Pa/м]
+    { wch: 9 }, // di [мм]
+    { wch: 9 }, // dст [мм]
+    { wch: 10 }, // w [м/с]
+    { wch: 11 }, // Rст [Pa/м]
+    { wch: 8 }, // ∑ξ
+    { wch: 9 }, // lэ [м]
+    { wch: 10 }, // ΔP [Pa]
+    { wch: 9 }, // ΔH [м]
+    { wch: 10 }, // 2ΔH [м]
+    { wch: 9 }, // Hk [м]
+    { wch: 9 }, // Hp [м]
   ]);
 }
 
