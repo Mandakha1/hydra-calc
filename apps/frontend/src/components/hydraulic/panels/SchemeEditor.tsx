@@ -4844,31 +4844,35 @@ export function SchemeEditor({ readOnly }: Props) {
                         text: `[${pipeRoleBadge(role)}] ${lines[0].text}`,
                       };
                     }
-                    // Phase 13.27 — engineer report: "Шугамын урт, диаметр
-                    // зэрэг үзүүлэлтийн текстүүдийг цэгцтэй болгож хэмжээг
-                    // тохируулсаны дагуу автоматаар томорч жижгэрэхгүй
-                    // болгоно уу. Газрын зургыг татах үед давхцаад хархад
-                    // хэцүү байна."
-                    //
-                    // Fix: divide fontSize + line stride + halo stroke
-                    // by the canvas `zoom` so labels keep a CONSTANT
-                    // on-screen size regardless of how zoomed in the
-                    // engineer is. Without this the outer
-                    // `transform: scale(zoom)` wrapper multiplies the
-                    // text size, so labels balloon on zoom-in and
-                    // overlap densely on zoom-out.
                     const baseFs1 = 11;
                     const baseFs = 10;
                     const fs1 = baseFs1 / zoom;
                     const fs = baseFs / zoom;
                     const stride = 13 / zoom;
                     const haloStroke = 3 / zoom;
-                    // Phase 13.27 — compact mode at low map zoom.
-                    // Engineer's pipes pack tight at zoom ≤ 14 (city
-                    // overview) so labels overlap. Compact = line 1 only.
-                    const compact =
-                      showMap && !!mapPxPerMeter && mapPxPerMeter < 0.4;
-                    const displayedLines = compact ? lines.slice(0, 1) : lines;
+                    // Phase 13.28 — engineer report: "Chrome дээр
+                    // screenshot хийх байдлаар системийн замбараагүй
+                    // байдлыг засна уу. Алдаа их, ажиллагаа муу."
+                    //
+                    // Visual chaos analysis (with my 27-node fixture):
+                    // Every pipe showed a 4-line label stack near the
+                    // midpoint. With 16 pipes packed in 1206×568 px,
+                    // labels overlapped each other AND the building
+                    // rectangles. Cleaner default: ONLY the COMPACT
+                    // line 1 (section · circuit · role badge) for
+                    // every pipe; FULL multi-line breakdown only when
+                    // the engineer SELECTS the pipe or HOVERS over it.
+                    //
+                    // Old Phase 13.27 compact-mode (low-map-zoom-only)
+                    // is replaced — compact is now the DEFAULT view
+                    // regardless of map zoom. Engineer can still see
+                    // every detail per-pipe in the Inspector + the
+                    // results table; the on-canvas overlay stays
+                    // readable at scale.
+                    const showFullDetail = isSelected;
+                    const displayedLines = showFullDetail
+                      ? lines
+                      : lines.slice(0, 1);
                     // Phase 13.27 — translucent background box behind the
                     // text block so the engineer can read labels over
                     // busy OSM tiles + dense pipe overlays.
