@@ -144,6 +144,83 @@ export function buildPipeArrow(
   };
 }
 
+/**
+ * Phase 13.22 — Build a chevron from an ALREADY-displayed polyline.
+ *
+ * Engineer report: "Шугам хоолойн чиглэл заасан сум шугамаасаа салаад
+ * хаанч хамаагүй тэнээд байна." Arrows used to come from
+ * `buildPipeArrow(pipe, nodes, ...)` which read raw `node.x` / `node.y`
+ * (Phase 6.8.2 leaves those stale once the map pans). The arrow's
+ * midpoint drifted off the visible pipe, sometimes by tens of pixels
+ * for large pans. This helper accepts the CURRENT displayed polyline
+ * (already computed by the renderer with `displayVertex` projection +
+ * parallel offset) so the chevron lands on the pipe the engineer sees.
+ *
+ * Same chevron math as `buildPipeArrow`, just driven by points the
+ * caller already has.
+ */
+export function buildArrowFromDisplayedPolyline(
+  pipeId: string,
+  displayedPolyline: ReadonlyArray<{ x: number; y: number }>,
+  reversed: boolean,
+): PipeArrow | null {
+  if (displayedPolyline.length < 2) return null;
+  const midIdx = Math.max(1, Math.floor(displayedPolyline.length / 2));
+  const a = displayedPolyline[midIdx - 1]!;
+  const b = displayedPolyline[midIdx]!;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.001) return null;
+
+  const ux = dx / len;
+  const uy = dy / len;
+  const dirX = reversed ? -ux : ux;
+  const dirY = reversed ? -uy : uy;
+
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+
+  const tipX = midX + dirX * (ARROW_LENGTH_PX / 2);
+  const tipY = midY + dirY * (ARROW_LENGTH_PX / 2);
+  const baseX = midX - dirX * (ARROW_LENGTH_PX / 2);
+  const baseY = midY - dirY * (ARROW_LENGTH_PX / 2);
+  const wingLen = ARROW_LENGTH_PX / 2;
+  const cos = Math.cos(ARROW_HALF_ANGLE_RAD);
+  const sin = Math.sin(ARROW_HALF_ANGLE_RAD);
+  const tail1X = baseX + (-dirX * cos - dirY * sin) * wingLen;
+  const tail1Y = baseY + (-dirY * cos + dirX * sin) * wingLen;
+  const tail2X = baseX + (-dirX * cos + dirY * sin) * wingLen;
+  const tail2Y = baseY + (-dirY * cos - dirX * sin) * wingLen;
+
+  return {
+    pipeId,
+    tipX,
+    tipY,
+    tail1X,
+    tail1Y,
+    tail2X,
+    tail2Y,
+    reversed,
+  };
+}
+
+/**
+ * Resolve whether the solver flagged this pipe's flow as reversed
+ * (negative G_kg_s). The renderer pairs this with
+ * `buildArrowFromDisplayedPolyline` to keep arrow direction correct
+ * even when the engineer drew from→to opposite to the actual flow.
+ */
+export function isPipeFlowReversed(
+  pipeId: string,
+  mode: FlowDirectionMode,
+  results: CalculationResults | undefined,
+): boolean {
+  if (mode !== "computed" || !results) return false;
+  const r = results.pipes.find((rp) => rp.pipeId === pipeId);
+  return !!r && typeof r.G_kg_s === "number" && r.G_kg_s < 0;
+}
+
 /** Build arrows for an entire pipe collection. Skips pipes that
  *  belong to a composite channel (`channelId` set) — channel polyline
  *  carries its own direction via its midpoint badge. */
