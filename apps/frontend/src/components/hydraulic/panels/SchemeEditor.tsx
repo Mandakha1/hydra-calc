@@ -185,6 +185,8 @@ import {
 // "place at cursor" menu actions split exactly where the engineer
 // clicked rather than at the geometric midpoint.
 import { projectPointOnPolyline } from "../scheme/projectPointOnPolyline";
+// Phase 13.25 — magistral / branch classification.
+import { classifyPipeRoles, pipeRoleBadge } from "../scheme/classifyPipeRoles";
 import { TEMP_SCHEDULES } from "shared";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type {
@@ -2801,6 +2803,16 @@ export function SchemeEditor({ readOnly }: Props) {
     [pipes],
   );
 
+  // Phase 13.25 — auto-classify each pipe as Магистраль / Салбар /
+  // Холбоогүй from the network topology so the renderer can show the
+  // role badge in the pipe label and the Excel exporter can emit the
+  // "Шугамын төрөл" column. Memoised on pipes + nodes (consumer set
+  // can shift when the engineer adds / removes buildings).
+  const pipeRoleByPipeId = useMemo(
+    () => classifyPipeRoles(pipes, nodes),
+    [pipes, nodes],
+  );
+
   // Phase 13.21 — ΔT inferred from the project's temperature schedule
   // so Q labels on heating pipes use the correct supply→return drop
   // (e.g. 130/70 → ΔT=60). Memoised on the schedule key so it doesn't
@@ -4822,6 +4834,17 @@ export function SchemeEditor({ readOnly }: Props) {
                       results: results ?? undefined,
                       scheduleDeltaT_c: pipeLabelDeltaT,
                     });
+                    // Phase 13.25 — prepend a role badge ("М" magistral
+                    // /"С" branch) to line 1 so the engineer sees the
+                    // pipe classification at a glance. Per БНбД 41-02-13
+                    // + СНиП 41-02-2003 §1 nomenclature.
+                    const role = pipeRoleByPipeId.get(p.id);
+                    if (role && lines[0]) {
+                      lines[0] = {
+                        ...lines[0],
+                        text: `[${pipeRoleBadge(role)}] ${lines[0].text}`,
+                      };
+                    }
                     // Stack lines above the pipe midpoint. Each line is
                     // 12 px tall; the topmost (accent / section label)
                     // sits highest. Background-tinted "halo" via stroke

@@ -83,7 +83,11 @@ export function defaultLabelForKind(kind: string, nextNumber: number): string {
   // Mongolian-convention prefixes — match GK-23/02 PDF exactly
   if (kind === "source_substation") return `УДДТ-${nextNumber}`;
   if (kind === "source_boiler") return `Зуух-${nextNumber}`;
-  if (kind === "source_factory") return `ТЭЦ-${nextNumber}`;
+  // Phase 13.25 — generic source label per engineer rename
+  // ("ТЭЦ" → "Эх үүсвэр"). source_factory kept for back-compat with
+  // legacy projects but the engineer-facing label is now ЭҮ.
+  if (kind === "source_factory") return `ЭҮ-${nextNumber}`;
+  if (kind === "source_tec") return `ЭҮ-${nextNumber}`;
   if (kind === "consumer_apartment") return `АОС-${nextNumber}`;
   if (kind === "consumer_school") return `АОЭ-${nextNumber}`;
   if (kind === "consumer_industrial") return `АОБ-${nextNumber}`;
@@ -173,7 +177,7 @@ export const TAG_AS_KIND_OPTIONS: ReadonlyArray<{
   category: "source" | "consumer" | "chamber" | "fitting";
 }> = [
   // Sources
-  { kind: "source_substation", label: "🏭 Эх үүсвэр (ЦТП / УДДТ)", category: "source" },
+  { kind: "source_substation", label: "🏭 УДДТ — Үндсэн дулааны дэд төв", category: "source" },
   { kind: "source_boiler", label: "🔥 Зуух", category: "source" },
   // Consumers
   { kind: "consumer_apartment", label: "🏠 Орон сууц (АОС)", category: "consumer" },

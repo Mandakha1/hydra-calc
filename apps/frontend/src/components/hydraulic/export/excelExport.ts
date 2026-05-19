@@ -6,6 +6,9 @@ import {
   DEFAULT_SPECIFIC_LOAD_W_PER_M3,
 } from "../calc/volumetricHeatLoad";
 import { getNodeKind } from "../nodeCatalog";
+// Phase 13.25 — magistral / branch classification for the
+// "Шугамын төрөл" column on each per-circuit hydraulic sheet.
+import { classifyPipeRoles, pipeRoleLabel } from "../scheme/classifyPipeRoles";
 
 /**
  * Phase 13.19 — Excel exporter matching the Mongolian reference template
@@ -471,13 +474,19 @@ function appendHydraulicCircuitSheet(
     return i >= 0 ? i + 1 : 0;
   };
   const cat = state.settings.primaryMaterialCategory;
+  // Phase 13.25 — auto-classify each pipe as Магистраль / Салбар from
+  // network topology (consumers reachable in the downstream subtree).
+  // Engineer asks "магистрал шугам болон салбар шугамыг шалгаж мэдэж
+  // чадах уу" — the new column answers that with the official labels.
+  const roleByPipeId = classifyPipeRoles(state.pipes, state.nodes);
 
   // Row 1 — group title (one row spanning the table)
   const row1: (string | number | null)[] = [
     sheetName, // e.g. "Халаалт гидравлик"
-    ...Array(17).fill(null),
+    ...Array(18).fill(null),
   ];
-  // Row 2 — 18-column header matching the diploma template exactly.
+  // Row 2 — 19-column header matching the diploma template + Phase
+  // 13.25 "Шугамын төрөл" column.
   const row2: (string | number | null)[] = [
     "i",
     "j",
@@ -497,6 +506,7 @@ function appendHydraulicCircuitSheet(
     "2ΔH [м]",
     "Hk [м]",
     "Hp [м]",
+    "Шугамын төрөл",
   ];
   const aoa: (string | number | null)[][] = [row1, row2];
 
@@ -565,10 +575,11 @@ function appendHydraulicCircuitSheet(
       Number((2 * dHi_m).toFixed(3)),
       Number(Hk_m.toFixed(2)),
       Number(Hp_m.toFixed(2)),
+      pipeRoleLabel(roleByPipeId.get(p.id) ?? "branch"),
     ]);
   });
 
-  // Phase 13.23 — 18-column widths matching the diploma layout.
+  // Phase 13.25 — 19-column widths (diploma 18 + Шугамын төрөл).
   appendSheet(wb, sheetName, aoa as (string | number)[][], [
     { wch: 5 }, // i
     { wch: 5 }, // j
@@ -588,6 +599,7 @@ function appendHydraulicCircuitSheet(
     { wch: 10 }, // 2ΔH [м]
     { wch: 9 }, // Hk [м]
     { wch: 9 }, // Hp [м]
+    { wch: 12 }, // Шугамын төрөл
   ]);
 }
 
