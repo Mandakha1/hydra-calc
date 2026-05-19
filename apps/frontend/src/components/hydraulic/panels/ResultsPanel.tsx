@@ -70,7 +70,7 @@ export function ResultsPanel() {
                     <Td>{i + 1}</Td>
                     <Td>{mat}</Td>
                     <Td>{p?.dn}</Td>
-                    <Td>{p?.length_m}</Td>
+                    <Td>{p?.length_m != null ? p.length_m.toFixed(1) : ""}</Td>
                     <Td>{r.G_kg_s.toFixed(3)}</Td>
                     <Td red={r.v_m_s > 3.5}>{r.v_m_s.toFixed(3)}</Td>
                     <Td>{r.Re.toFixed(0)}</Td>
