@@ -89,7 +89,11 @@ import {
 } from "../scheme/channelLabelPanel";
 // Phase 12.8 — engineering cross-reference numbers + flow arrows.
 import { assignNodeNumbers, nodeNumberBadge } from "../scheme/nodeNumbering";
-import { buildAllArrows } from "../scheme/flowArrows";
+import {
+  buildAllArrows,
+  buildArrowFromDisplayedPolyline,
+  isPipeFlowReversed,
+} from "../scheme/flowArrows";
 // Phase 13.1 — pipe endpoint clipping at building polygon perimeter.
 import {
   findTaggedBuilding,
@@ -318,6 +322,16 @@ export function SchemeEditor({ readOnly }: Props) {
     fromNodeId: string;
     toNodeId: string;
     length_m: number;
+  } | null>(null);
+  // Phase 13.22 Task 7 — branch-from-pipe prompt.
+  // When the engineer clicks "🌿 Салбар шугам зурах" on a pipe, the
+  // handler splits the pipe + inserts a tee + auto-enters addPipe mode.
+  // This state remembers the tee id so AFTER the engineer commits the
+  // branch pipe, we show a dialog asking whether to also add a chamber
+  // / valve at the branch junction (engineer's explicit ask: "та худаг
+  // болон хаалт салбар хэсэгт нэмэх үү гэж асуудаг болгоно уу").
+  const [pendingBranchPrompt, setPendingBranchPrompt] = useState<{
+    teeNodeId: string;
   } | null>(null);
   // Phase 12.8b — channel label-panel drag-to-reposition. Captures
   // the mouse-anchor + the channel's labelOffset at drag start; the
@@ -2601,6 +2615,10 @@ export function SchemeEditor({ readOnly }: Props) {
         setChannelFrom(null);
         // Phase 12.5b — also dismiss the channel-create modal if open.
         setPendingChannelCreate(null);
+        // Phase 13.22 Task 7 — Esc also dismisses the branch prompt
+        // so the engineer who cancelled the branch doesn't see the
+        // chamber/valve dialog afterwards.
+        setPendingBranchPrompt(null);
         setPolygon([]);
         setPendingFootprint(null);
         setMeasurePoints([]);
@@ -2751,14 +2769,13 @@ export function SchemeEditor({ readOnly }: Props) {
   // Memoised because the underlying ordering only changes when nodes
   // are added / removed / kind-changed, NOT on every render.
   const nodeNumberMap = useMemo(() => assignNodeNumbers(nodes), [nodes]);
-  // Flow arrows — direction from solver results when available, else
-  // geometric. Channel-contained pipes skipped (handled by the channel
-  // polyline). Memoised on pipes + nodes + results to avoid re-walking
-  // the network on every cursor-move re-render.
-  const pipeArrows = useMemo(
-    () => buildAllArrows(pipes, nodes, results ? "computed" : "geometric", results),
-    [pipes, nodes, results],
-  );
+  // Phase 13.22 — flow arrows now render inline from the displayed
+  // polyline (see the saved-pipe arrow loop below). The legacy
+  // `buildAllArrows` memo was discarded because its raw `node.x/.y`
+  // positions drifted off the visible pipe on map pan. Reference
+  // kept here so tree-shake leaves the export for PDF/Drawing-Set
+  // consumers that don't have access to displayPos.
+  void buildAllArrows;
 
   // Phase 13.20 — pre-compute parallel-offset index per pipe id. Memo
   // recomputes only when the pipe topology changes (adding / removing
@@ -5209,51 +5226,84 @@ export function SchemeEditor({ readOnly }: Props) {
                 Phase 13.20 — apply parallel offset so multi-circuit
                 arrows fan out alongside their pipes. Phase 13.21 —
                 thicker stroke (1.5 → 2.25 px) + circuit-aware fill
-                so arrows stand out on busy map backgrounds. */}
+                so arrows stand out on busy map backgrounds.
+                Phase 13.22 — recompute arrow positions from the
+                DISPLAYED polyline (with map projection + parallel
+                offset) so the chevron lands ON the visible pipe.
+                Pre-Phase-13.22 the arrows came from
+                `buildAllArrows(pipes, nodes, …)` which uses raw
+                `node.x/.y` — those go stale on map pan so arrows
+                drifted "off the pipe" by 10s of px. */}
             {settings.showFlowArrows !== false &&
-              pipeArrows.map((arrow) => {
-                const pipe = pipes.find((p) => p.id === arrow.pipeId);
-                if (!pipe) return null;
-                const parallelIndex = parallelOffsetByPipeId.get(pipe.id) ?? 0;
-                let dx = 0;
-                let dy = 0;
-                if (parallelIndex !== 0) {
-                  const fromNode = nodes.find((n) => n.id === pipe.fromNodeId);
-                  const toNode = nodes.find((n) => n.id === pipe.toNodeId);
-                  if (fromNode && toNode) {
-                    const perp = perpendicularUnit(
-                      displayPos(fromNode),
-                      displayPos(toNode),
-                    );
+              pipes
+                .filter((p) => !p.channelId)
+                .map((p) => {
+                  const fromNode = nodes.find((n) => n.id === p.fromNodeId);
+                  const toNode = nodes.find((n) => n.id === p.toNodeId);
+                  if (!fromNode || !toNode) return null;
+                  // Build the same displayed polyline the pipe path
+                  // renders with (Phase 13.14 + 13.20).
+                  const points: Point[] = [];
+                  const aDp = displayPos(fromNode);
+                  const bDp = displayPos(toNode);
+                  points.push({ x: aDp.x, y: aDp.y });
+                  if (p.bendPoints?.length) {
+                    for (const bp of p.bendPoints) {
+                      const dp = displayVertex(bp, projectorCtx);
+                      points.push({ x: dp.x, y: dp.y });
+                    }
+                  } else if (p.waypoints?.length) {
+                    for (const wp of p.waypoints) points.push({ x: wp.x, y: wp.y });
+                  }
+                  points.push({ x: bDp.x, y: bDp.y });
+                  // Apply parallel offset perpendicular to from→to.
+                  const parallelIndex = parallelOffsetByPipeId.get(p.id) ?? 0;
+                  let dx = 0;
+                  let dy = 0;
+                  if (parallelIndex !== 0) {
+                    const perp = perpendicularUnit(aDp, bDp);
                     dx = perp.x * parallelIndex * DEFAULT_PARALLEL_SPACING_PX;
                     dy = perp.y * parallelIndex * DEFAULT_PARALLEL_SPACING_PX;
                   }
-                }
-                const circuitDef = PIPE_CIRCUITS.find((c) => c.key === pipe.circuit);
-                const arrowColor = circuitDef?.color ?? "#1F2937";
-                return (
-                  <g key={`fa_${arrow.pipeId}`} pointerEvents="none">
-                    <line
-                      x1={arrow.tail1X + dx}
-                      y1={arrow.tail1Y + dy}
-                      x2={arrow.tipX + dx}
-                      y2={arrow.tipY + dy}
-                      stroke={arrowColor}
-                      strokeWidth={2.25}
-                      strokeLinecap="round"
-                    />
-                    <line
-                      x1={arrow.tail2X + dx}
-                      y1={arrow.tail2Y + dy}
-                      x2={arrow.tipX + dx}
-                      y2={arrow.tipY + dy}
-                      stroke={arrowColor}
-                      strokeWidth={2.25}
-                      strokeLinecap="round"
-                    />
-                  </g>
-                );
-              })}
+                  const shifted = dx !== 0 || dy !== 0
+                    ? points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }))
+                    : points;
+                  const reversed = isPipeFlowReversed(
+                    p.id,
+                    results ? "computed" : "geometric",
+                    results ?? undefined,
+                  );
+                  const arrow = buildArrowFromDisplayedPolyline(
+                    p.id,
+                    shifted,
+                    reversed,
+                  );
+                  if (!arrow) return null;
+                  const circuitDef = PIPE_CIRCUITS.find((c) => c.key === p.circuit);
+                  const arrowColor = circuitDef?.color ?? "#1F2937";
+                  return (
+                    <g key={`fa_${arrow.pipeId}`} pointerEvents="none">
+                      <line
+                        x1={arrow.tail1X}
+                        y1={arrow.tail1Y}
+                        x2={arrow.tipX}
+                        y2={arrow.tipY}
+                        stroke={arrowColor}
+                        strokeWidth={2.25}
+                        strokeLinecap="round"
+                      />
+                      <line
+                        x1={arrow.tail2X}
+                        y1={arrow.tail2Y}
+                        x2={arrow.tipX}
+                        y2={arrow.tipY}
+                        stroke={arrowColor}
+                        strokeWidth={2.25}
+                        strokeLinecap="round"
+                      />
+                    </g>
+                  );
+                })}
 
             {/* Phase 6.5.1 — rubber-band selection rectangle, drawn
                 inside the zoom/pan group so it tracks the underlying
@@ -5653,6 +5703,136 @@ export function SchemeEditor({ readOnly }: Props) {
         </div>
       )}
 
+      {/* Phase 13.22 Task 7 — branch-from-pipe chamber/valve prompt.
+          After the engineer commits the branch pipe started from a
+          right-click "🌿 Салбар шугам зурах", we ask whether to ALSO
+          add a chamber or valve at the branch junction (engineer's
+          explicit ask). The prompt is dismissable. */}
+      {pendingBranchPrompt && mode === "select" && (
+        <div
+          style={{
+            position: "fixed",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            background: "var(--bg-elev, #2a2a2a)",
+            border: "2px solid var(--accent, #1f5faa)",
+            borderRadius: 10,
+            padding: "1rem 1.25rem",
+            fontSize: 13,
+            color: "var(--fg, #e8e8e8)",
+            zIndex: 200,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
+            minWidth: 340,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14, color: "var(--accent, #1f5faa)" }}>
+            🌿 Салбар цэгт юу нэмэх вэ?
+          </div>
+          <div style={{ marginBottom: 12, fontSize: 12, color: "var(--fg-muted, #999)" }}>
+            Салбар цэг (Tee) дээр стандартын дагуу шалгах камер, хаалт суурилуулах боломжтой
+            <br />
+            (БНбД 41-02-13 §6.3 / СНиП 41-02-2003 §9.6.10).
+          </div>
+          {(() => {
+            const teeNodeId = pendingBranchPrompt.teeNodeId;
+            const teeNode = nodes.find((n) => n.id === teeNodeId);
+            if (!teeNode) {
+              // Defensive — the tee got removed somehow; close.
+              setPendingBranchPrompt(null);
+              return null;
+            }
+            const placeAtTee = (extraKind: string) => {
+              // Create a new co-located node at the tee position. We
+              // don't reshape the existing pipes — the chamber/valve
+              // sits AT the tee as a sibling node. Engineer can move
+              // it via Inspector if needed.
+              const def = getNodeKind(extraKind);
+              const idPrefix =
+                extraKind === "chamber" || extraKind === "well_supply"
+                  ? extraKind === "well_supply" ? "well" : "ch"
+                  : "v";
+              const labelPrefix = def?.shortLabel ?? "X";
+              const newId = uid(idPrefix);
+              pushUndoSnapshot(`Салбар цэгт ${def?.name ?? extraKind} нэмсэн`, 1);
+              addNode({
+                id: newId,
+                kind: extraKind,
+                label: `${labelPrefix}-${nodes.filter((n) => n.kind === extraKind).length + 1}`,
+                x: teeNode.x + 14, // tiny offset so the icons don't completely overlap
+                y: teeNode.y - 14,
+                ...(teeNode.geo ? { geo: teeNode.geo } : {}),
+              });
+            };
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    placeAtTee("chamber");
+                    setPendingBranchPrompt(null);
+                    setToast({
+                      text: "🛡 Салбар цэгт шалгах камер нэмлээ",
+                      key: Date.now(),
+                      tone: "success",
+                    });
+                  }}
+                  style={branchPromptBtn}
+                >
+                  🛡 Шалгах камер нэмэх
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    placeAtTee("valve_ball");
+                    setPendingBranchPrompt(null);
+                    setToast({
+                      text: "🚿 Салбар цэгт бөмбөлөг хаалт нэмлээ",
+                      key: Date.now(),
+                      tone: "success",
+                    });
+                  }}
+                  style={branchPromptBtn}
+                >
+                  🚿 Бөмбөлөг хаалт нэмэх
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    placeAtTee("chamber");
+                    placeAtTee("valve_ball");
+                    setPendingBranchPrompt(null);
+                    setToast({
+                      text: "🛡🚿 Салбар цэгт камер + хаалт нэмлээ",
+                      key: Date.now(),
+                      tone: "success",
+                    });
+                  }}
+                  style={branchPromptBtn}
+                >
+                  🛡🚿 Аль аль нь нэмэх
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingBranchPrompt(null);
+                    setToast({
+                      text: "Салбар үүсгэв (нэмэлт зүйл нэмэхгүй)",
+                      key: Date.now(),
+                      tone: "neutral",
+                    });
+                  }}
+                  style={{ ...branchPromptBtn, opacity: 0.7 }}
+                >
+                  ✕ Үгүй, орхих
+                </button>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Right-click context menu */}
       {contextMenu && (
         <ContextMenu
@@ -5720,11 +5900,14 @@ export function SchemeEditor({ readOnly }: Props) {
             updatePipe(target.id, { waypoints: [] });
             setContextMenu(null);
           }}
-          onPlaceChamber={(tOrDistance) => {
-            // Phase 13.21 — split the pipe at the requested position
-            // and insert a chamber / inspection-well node. Atomic-ish
-            // sequence: addNode (chamber) → addPipe × 2 → removePipe
-            // (original), all wrapped in one undo snapshot.
+          onPlaceOnPipe={(kindOrSentinel, tOrDistance) => {
+            // Phase 13.21 + 13.22 — generic split-and-insert on pipe.
+            // Atomic op: addNode → addPipe × 2 → removePipe (original),
+            // all wrapped in one undo snapshot. Dispatches on the
+            // `kindOrSentinel` argument:
+            //   "__auto_chamber__" → Phase 13.21 chamber/well (auto by circuit)
+            //   "__branch_tee__"   → Phase 13.22 Task 7 tee + addPipe entry
+            //   "valve_*"          → Phase 13.22 Task 5 valve subtype
             const target = contextMenu.target;
             if (target.kind !== "pipe") return;
             const pipe = pipes.find((p) => p.id === target.id);
@@ -5732,10 +5915,8 @@ export function SchemeEditor({ readOnly }: Props) {
             const fromNode = nodes.find((n) => n.id === pipe.fromNodeId);
             const toNode = nodes.find((n) => n.id === pipe.toNodeId);
             if (!fromNode || !toNode) return;
-            // Resolve the sentinel into a fraction t ∈ [0, 1].
             let t = tOrDistance;
             if (tOrDistance > 1) {
-              // "Distance mode" — value is 1000 + metres.
               const meters = tOrDistance - 1000;
               const totalLen = pipe.length_m > 0 ? pipe.length_m : 1;
               t = Math.max(0.01, Math.min(0.99, meters / totalLen));
@@ -5746,27 +5927,47 @@ export function SchemeEditor({ readOnly }: Props) {
               to: { x: toNode.x, y: toNode.y, ...(toNode.geo ? { lat: toNode.geo.lat, lon: toNode.geo.lon } : {}) },
               t,
             });
-            const chamberKind = defaultChamberKindForCircuit(pipe.circuit);
-            const chamberId = uid(chamberKind === "well_supply" ? "well" : "ch");
-            const chamberLabel = chamberKind === "well_supply" ? "ХУ-ШХ" : "ШК";
-            pushUndoSnapshot("Худаг / Шалгах камер байрлуулсан", 4);
-            // Insert chamber node first.
+            // Resolve the actual node kind + label prefix from the
+            // sentinel / kind arg.
+            let kind = kindOrSentinel;
+            let labelPrefix = "К";
+            let idPrefix = "n";
+            let toastText = "Зангилаа байрлуулсан";
+            let isBranchTee = false;
+            if (kindOrSentinel === "__auto_chamber__") {
+              kind = defaultChamberKindForCircuit(pipe.circuit);
+              labelPrefix = kind === "well_supply" ? "ХУ-ШХ" : "ШК";
+              idPrefix = kind === "well_supply" ? "well" : "ch";
+              toastText = kind === "well_supply"
+                ? "💧 Шалгах худаг үүсгэв (БНбД 40-05 §7)"
+                : "🛡 Шалгах камер үүсгэв (БНбД 41-02-13 §6.3)";
+            } else if (kindOrSentinel === "__branch_tee__") {
+              kind = "tee"; // see nodeCatalog
+              labelPrefix = "Т";
+              idPrefix = "tee";
+              isBranchTee = true;
+            } else if (kindOrSentinel.startsWith("valve_")) {
+              const def = getNodeKind(kindOrSentinel);
+              labelPrefix = def?.shortLabel ?? "В";
+              idPrefix = "v";
+              toastText = `🚿 ${def?.name ?? "Хаалт"} байрлуулсан`;
+            }
+            const insId = uid(idPrefix);
+            pushUndoSnapshot(toastText, 4);
             addNode({
-              id: chamberId,
-              kind: chamberKind,
-              label: `${chamberLabel}-${nodes.filter((n) => n.kind === chamberKind).length + 1}`,
+              id: insId,
+              kind,
+              label: `${labelPrefix}-${nodes.filter((n) => n.kind === kind).length + 1}`,
               x: Math.round(split.point.x),
               y: Math.round(split.point.y),
               ...(typeof split.point.lat === "number" && typeof split.point.lon === "number"
                 ? { geo: { lat: split.point.lat, lon: split.point.lon } }
                 : {}),
             });
-            // Two new pipes inheriting the original's DN / material /
-            // circuit. bendPoints split per the polyline.
             addPipe({
               id: uid("pipe"),
               fromNodeId: pipe.fromNodeId,
-              toNodeId: chamberId,
+              toNodeId: insId,
               materialKey: pipe.materialKey,
               dn: pipe.dn,
               length_m: split.lengthFirst_m,
@@ -5775,7 +5976,7 @@ export function SchemeEditor({ readOnly }: Props) {
             });
             addPipe({
               id: uid("pipe"),
-              fromNodeId: chamberId,
+              fromNodeId: insId,
               toNodeId: pipe.toNodeId,
               materialKey: pipe.materialKey,
               dn: pipe.dn,
@@ -5785,14 +5986,28 @@ export function SchemeEditor({ readOnly }: Props) {
             });
             removePipe(pipe.id);
             setContextMenu(null);
-            setToast({
-              text:
-                chamberKind === "well_supply"
-                  ? "💧 Шалгах худаг үүсгэв (БНбД 40-05 §7)"
-                  : "🛡 Шалгах камер үүсгэв (БНбД 41-02-13 §6.3)",
-              key: Date.now(),
-              tone: "success",
-            });
+            // Phase 13.22 Task 7 — for a branch tee, auto-enter addPipe
+            // mode anchored at the new tee + remember that we're in
+            // mid-branch so the post-commit dialog can offer to add a
+            // chamber/valve at the branch point.
+            if (isBranchTee) {
+              setPipeFrom(insId);
+              setPipeBendPts([]);
+              setMode("addPipe");
+              setAngleMode("free");
+              setPendingBranchPrompt({ teeNodeId: insId });
+              setToast({
+                text: "🌿 Салбар цэг үүсгэв. Одоо салбар шугамыг зурна уу. Дуусгасны дараа худаг/хаалт асуух болно.",
+                key: Date.now(),
+                tone: "neutral",
+              });
+            } else {
+              setToast({
+                text: toastText,
+                key: Date.now(),
+                tone: "success",
+              });
+            }
           }}
           groupSize={multiSelection.nodeIds.length + multiSelection.pipeIds.length}
           onDeleteGroup={() => {
@@ -5988,8 +6203,9 @@ function ContextMenu({
   // Phase 12.5b — channel actions when the targeted pipe is inside a composite channel
   isChannelMember, onRemoveFromChannel, onRemoveChannel, onChangeChannelType, onAddPipeToChannel,
   channelAvailableCircuits,
-  // Phase 13.21 — chamber / inspection-well placement on a selected pipe
-  onPlaceChamber,
+  // Phase 13.21 + 13.22 — split-and-insert any node kind on a pipe
+  // (chamber / well / valve_* / tee for branching).
+  onPlaceOnPipe,
 }: {
   x: number; y: number;
   target: { kind: "node" | "pipe" | "building"; id: string };
@@ -6024,17 +6240,27 @@ function ContextMenu({
   /** Circuits the channel does NOT already contain — engineer can add
    *  one via the submenu. */
   channelAvailableCircuits?: PipeCircuit[];
-  /** Phase 13.21 — caller-supplied chamber-on-pipe handler. Receives
-   *  either a fraction t ∈ [0, 1] (midpoint = 0.5) or a "distance
-   *  mode" sentinel `1000 + meters` so the parent can resolve metres
-   *  against the pipe's authoritative length_m. */
-  onPlaceChamber?: (tOrDistanceSentinel: number) => void;
+  /** Phase 13.21 + 13.22 — caller-supplied split-and-insert handler.
+   *  Receives the node `kind` and either a fraction t ∈ [0, 1]
+   *  (midpoint = 0.5) or a "distance mode" sentinel `1000 + meters`
+   *  so the parent can resolve metres against the pipe's authoritative
+   *  length_m. Special kinds:
+   *    "__auto_chamber__" — circuit-aware (well_supply for cold,
+   *       chamber for everything else; per БНбД 41-02-13 / 40-05)
+   *    "__branch_tee__"   — insert a junction (tee) + auto-enter
+   *       addPipe mode for the branch line (Phase 13.22 Task 7)
+   *    "valve_*"          — Russian-source verified outdoor heat-net
+   *       valve subtypes (Phase 13.22 Task 5) */
+  onPlaceOnPipe?: (kind: string, tOrDistanceSentinel: number) => void;
 }) {
   // Phase 12.4 — sub-menu state for the "Энэ юу вэ?" tag-as submenu
   const [tagSubmenuOpen, setTagSubmenuOpen] = useState(false);
   // Phase 12.5b — submenu states for channel-type change + add-pipe.
   const [channelTypeSubmenuOpen, setChannelTypeSubmenuOpen] = useState(false);
   const [addPipeSubmenuOpen, setAddPipeSubmenuOpen] = useState(false);
+  // Phase 13.22 — submenu states for valve-on-pipe + branch-on-pipe.
+  const [valveSubmenuOpen, setValveSubmenuOpen] = useState(false);
+  const [branchSubmenuOpen, setBranchSubmenuOpen] = useState(false);
   // Click-outside dismissal
   useEffect(() => {
     const dismiss = () => onClose();
@@ -6131,22 +6357,43 @@ function ContextMenu({
       {isPipe && hasWaypoints && (
         <CtxBtn icon="⏐" onClick={onClearWaypoints}>Бүх эргэлтийг арилгах</CtxBtn>
       )}
-      {/* Phase 13.21 — chamber-on-pipe placement (engineer report:
-          "Дулааны худаг, ХХУ болон хүйтэн усны шугам дээр Худаг буюу
-          Шалгах камерийг байрлуулах төлөвлөх боломжтой байхаар").
-          Splits the pipe at midpoint by default + inserts a chamber
-          / well node (per СНиП 41-02-2003 §9.6.10 + БНбД 41-02-13
-          §6.3 — 100 m magistral / 50 m service spacing standards). */}
-      {isPipe && onPlaceChamber && (
+      {/* Phase 13.21/13.22 — split-and-insert node on a pipe.
+          Refactored from the original chamber-only flow to a generic
+          handler that accepts any node kind:
+            • chamber / well_supply (Phase 13.21) — Худаг / Шалгах камер
+            • valve_* (Phase 13.22 Task 5)        — Гадна шугамын хаалт
+              арматур (ball / gate / balance / butterfly / check / vent
+              / drain) per СНиП 41-02-2003 §9.6 + Politerm справочник
+            • tee (Phase 13.22 Task 7)            — Салбар цэг үүсгээд
+              addPipe горимд орж салбар шугам зурна */}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
         <CtxBtn
           icon="🛡"
-          onClick={() => onPlaceChamber(0.5)}
+          onClick={() => onPlaceOnPipe("__auto_chamber__", 0.5)}
           data-testid="ctx-place-chamber-mid"
         >
           Худаг / Шалгах камер байрлуулах
         </CtxBtn>
       )}
-      {isPipe && onPlaceChamber && (
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
+        <CtxBtn
+          icon="🚿"
+          onClick={() => setValveSubmenuOpen(true)}
+          data-testid="ctx-place-valve"
+        >
+          Хаалт байрлуулах ▶
+        </CtxBtn>
+      )}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
+        <CtxBtn
+          icon="🌿"
+          onClick={() => setBranchSubmenuOpen(true)}
+          data-testid="ctx-place-branch"
+        >
+          Салбар шугам зурах ▶
+        </CtxBtn>
+      )}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
         <CtxBtn
           icon="📏"
           onClick={() => {
@@ -6156,20 +6403,74 @@ function ContextMenu({
             );
             const d_m = raw ? parseFloat(raw) : NaN;
             if (Number.isFinite(d_m) && d_m > 0) {
-              // Caller resolves the absolute distance against the
-              // pipe's authoritative length_m (Phase 12.3 invariant)
-              // and converts to a parametric t. We pass a NEGATIVE
-              // marker so the caller knows it's a distance request,
-              // not a fraction — separated by an order of magnitude
-              // (1.0 vs |t| > 1 ≡ "metres mode"). 1000 + d_m encodes
-              // the distance non-ambiguously.
-              onPlaceChamber(1000 + d_m);
+              onPlaceOnPipe("__auto_chamber__", 1000 + d_m);
             }
           }}
           data-testid="ctx-place-chamber-distance"
         >
-          📏 ... зайд байрлуулах
+          📏 ... зайд камер байрлуулах
         </CtxBtn>
+      )}
+      {/* Valve type submenu — Russian-source verified outdoor heat-net
+          valves per СНиП 41-02-2003 §9.6 + Politerm Spravochnik §11. */}
+      {isPipe && onPlaceOnPipe && valveSubmenuOpen && (
+        <>
+          <CtxBtn icon="◯" onClick={() => onPlaceOnPipe("valve_ball", 0.5)}>
+            Бөмбөлөг хаалт (DN15-300)
+          </CtxBtn>
+          <CtxBtn icon="▷◁" onClick={() => onPlaceOnPipe("valve_gate", 0.5)}>
+            Гацуу хаалт (магистраль)
+          </CtxBtn>
+          <CtxBtn icon="⚖" onClick={() => onPlaceOnPipe("valve_balancing", 0.5)}>
+            Тэнцвэрлэгчийн хаалт
+          </CtxBtn>
+          <CtxBtn icon="◐" onClick={() => onPlaceOnPipe("valve_butterfly", 0.5)}>
+            Эрэг хаалт (DN100+)
+          </CtxBtn>
+          <CtxBtn icon="▶|" onClick={() => onPlaceOnPipe("valve_check", 0.5)}>
+            Эргэх хаалт (насосын дараа)
+          </CtxBtn>
+          <CtxBtn icon="↑" onClick={() => onPlaceOnPipe("valve_air_vent", 0.5)}>
+            Агаар гарагч (дээд цэг)
+          </CtxBtn>
+          <CtxBtn icon="↓" onClick={() => onPlaceOnPipe("valve_drain", 0.5)}>
+            Угаагч хаалт (доод цэг)
+          </CtxBtn>
+          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
+          <CtxBtn icon="◀" onClick={() => setValveSubmenuOpen(false)}>
+            ◀ Буцах
+          </CtxBtn>
+        </>
+      )}
+      {/* Branch submenu — Phase 13.22 Task 7. Splits pipe + inserts a
+          tee, then the parent handler enters addPipe mode with the
+          tee as pipeFrom + shows the chamber/valve prompt after the
+          branch is committed. */}
+      {isPipe && onPlaceOnPipe && branchSubmenuOpen && (
+        <>
+          <CtxBtn icon="🌿" onClick={() => onPlaceOnPipe("__branch_tee__", 0.5)}>
+            Голд салбар цэг үүсгээд зурах
+          </CtxBtn>
+          <CtxBtn
+            icon="📏"
+            onClick={() => {
+              const raw = window.prompt(
+                "Эх цэгээс хэдэн метр зайд салбар үүсгэх вэ?",
+                "10",
+              );
+              const d_m = raw ? parseFloat(raw) : NaN;
+              if (Number.isFinite(d_m) && d_m > 0) {
+                onPlaceOnPipe("__branch_tee__", 1000 + d_m);
+              }
+            }}
+          >
+            📏 ... зайд салбар үүсгэх
+          </CtxBtn>
+          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
+          <CtxBtn icon="◀" onClick={() => setBranchSubmenuOpen(false)}>
+            ◀ Буцах
+          </CtxBtn>
+        </>
       )}
 
       {/* Phase 12.5b — Channel-specific menu items. Render only when
@@ -6667,6 +6968,19 @@ const pickerBtn: CSSProperties = {
   border: "1px solid var(--border, #444)",
   borderRadius: 4,
   cursor: "pointer",
+};
+
+/* Phase 13.22 Task 7 — branch-tee post-commit prompt button. */
+const branchPromptBtn: CSSProperties = {
+  padding: "0.55rem 0.7rem",
+  fontSize: 12,
+  fontWeight: 600,
+  background: "var(--bg, #1a1a1a)",
+  color: "var(--fg, #e8e8e8)",
+  border: "1px solid var(--border, #444)",
+  borderRadius: 6,
+  cursor: "pointer",
+  textAlign: "left",
 };
 
 /* Phase 13.7 — view selector (Top / Bottom / Iso) docked top-right. */

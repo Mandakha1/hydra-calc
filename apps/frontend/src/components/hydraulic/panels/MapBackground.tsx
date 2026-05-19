@@ -102,6 +102,16 @@ export function MapBackground({
       zoomControl: true,
       attributionControl: true,
       preferCanvas: true,
+      // Phase 13.22 — engineer report: "Газрын зургыг илүү татаж
+      // томруулж барилга байгууламж шугам хоолой зэргийг тодоор
+      // харах боломжтой болгоно уу." OSM tiles only cover zoom 0..19,
+      // satellite up to 22; setting `maxZoom: 23` on the map itself
+      // (with `maxNativeZoom` on the tile layer below) lets the
+      // engineer keep zooming via tile-pixel upscaling so individual
+      // valves / chambers / pipe segments stay legible at small
+      // building scales. The leaflet wrapper auto-interpolates.
+      maxZoom: 23,
+      minZoom: 3,
     });
     mapRef.current = map;
     if (onMapReady) onMapReady(map);
@@ -136,7 +146,13 @@ export function MapBackground({
     }
     const layer = L.tileLayer(provider.url, {
       attribution: provider.attribution,
-      maxZoom: provider.maxZoom,
+      // Phase 13.22 — `maxZoom` set higher than `maxNativeZoom` tells
+      // leaflet to KEEP showing the deepest available tile (upscaled
+      // by pixel interpolation) when the user zooms past the provider's
+      // tile pyramid. Engineer sees pixellated but still useful detail
+      // at zoom 20-23 instead of an empty grey grid.
+      maxZoom: 23,
+      maxNativeZoom: provider.maxZoom,
       opacity,
     });
     layer.addTo(map);

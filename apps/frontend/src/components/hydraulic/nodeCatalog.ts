@@ -247,6 +247,54 @@ export const NODE_KINDS: NodeKindDef[] = [
     defaults: { zeta: 4.0 },
     formKey: "valve",
   },
+  // Phase 13.22 — Engineer-requested + Russian-source verified outdoor
+  // heat-net valves. Balancing valve is the missing key for branch
+  // tuning (см. СНиП 41-02-2003 §11.5 + Politerm справочник: каждый
+  // потребитель должен иметь возможность гидравлической балансировки).
+  {
+    key: "valve_balancing",
+    category: "valve",
+    name: "Тэнцвэрлэгчийн хаалт (балансировочный клапан)",
+    shortLabel: "Бл",
+    icon: "⚖",
+    description: "Хэрэглэгч бүрд урсгалыг тохируулна. Гадна шугамд DN15-DN300.",
+    defaults: { zeta: 3.5 },
+    formKey: "valve",
+  },
+  // Дисковый поворотный затвор — устанавливается на магистрали DN100+
+  // взамен задвижки, легче по весу + проще в обслуживании.
+  {
+    key: "valve_butterfly",
+    category: "valve",
+    name: "Эрэг хаалт (поворотный затвор)",
+    shortLabel: "Эх",
+    icon: "◐",
+    description: "Магистраль DN100+ — задвижкийн оронд хөнгөн вариант",
+    defaults: { zeta: 0.5 },
+    formKey: "valve",
+  },
+  // Воздушник — обязателен в верхних точках по СНиП 41-02-2003 §9.6.10.
+  {
+    key: "valve_air_vent",
+    category: "valve",
+    name: "Агаар гарагч (воздушник)",
+    shortLabel: "Ва",
+    icon: "↑",
+    description: "Шугамын дээд цэг дэх агаар гаргалт",
+    defaults: { zeta: 0.1 },
+    formKey: "valve",
+  },
+  // Спускник — обязателен в нижних точках по СНиП 41-02-2003 §9.6.10.
+  {
+    key: "valve_drain",
+    category: "valve",
+    name: "Угаагч хаалт (спускник)",
+    shortLabel: "Уг",
+    icon: "↓",
+    description: "Шугамын доод цэг дэх ус гаргалт",
+    defaults: { zeta: 0.1 },
+    formKey: "valve",
+  },
 
   // ========== FITTINGS (Холбоосын хэсэг) ==========
   {
