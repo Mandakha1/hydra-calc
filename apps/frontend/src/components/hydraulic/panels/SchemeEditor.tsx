@@ -159,6 +159,17 @@ import {
   polylineLengthPx,
   type ProjectorCtx,
 } from "../scheme/displayPipeGeometry";
+// Phase 13.20 — visual offset for parallel multi-circuit pipes sharing
+// the same endpoints. Engineer report: "Жижиг барилга дээр давхарлаж
+// зурхад алдаа их гарч цэгүүд зөрж байна" — Т1+Т2+Т3+Т4+В1 were
+// stacking on top of each other so only the topmost circuit was
+// visible + the bend handles "drifted" because clicks grabbed
+// whichever pipe rendered last at that pixel.
+import {
+  computeParallelOffsets,
+  perpendicularUnit,
+  DEFAULT_PARALLEL_SPACING_PX,
+} from "../scheme/parallelPipeOffset";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type {
   SchemeNode,
@@ -2741,6 +2752,16 @@ export function SchemeEditor({ readOnly }: Props) {
     [pipes, nodes, results],
   );
 
+  // Phase 13.20 — pre-compute parallel-offset index per pipe id. Memo
+  // recomputes only when the pipe topology changes (adding / removing
+  // pipes, changing fromNodeId / toNodeId / circuit) — pan/zoom don't
+  // touch the offset, only the perpendicular projection in the renderer
+  // does. computeParallelOffsets skips channelId-grouped pipes.
+  const parallelOffsetByPipeId = useMemo(
+    () => computeParallelOffsets(pipes),
+    [pipes],
+  );
+
   // Live cursor info
   const cursorM = mousePos ? { x: pxToM(mousePos.x), y: pxToM(mousePos.y) } : null;
   const livePipeInfo = mode === "addPipe" && pipeFrom && mousePos
@@ -4530,6 +4551,21 @@ export function SchemeEditor({ readOnly }: Props) {
                   displayPolygon: projectBuildingPolygon(bBuilding),
                 });
               }
+              // Phase 13.20 — perpendicular shift for parallel multi-
+              // circuit pipes. The offset is centred on zero (e.g. for
+              // N=5 it's [-2..+2] × 4 px) and applied AFTER clipping
+              // so the visible parallel lines still enter the building
+              // perimeter at the correct face. Singleton pipes get
+              // offset = 0 → identical to pre-Phase-13.20 rendering.
+              const parallelIndex = parallelOffsetByPipeId.get(p.id) ?? 0;
+              const perp =
+                parallelIndex !== 0 ? perpendicularUnit(aPos, bPos) : { x: 0, y: 0 };
+              const offsetDx = perp.x * parallelIndex * DEFAULT_PARALLEL_SPACING_PX;
+              const offsetDy = perp.y * parallelIndex * DEFAULT_PARALLEL_SPACING_PX;
+              if (offsetDx !== 0 || offsetDy !== 0) {
+                aPos = { x: aPos.x + offsetDx, y: aPos.y + offsetDy };
+                bPos = { x: bPos.x + offsetDx, y: bPos.y + offsetDy };
+              }
               const isSelected = selection?.kind === "pipe" && selection.id === p.id;
               const isBad = violatingPipeIds.has(p.id);
               const r = results?.pipes.find((x) => x.pipeId === p.id);
@@ -4571,13 +4607,19 @@ export function SchemeEditor({ readOnly }: Props) {
               // CURRENT pan/zoom via displayVertex so saved pipes stay
               // locked to the engineer's intended corners on the map
               // (previously they snapped back to original stored x/y).
+              // Phase 13.20 — bends ALSO get the parallel-offset shift
+              // applied (same dx/dy as the endpoints above) so the
+              // multi-circuit fan-out stays a rigid-body parallel of
+              // the original polyline shape.
               if (p.bendPoints?.length) {
                 for (const bp of p.bendPoints) {
                   const dp = displayVertex(bp, projectorCtx);
-                  points.push({ x: dp.x, y: dp.y });
+                  points.push({ x: dp.x + offsetDx, y: dp.y + offsetDy });
                 }
               } else if (p.waypoints?.length) {
-                points.push(...p.waypoints);
+                for (const wp of p.waypoints) {
+                  points.push({ x: wp.x + offsetDx, y: wp.y + offsetDy });
+                }
               } else if (angleMode === "ortho90" && Math.abs(aPos.x - bPos.x) > 1 && Math.abs(aPos.y - bPos.y) > 1) {
                 points.push({ x: bPos.x, y: aPos.y });
               }
@@ -4687,11 +4729,16 @@ export function SchemeEditor({ readOnly }: Props) {
                       wrong place. */}
                   {isSelected && p.bendPoints?.map((bp, i) => {
                     const dp = displayVertex(bp, projectorCtx);
+                    // Phase 13.20 — handles get the same parallel-offset
+                    // shift so they sit ON the visible polyline of THIS
+                    // pipe (not the un-offset master path). Drag still
+                    // commits raw bp.x/.y so all parallel siblings move
+                    // together — the offset is purely visual.
                     return (
                       <circle
                         key={`bp-${p.id}-${i}`}
-                        cx={dp.x}
-                        cy={dp.y}
+                        cx={dp.x + offsetDx}
+                        cy={dp.y + offsetDy}
                         r={5}
                         fill="var(--accent, #1f5faa)"
                         stroke="var(--bg, white)"
