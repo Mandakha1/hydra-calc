@@ -476,36 +476,46 @@ function appendHydraulicCircuitSheet(
   const cat = state.settings.primaryMaterialCategory;
   // Phase 13.25 — auto-classify each pipe as Магистраль / Салбар from
   // network topology (consumers reachable in the downstream subtree).
-  // Engineer asks "магистрал шугам болон салбар шугамыг шалгаж мэдэж
-  // чадах уу" — the new column answers that with the official labels.
   const roleByPipeId = classifyPipeRoles(state.pipes, state.nodes);
 
-  // Row 1 — group title (one row spanning the table)
+  // Phase 13.26 — layout switched to match the engineer-attached
+  // УДДТ-5 Гидравлик халаалт тооцоо.xlsx reference EXACTLY:
+  //
+  //   Row 1: A=Тооцооны хэсгийн №   B=Тооцооны хэсгийн №   (i / j)
+  //          C=Температурын зөрүү, 0С
+  //          D=[халаалт] шугамын гидравлик тооцоо           (circuit label)
+  //   Row 2: D=Q [кВт]    E=G [кг/с]   F=G [т/цаг]   G=L [м]
+  //          H=1+α        I=di [мм]    J=di [м]
+  //          K=dст [мм]   L=ξ (local count)
+  //          M=W [м/с]    N=Rш [Pa/м]
+  //          O=Lэ [м]     P=∆Pi [Pa]   Q=∆Hi [м]   R=Lэкв
+  //          S=Шугамын төрөл (Phase 13.25 extension column)
   const row1: (string | number | null)[] = [
-    sheetName, // e.g. "Халаалт гидравлик"
-    ...Array(18).fill(null),
+    "Тооцооны хэсгийн №",
+    "Тооцооны хэсгийн №",
+    "Температурын зөрүү, 0С",
+    opts.label,
+    ...Array(15).fill(null),
   ];
-  // Row 2 — 19-column header matching the diploma template + Phase
-  // 13.25 "Шугамын төрөл" column.
   const row2: (string | number | null)[] = [
-    "i",
-    "j",
-    "L [м]",
-    "G [т/ц]",
+    null, // A (merged from row 1)
+    null, // B
+    null, // C
+    "Q [кВт]",
     "G [кг/с]",
-    "α",
-    "Rш [Pa/м]",
+    "G [т/цаг]",
+    "L [м]",
+    "1+α",
     "di [мм]",
+    "di [м]",
     "dст [мм]",
-    "w [м/с]",
-    "Rст [Pa/м]",
-    "∑ξ",
-    "lэ [м]",
-    "ΔP [Pa]",
-    "ΔH [м]",
-    "2ΔH [м]",
-    "Hk [м]",
-    "Hp [м]",
+    "ξ",
+    "W [м/с]",
+    "Rш [Pa/м]",
+    "Lэ [м]",
+    "∆Pi [Pa]",
+    "∆Hi [м]",
+    "Lэкв",
     "Шугамын төрөл",
   ];
   const aoa: (string | number | null)[][] = [row1, row2];
@@ -522,16 +532,28 @@ function appendHydraulicCircuitSheet(
   // Source head in m water column from project settings (MPa → m).
   const Hsource_m = (state.settings.sourcePressure_mpa ?? 0.6) * 102;
 
-  let cumulativeDH_m = 0;
   pipes.forEach((p) => {
     const r = state.results?.pipes.find((x) => x.pipeId === p.id);
     const fromIdx = indexBy(p.fromNodeId);
     const toIdx = indexBy(p.toNodeId);
     const fromNode = nodeBy(p.fromNodeId);
-    const Q_w = fromNode?.heatLoad_w ?? r?.heatLossPerMeter_W ?? 0;
-    void Q_w; // computed elsewhere; not in this column set
+    const toNode = nodeBy(p.toNodeId);
+    // Phase 13.26 — Q (kW) carried by this pipe. Solver-derived from
+    // G × c × ΔT wins; fall back to the to-node's heatLoad_w (consumer
+    // pipe delivers its consumer's load) then the from-node's. This
+    // fixes the engineer report "барилга дээр ачаалал өгсөнч тооцоон
+    // дээр гарч ирэхгүй" — the to-node heat load on consumer pipes
+    // was being ignored before this fix.
     const G_kg_s = r?.G_kg_s ?? 0;
     const G_t_h = G_kg_s * 3.6;
+    let Q_kw = 0;
+    if (G_kg_s > 0 && opts.deltaT_c > 0) {
+      Q_kw = G_kg_s * 4.186 * opts.deltaT_c;
+    } else if (toNode?.heatLoad_w && toNode.heatLoad_w > 0) {
+      Q_kw = toNode.heatLoad_w / 1000;
+    } else if (fromNode?.heatLoad_w && fromNode.heatLoad_w > 0) {
+      Q_kw = fromNode.heatLoad_w / 1000;
+    }
     const L_m = p.length_m ?? 0;
     const W_m_s = r?.v_m_s ?? 0;
     const Rsh_pa_m = r?.headlossPerMeter_pa ?? 0;
@@ -544,62 +566,57 @@ function appendHydraulicCircuitSheet(
     const di_mm = Math.round(di_m * 1000);
     // Selected standard DN from pipe.dn → ID (mm).
     const dst_mm = PIPE_DB[cat].find((x) => x.dn === p.dn)?.id_mm ?? p.dn;
-    // ∑ξ derived from α × friction loss (so engineer sees a coherent
-    // number even when they haven't itemized local resistances). For
-    // outdoor mains this gives reasonable 1-15 range per segment.
-    const dynamicPressure_pa = (RHO_KG_M3 * W_m_s ** 2) / 2;
-    const sumXi =
-      dynamicPressure_pa > 0
-        ? Number(((ALPHA_OUTDOOR * Rsh_pa_m * L_m) / dynamicPressure_pa).toFixed(1))
-        : 0;
+    // ξ — sum of local resistance coefficients. Defaults to 0 (engineer
+    // tallies bends + valves on a per-segment basis in the reference
+    // file's columns S-Z). We expose the column so engineers can fill
+    // it post-export.
+    const xi_default = 0;
+    void Hsource_m; // reserved for future Hk/Hp residual columns
     const lE_m = L_m * (1 + ALPHA_OUTDOOR); // equivalent length
-    cumulativeDH_m += dHi_m;
-    const Hk_m = Math.max(0, Hsource_m - 2 * cumulativeDH_m);
-    const Hp_m = 2 * cumulativeDH_m + 5; // 5m engineering reserve (СП 124.13330 §6.3)
     aoa.push([
-      fromIdx,
-      toIdx,
-      Number(L_m.toFixed(2)),
-      Number(G_t_h.toFixed(3)),
-      Number(G_kg_s.toFixed(4)),
-      ALPHA_OUTDOOR,
-      Number(Rsh_pa_m.toFixed(2)),
-      di_mm,
-      dst_mm,
-      Number(W_m_s.toFixed(3)),
-      Number(Rsh_pa_m.toFixed(2)),
-      sumXi,
-      Number(lE_m.toFixed(2)),
-      Math.round(dPi_pa),
-      Number(dHi_m.toFixed(3)),
-      Number((2 * dHi_m).toFixed(3)),
-      Number(Hk_m.toFixed(2)),
-      Number(Hp_m.toFixed(2)),
-      pipeRoleLabel(roleByPipeId.get(p.id) ?? "branch"),
+      fromIdx,                                       // A: i
+      toIdx,                                          // B: j
+      opts.deltaT_c,                                  // C: ΔT
+      Number(Q_kw.toFixed(2)),                        // D: Q [кВт]
+      Number(G_kg_s.toFixed(4)),                      // E: G [кг/с]
+      Number(G_t_h.toFixed(3)),                       // F: G [т/цаг]
+      Number(L_m.toFixed(2)),                         // G: L [м]
+      Number((1 + ALPHA_OUTDOOR).toFixed(3)),         // H: 1+α
+      di_mm,                                          // I: di [мм]
+      Number(di_m.toFixed(4)),                        // J: di [м]
+      dst_mm,                                         // K: dст [мм]
+      xi_default,                                     // L: ξ
+      Number(W_m_s.toFixed(3)),                       // M: W [м/с]
+      Number(Rsh_pa_m.toFixed(2)),                    // N: Rш [Pa/м]
+      Number(lE_m.toFixed(2)),                        // O: Lэ [м]
+      Math.round(dPi_pa),                             // P: ∆Pi [Pa]
+      Number(dHi_m.toFixed(3)),                       // Q: ∆Hi [м]
+      Number(L_m.toFixed(1)),                         // R: Lэкв cumulative
+      pipeRoleLabel(roleByPipeId.get(p.id) ?? "branch"), // S: Шугамын төрөл
     ]);
   });
 
-  // Phase 13.25 — 19-column widths (diploma 18 + Шугамын төрөл).
+  // Phase 13.26 — column widths matching the УДДТ-5 layout above.
   appendSheet(wb, sheetName, aoa as (string | number)[][], [
-    { wch: 5 }, // i
-    { wch: 5 }, // j
-    { wch: 9 }, // L
-    { wch: 10 }, // G [т/ц]
-    { wch: 11 }, // G [кг/с]
-    { wch: 7 }, // α
-    { wch: 11 }, // Rш [Pa/м]
-    { wch: 9 }, // di [мм]
-    { wch: 9 }, // dст [мм]
-    { wch: 10 }, // w [м/с]
-    { wch: 11 }, // Rст [Pa/м]
-    { wch: 8 }, // ∑ξ
-    { wch: 9 }, // lэ [м]
-    { wch: 10 }, // ΔP [Pa]
-    { wch: 9 }, // ΔH [м]
-    { wch: 10 }, // 2ΔH [м]
-    { wch: 9 }, // Hk [м]
-    { wch: 9 }, // Hp [м]
-    { wch: 12 }, // Шугамын төрөл
+    { wch: 5 },   // A: i
+    { wch: 5 },   // B: j
+    { wch: 8 },   // C: ΔT
+    { wch: 11 },  // D: Q [кВт]
+    { wch: 11 },  // E: G [кг/с]
+    { wch: 11 },  // F: G [т/цаг]
+    { wch: 8 },   // G: L
+    { wch: 8 },   // H: 1+α
+    { wch: 9 },   // I: di [мм]
+    { wch: 9 },   // J: di [м]
+    { wch: 9 },   // K: dст [мм]
+    { wch: 5 },   // L: ξ
+    { wch: 10 },  // M: W
+    { wch: 11 },  // N: Rш
+    { wch: 9 },   // O: Lэ
+    { wch: 10 },  // P: ∆Pi
+    { wch: 9 },   // Q: ∆Hi
+    { wch: 9 },   // R: Lэкв
+    { wch: 13 },  // S: Шугамын төрөл
   ]);
 }
 
