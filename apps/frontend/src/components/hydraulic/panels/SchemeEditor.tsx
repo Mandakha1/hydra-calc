@@ -265,6 +265,26 @@ export function SchemeEditor({ readOnly }: Props) {
    */
   const [pipeBendPts, setPipeBendPts] = useState<Array<{ x: number; y: number; lat?: number; lon?: number }>>([]);
 
+  /**
+   * Phase 13.18 — engineer report: "Шугам зурахдаа давхар халаалтын
+   * шугамын Өгөх буцах, ХХУ — Хэрэглээний халуун усны Өгөх буцах,
+   * Хүйтэн усны шугамыг Mouse 2 дээрээс нэмэх тохиргоог оруулна уу."
+   *
+   * Heat-network engineers typically lay 2-5 pipes in a single trench
+   * (Т1 + Т2 + Т3 + Т4 + В1) but had to draw each pipe individually,
+   * five times along the same route. This Set holds the EXTRA circuits
+   * to draw alongside `pendingCircuit` — when non-empty, every pipe
+   * commit (node-click / building-click / Enter / double-click) creates
+   * ONE SchemePipe per selected circuit, all sharing fromNodeId,
+   * toNodeId, bendPoints, and length_m. Setting persists across draws
+   * until the engineer toggles it off.
+   *
+   * Activated via right-click in addPipe mode → floating picker panel.
+   */
+  const [extraCircuits, setExtraCircuits] = useState<Set<PipeCircuit>>(new Set());
+  /** Phase 13.18 — circuit-picker popup position (cursor location). */
+  const [circuitPickerAt, setCircuitPickerAt] = useState<{ x: number; y: number } | null>(null);
+
   // Phase 12.5 — first endpoint while drawing a composite channel.
   // Mirrors `pipeFrom` semantics: click first node → setChannelFrom,
   // click second node → buildChannelFromDraw + addChannel atomically.
@@ -784,6 +804,52 @@ export function SchemeEditor({ readOnly }: Props) {
   }, [readOnly, pendingKind, showMap, svgToLatLon, addNode, nodes, select, settings.snapEndpoint, displayPos]);
 
   /**
+   * Phase 13.18 — multi-circuit pipe commit.
+   *
+   * When the engineer has toggled extra circuits via the Mouse-2
+   * picker (`extraCircuits`), a single commit gesture creates ONE
+   * SchemePipe per selected circuit (Т1 / Т2 / Т3 / Т4 / В1) — all
+   * sharing fromNodeId, toNodeId, bendPoints, length_m, materialKey,
+   * dn. When `extraCircuits` is empty, behaves identically to a
+   * single `addPipe({circuit: pendingCircuit, …})` call (legacy path).
+   *
+   * Reduces 5 manual draws → 1 along a shared trench, which matches
+   * Mongolian heat-network design reality (Т1 + Т2 supply/return,
+   * optionally Т3 + Т4 DHW, optionally В1 cold).
+   */
+  const commitPipeWithCircuits = useCallback(
+    (args: {
+      fromNodeId: string;
+      toNodeId: string;
+      length_m: number;
+      bendPoints?: ReadonlyArray<{ x: number; y: number; lat?: number; lon?: number }>;
+      materialKey?: string;
+      dn?: number;
+    }): number => {
+      const circuits: PipeCircuit[] = [pendingCircuit];
+      for (const c of extraCircuits) {
+        if (c !== pendingCircuit) circuits.push(c);
+      }
+      const len_m = Math.max(0.5, Math.round(args.length_m * 10) / 10);
+      const hasBends = args.bendPoints && args.bendPoints.length > 0;
+      for (const circuit of circuits) {
+        addPipe({
+          id: uid("pipe"),
+          fromNodeId: args.fromNodeId,
+          toNodeId: args.toNodeId,
+          materialKey: args.materialKey ?? "steel_aged",
+          dn: args.dn ?? 50,
+          length_m: len_m,
+          circuit,
+          ...(hasBends ? { bendPoints: args.bendPoints!.map((bp) => ({ ...bp })) } : {}),
+        });
+      }
+      return circuits.length;
+    },
+    [addPipe, pendingCircuit, extraCircuits],
+  );
+
+  /**
    * Phase 6.8.6 — commit a polygon drawn via the `drawBuilding` mode
    * directly as a SchemeBuilding entity (bypassing the legacy
    * BuildingDialog → consumer-node path).
@@ -1001,14 +1067,11 @@ export function SchemeEditor({ readOnly }: Props) {
         y: Math.round(next.y),
         ...(geo ? { geo } : {}),
       });
-      addPipe({
-        id: uid("pipe"),
+      // Phase 13.18 — polar-offset commit also honours multi-circuit.
+      commitPipeWithCircuits({
         fromNodeId: pipeFrom,
         toNodeId: nodeId,
-        materialKey: "steel_aged",
-        dn: 50,
         length_m: parsed.length_m,
-        circuit: pendingCircuit,
       });
       setPipeFrom(nodeId); // chain — engineer can keep typing
     }
@@ -1026,8 +1089,7 @@ export function SchemeEditor({ readOnly }: Props) {
     showMap,
     svgToLatLon,
     addNode,
-    addPipe,
-    pendingCircuit,
+    commitPipeWithCircuits,
     // Phase 13.5b — real-scale fix deps.
     mapPxPerMeter,
     zoom,
@@ -1296,6 +1358,10 @@ export function SchemeEditor({ readOnly }: Props) {
   const onCanvasClick = useCallback(
     (e: MouseEvent<SVGSVGElement>) => {
       if (readOnly) return;
+      // Phase 13.18 — close the multi-circuit picker on any canvas
+      // click. ESC also closes, but engineers usually transition by
+      // dropping a vertex right after picking circuits.
+      if (circuitPickerAt) setCircuitPickerAt(null);
       const target = e.target as Element;
       // Allow clicks on bg only
       if (target.tagName !== "svg" && target.tagName !== "rect" && target.tagName !== "pattern" && target.tagName !== "path") return;
@@ -1515,6 +1581,7 @@ export function SchemeEditor({ readOnly }: Props) {
       nodes,
       addNode,
       displayPos,
+      circuitPickerAt,
       projectorCtx,
     ],
   );
@@ -1584,22 +1651,20 @@ export function SchemeEditor({ readOnly }: Props) {
         const measuredLen = pxToM(polylineLengthPx(polyline));
         const manualLen = parseFloat(pipeLengthInput);
         const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
-        addPipe({
-          id: uid("pipe"),
+        const nPipes = commitPipeWithCircuits({
           fromNodeId: pipeFrom,
           toNodeId: toId,
-          materialKey: "steel_aged",
-          dn: 50,
-          length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
-          circuit: pendingCircuit,
-          ...(carryBends.length > 0 ? { bendPoints: carryBends } : {}),
+          length_m,
+          bendPoints: carryBends,
         });
         setPipeFrom(null);
         setPipeBendPts([]);
         setPipeLengthInput("");
         setMode("select");
         setToast({
-          text: "Шугам үүсгэв (хоосон газарт дуусгав)",
+          text: nPipes > 1
+            ? `${nPipes} шугам үүсгэв (хоосон газарт дуусгав)`
+            : "Шугам үүсгэв (хоосон газарт дуусгав)",
           key: Date.now(),
           tone: "success",
         });
@@ -1613,14 +1678,13 @@ export function SchemeEditor({ readOnly }: Props) {
       pipeBendPts,
       nodes,
       addNode,
-      addPipe,
       snap,
       toSvg,
       svgToLatLon,
       showMap,
       pipeLengthInput,
-      pendingCircuit,
       projectorCtx,
+      commitPipeWithCircuits,
     ],
   );
 
@@ -1735,24 +1799,27 @@ export function SchemeEditor({ readOnly }: Props) {
             measuredLen = pxToM(polylineLengthPx(polyline));
           }
           const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
-          addPipe({
-            id: uid("pipe"),
+          // Phase 13.18 — multi-circuit: when extraCircuits is non-
+          // empty, this single commit creates one SchemePipe per
+          // selected circuit (Т1/Т2/Т3/Т4/В1). Phase 13.8 invariant
+          // preserved: calc engine reads length_m as authoritative.
+          const nPipes = commitPipeWithCircuits({
             fromNodeId: pipeFrom,
             toNodeId: node.id,
-            materialKey: "steel_aged",
-            dn: 50,
-            length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
-            circuit: pendingCircuit,
-            // Phase 13.8 — calc engine reads length_m as authoritative
-            // (Phase 12.3 invariant). bendPoints are visual + drift-
-            // advisory only; the engineer can drag them post-commit
-            // via the Phase 12.3 bendPoint handles.
-            ...(pipeBendPts.length > 0 ? { bendPoints: pipeBendPts } : {}),
+            length_m,
+            bendPoints: pipeBendPts,
           });
           setPipeFrom(null);
           setPipeBendPts([]);
           setPipeLengthInput("");
           setMode("select");
+          if (nPipes > 1) {
+            setToast({
+              text: `${nPipes} шугам үүсгэв (Т1 + Т2 + …)`,
+              key: Date.now(),
+              tone: "success",
+            });
+          }
         }
       } else if (mode === "addChannel") {
         // Phase 12.5 — two-click channel placement. Phase 12.5b
@@ -1802,6 +1869,7 @@ export function SchemeEditor({ readOnly }: Props) {
     // node, the typed length was silently ignored. This was a real bug.
     // Phase 13.14 — pipeBendPts + projectorCtx added so the polyline length
     // sum sees every captured bend and the current projector (map-aware).
+    // Phase 13.18 — commitPipeWithCircuits picks up extraCircuits state.
     [
       mode,
       pipeFrom,
@@ -1810,13 +1878,12 @@ export function SchemeEditor({ readOnly }: Props) {
       channelFrom,
       addChannel,
       nodes,
-      addPipe,
+      commitPipeWithCircuits,
       toSvg,
       select,
       selectToggle,
       selectExtend,
       readOnly,
-      pendingCircuit,
       pipeLengthInput,
       pendingDimAnchor,
       pendingConstructionAnchor,
@@ -2498,6 +2565,13 @@ export function SchemeEditor({ readOnly }: Props) {
           });
         }
       } else if (e.key === "Escape") {
+        // Phase 13.18 — Esc with picker open just closes the picker
+        // (doesn't cancel the in-flight pipe draw). Second Esc cancels
+        // the draw as before.
+        if (circuitPickerAt) {
+          setCircuitPickerAt(null);
+          return;
+        }
         setMode("select");
         setShowPalette(null);
         setPipeFrom(null);
@@ -2572,20 +2646,24 @@ export function SchemeEditor({ readOnly }: Props) {
             const measuredLen = pxToM(polylineLengthPx(polyline));
             const manualLen = parseFloat(pipeLengthInput);
             const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
-            addPipe({
-              id: uid("pipe"),
+            // Phase 13.18 — Enter-terminate also honours multi-circuit.
+            const nPipes = commitPipeWithCircuits({
               fromNodeId: pipeFrom,
               toNodeId: toId,
-              materialKey: "steel_aged",
-              dn: 50,
-              length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
-              circuit: pendingCircuit,
-              ...(carryBends.length > 0 ? { bendPoints: carryBends } : {}),
+              length_m,
+              bendPoints: carryBends,
             });
             setPipeFrom(null);
             setPipeBendPts([]);
             setPipeLengthInput("");
             setMode("select");
+            if (nPipes > 1) {
+              setToast({
+                text: `${nPipes} шугам үүсгэв (Enter)`,
+                key: Date.now(),
+                tone: "success",
+              });
+            }
           }
         }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
@@ -2790,6 +2868,28 @@ export function SchemeEditor({ readOnly }: Props) {
             scrollbarWidth: "thin",
           }}
         >
+          {/* Phase 13.18 — engineer report: "Хоолой Цэсийг хамгийн
+              эхэнд байрлуулна уу." Pipe is the most frequently used
+              tool in heat-network design; moving it to the top of
+              the palette cuts the mouse travel for every draw
+              session. Сонгох (select) drops one slot down — still
+              within reach + accessible via the 'V' shortcut. */}
+          <SideBtn
+            active={mode === "addPipe"}
+            onClick={() => {
+              setMode("addPipe");
+              setPipeFrom(null);
+              setPipeBendPts([]);
+              setShowPalette(null);
+              // Phase 13.8 — Zulu-style flexibility: default to free
+              // angles when the engineer enters pipe-draw mode. They
+              // can still flip to ortho90 / ortho45 from the top
+              // toolbar for grid-aligned mains.
+              setAngleMode("free");
+            }}
+            icon="／"
+            label="Хоолой"
+          />
           <SideBtn
             active={mode === "select"}
             onClick={() => {
@@ -2838,22 +2938,6 @@ export function SchemeEditor({ readOnly }: Props) {
             label="Темплейт"
             color="var(--success)"
             title="Стандарт 5-давхар 20×30м блок зурагт байрлуулна"
-          />
-          <SideBtn
-            active={mode === "addPipe"}
-            onClick={() => {
-              setMode("addPipe");
-              setPipeFrom(null);
-              setPipeBendPts([]);
-              setShowPalette(null);
-              // Phase 13.8 — Zulu-style flexibility: default to free
-              // angles when the engineer enters pipe-draw mode. They
-              // can still flip to ortho90 / ortho45 from the top
-              // toolbar for grid-aligned mains.
-              setAngleMode("free");
-            }}
-            icon="／"
-            label="Хоолой"
           />
           {/* Phase 12.5 — composite channel (Л-4/Л-7/Л-9 per ГК-23/02).
               Click button → click first node → click second node. The
@@ -3126,9 +3210,16 @@ export function SchemeEditor({ readOnly }: Props) {
         <div style={hintStyle}>
           Зангилаа / барилга дарж <strong>шууд дуусгана</strong>.
           {" "}Хоосон газар нэг удаа = <strong>булан</strong> · хоёр удаа (<em>double-click</em>) эсвэл <strong>Enter</strong> = дуусгах · ESC цуцлах.
+          {" · "}
+          <em style={{ color: "var(--fg-muted)" }}>Mouse 2 (right-click) → давхар шугам</em>
           {pipeBendPts.length > 0 && (
             <span style={{ marginLeft: 8, color: "var(--warning)", fontWeight: 700 }}>
               · {pipeBendPts.length} булан
+            </span>
+          )}
+          {extraCircuits.size > 0 && (
+            <span style={{ marginLeft: 8, color: "var(--accent)", fontWeight: 700 }}>
+              · {1 + extraCircuits.size} шугам
             </span>
           )}
           {parseFloat(pipeLengthInput) > 0 && (
@@ -3141,6 +3232,13 @@ export function SchemeEditor({ readOnly }: Props) {
       {mode === "addPipe" && !pipeFrom && (
         <div style={hintStyle}>
           Эх цэг сонгох: зангилаа, барилгын полигон, эсвэл <strong>хоосон газар</strong> (Zulu-стиль) дээр дарна.
+          {" · "}
+          <em style={{ color: "var(--fg-muted)" }}>Mouse 2 (right-click) → давхар шугам сонгох</em>
+          {extraCircuits.size > 0 && (
+            <span style={{ marginLeft: 8, color: "var(--accent)", fontWeight: 700 }}>
+              · {1 + extraCircuits.size} circuit идэвхтэй
+            </span>
+          )}
         </div>
       )}
       {mode === "addNode" && (
@@ -3304,6 +3402,27 @@ export function SchemeEditor({ readOnly }: Props) {
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseUp}
         onWheel={onWheel}
+        onContextMenu={(e) => {
+          // Phase 13.18 — right-click in addPipe mode opens the multi-
+          // circuit picker (engineer report: "Mouse 2 дээрээс нэмэх
+          // тохиргоог оруулна уу"). Other modes fall through to the
+          // default browser menu OR to existing onContextMenuTarget
+          // handlers on individual nodes/pipes/buildings.
+          if (mode === "addPipe") {
+            const targetTag = (e.target as Element).tagName;
+            // Only when clicking the empty canvas — node/pipe/building
+            // right-clicks already have their own context-menu hooks.
+            if (
+              targetTag === "svg" ||
+              targetTag === "rect" ||
+              targetTag === "pattern" ||
+              targetTag === "path"
+            ) {
+              e.preventDefault();
+              setCircuitPickerAt({ x: e.clientX, y: e.clientY });
+            }
+          }
+        }}
         style={{
           flex: 1,
           height: "100%",
@@ -3571,20 +3690,27 @@ export function SchemeEditor({ readOnly }: Props) {
                           const measuredLen = pxToM(polylineLengthPx(polyline));
                           const manualLen = parseFloat(pipeLengthInput);
                           const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
-                          addPipe({
-                            id: uid("pipe"),
+                          // Phase 13.18 — Building-polygon commit also
+                          // honours multi-circuit. Single click drops
+                          // Т1/Т2/Т3/Т4/В1 simultaneously when the
+                          // engineer toggled extras via right-click.
+                          const nPipes = commitPipeWithCircuits({
                             fromNodeId: pipeFrom,
                             toNodeId: targetNodeId,
-                            materialKey: "steel_aged",
-                            dn: 50,
-                            length_m: Math.max(0.5, Math.round(length_m * 10) / 10),
-                            circuit: pendingCircuit,
-                            ...(pipeBendPts.length > 0 ? { bendPoints: pipeBendPts } : {}),
+                            length_m,
+                            bendPoints: pipeBendPts,
                           });
                           setPipeFrom(null);
                           setPipeBendPts([]);
                           setPipeLengthInput("");
                           setMode("select");
+                          if (nPipes > 1) {
+                            setToast({
+                              text: `${nPipes} шугам үүсгэв (${b.label} → ${toNode.label})`,
+                              key: Date.now(),
+                              tone: "success",
+                            });
+                          }
                         }
                         return;
                       }
@@ -5272,6 +5398,135 @@ export function SchemeEditor({ readOnly }: Props) {
         />
       )}
 
+      {/* Phase 13.18 — multi-circuit picker. Opens on right-click in
+          addPipe mode (engineer report: "Mouse 2 дээрээс нэмэх
+          тохиргоог оруулна уу"). Toggle which extra circuits to
+          draw simultaneously with the current pendingCircuit. State
+          persists across pipe-draw commits until the engineer
+          unchecks them or exits addPipe mode. */}
+      {circuitPickerAt && (
+        <div
+          style={{
+            position: "fixed",
+            left: circuitPickerAt.x + 4,
+            top: circuitPickerAt.y + 4,
+            background: "var(--bg-elev, #2a2a2a)",
+            border: "1px solid var(--border, #444)",
+            borderRadius: 8,
+            padding: "0.5rem 0.6rem",
+            fontSize: 12,
+            color: "var(--fg, #e8e8e8)",
+            zIndex: 50,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+            minWidth: 240,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--accent, #1f5faa)" }}>
+            🔀 Давхар шугам сонгох
+          </div>
+          <div style={{ marginBottom: 8, fontSize: 11, color: "var(--fg-muted, #999)" }}>
+            Тэмдэглэсэн circuit бүрд нэг шугам үүсгэнэ
+          </div>
+          {PIPE_CIRCUITS.map((c) => {
+            const isPending = c.key === pendingCircuit;
+            const isExtra = extraCircuits.has(c.key);
+            const checked = isPending || isExtra;
+            return (
+              <label
+                key={c.key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "0.25rem 0.1rem",
+                  cursor: isPending ? "default" : "pointer",
+                  opacity: isPending ? 0.7 : 1,
+                }}
+                title={isPending ? "Үндсэн circuit — толгой панелаас солино" : "Tag-нэмэх / хасах"}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={isPending}
+                  onChange={(ev) => {
+                    if (isPending) return; // can't uncheck the main one here
+                    setExtraCircuits((prev) => {
+                      const next = new Set(prev);
+                      if (ev.target.checked) next.add(c.key);
+                      else next.delete(c.key);
+                      return next;
+                    });
+                  }}
+                />
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 14,
+                    height: 6,
+                    background: c.color,
+                    borderRadius: 2,
+                    border: c.dash ? `1px dashed ${c.color}` : "none",
+                  }}
+                />
+                <span style={{ flex: 1 }}>{c.label}</span>
+                {isPending && (
+                  <span style={{ fontSize: 10, color: "var(--accent, #1f5faa)", fontWeight: 700 }}>
+                    Үндсэн
+                  </span>
+                )}
+              </label>
+            );
+          })}
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              marginTop: 8,
+              paddingTop: 6,
+              borderTop: "1px solid var(--border-soft, #333)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                // Quick preset: Т1 + Т2 (heating supply + return)
+                setExtraCircuits(new Set(["heating_return"]));
+                if (pendingCircuit !== "heating_supply") setPendingCircuit("heating_supply");
+              }}
+              style={pickerBtn}
+              title="Халаалт: Т1 + Т2"
+            >
+              Халаалт ×2
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                // Full preset: Т1 + Т2 + Т3 + Т4
+                setExtraCircuits(new Set(["heating_return", "dhw_supply", "dhw_recirc"]));
+                if (pendingCircuit !== "heating_supply") setPendingCircuit("heating_supply");
+              }}
+              style={pickerBtn}
+              title="Халаалт + ХУС: Т1+Т2+Т3+Т4"
+            >
+              Т1+2+3+4
+            </button>
+            <button
+              type="button"
+              onClick={() => setExtraCircuits(new Set())}
+              style={{ ...pickerBtn, marginLeft: "auto" }}
+              title="Бүх давхар сонголтыг арилгана"
+            >
+              ✕ Цэвэрлэх
+            </button>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: "var(--fg-dim, #aaa)" }}>
+            Идэвхтэй: <strong>{1 + extraCircuits.size}</strong> шугам · ESC хаах
+          </div>
+        </div>
+      )}
+
       {/* Right-click context menu */}
       {contextMenu && (
         <ContextMenu
@@ -6154,6 +6409,17 @@ const hintStyle: CSSProperties = {
   padding: "0.4rem 0.75rem",
   borderRadius: 6,
   fontSize: 12,
+};
+
+/* Phase 13.18 — multi-circuit picker mini-button (preset + clear). */
+const pickerBtn: CSSProperties = {
+  padding: "0.25rem 0.45rem",
+  fontSize: 11,
+  background: "var(--bg, #1a1a1a)",
+  color: "var(--fg, #e8e8e8)",
+  border: "1px solid var(--border, #444)",
+  borderRadius: 4,
+  cursor: "pointer",
 };
 
 /* Phase 13.7 — view selector (Top / Bottom / Iso) docked top-right. */
