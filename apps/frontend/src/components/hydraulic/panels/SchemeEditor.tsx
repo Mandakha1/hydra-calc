@@ -170,6 +170,14 @@ import {
   perpendicularUnit,
   DEFAULT_PARALLEL_SPACING_PX,
 } from "../scheme/parallelPipeOffset";
+// Phase 13.21 — engineer-facing pipe label (DN / L / Q / v / ΔP) and
+// chamber-on-pipe split helpers.
+import { buildPipeLabelLines } from "../scheme/pipeLabel";
+import {
+  splitPipeAtFraction,
+  defaultChamberKindForCircuit,
+} from "../scheme/splitPipe";
+import { TEMP_SCHEDULES } from "shared";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type {
   SchemeNode,
@@ -2762,6 +2770,18 @@ export function SchemeEditor({ readOnly }: Props) {
     [pipes],
   );
 
+  // Phase 13.21 — ΔT inferred from the project's temperature schedule
+  // so Q labels on heating pipes use the correct supply→return drop
+  // (e.g. 130/70 → ΔT=60). Memoised on the schedule key so it doesn't
+  // recompute every cursor move.
+  const pipeLabelDeltaT = useMemo(() => {
+    const sched = TEMP_SCHEDULES.find(
+      (t) => t.key === settings.temperatureScheduleKey,
+    );
+    if (!sched) return 60; // sensible Mongolian district fallback
+    return sched.supply_c - sched.return_c;
+  }, [settings.temperatureScheduleKey]);
+
   // Live cursor info
   const cursorM = mousePos ? { x: pxToM(mousePos.x), y: pxToM(mousePos.y) } : null;
   const livePipeInfo = mode === "addPipe" && pipeFrom && mousePos
@@ -4753,19 +4773,53 @@ export function SchemeEditor({ readOnly }: Props) {
                       />
                     );
                   })}
-                  {/* Phase 12.2 — persistent dimension label toggleable
-                      via 'D' shortcut. Default true; engineers who want
-                      a cleaner canvas (large districts) press D to hide. */}
-                  {(settings.showLiveDimensions ?? true) && (
-                    <text x={mp.x} y={mp.y - 8} fontSize="11" fontFamily="var(--font-mono)" fill={isBad ? "var(--danger)" : "var(--fg-muted)"} textAnchor="middle" pointerEvents="none">
-                      DN{p.dn} · {formatLength(p.length_m)}
-                    </text>
-                  )}
-                  {r && (
-                    <text x={mp.x} y={mp.y + 14} fontSize="10" fontFamily="var(--font-mono)" fill="var(--fg-dim)" textAnchor="middle" pointerEvents="none">
-                      v={r.v_m_s.toFixed(2)} · R={r.headlossPerMeter_pa.toFixed(0)}
-                    </text>
-                  )}
+                  {/* Phase 13.21 — engineer-facing multi-line label
+                      panel. Replaces the legacy 2-line "DN · L" + "v · R"
+                      pair with a 2-4 line callout that ALSO surfaces the
+                      pipe section number (1-2, 2-3, …), circuit tag,
+                      computed Q (kW or МВт), and ΔP (Pa or кПа). Toggle
+                      via the same `showLiveDimensions` setting / 'D'
+                      keyboard shortcut as before. */}
+                  {(settings.showLiveDimensions ?? true) && (() => {
+                    const aIdx = nodes.findIndex((n) => n.id === p.fromNodeId) + 1;
+                    const bIdx = nodes.findIndex((n) => n.id === p.toNodeId) + 1;
+                    const lines = buildPipeLabelLines({
+                      pipe: p,
+                      fromIndex: aIdx,
+                      toIndex: bIdx,
+                      fromNode: a,
+                      results: results ?? undefined,
+                      scheduleDeltaT_c: pipeLabelDeltaT,
+                    });
+                    // Stack lines above the pipe midpoint. Each line is
+                    // 12 px tall; the topmost (accent / section label)
+                    // sits highest. Background-tinted "halo" via stroke
+                    // keeps the text readable on busy map backgrounds.
+                    return (
+                      <g pointerEvents="none">
+                        {lines.map((ln, i) => {
+                          const y = mp.y - 4 - (lines.length - 1 - i) * 13;
+                          return (
+                            <text
+                              key={i}
+                              x={mp.x}
+                              y={y}
+                              fontSize={i === 0 ? 11 : 10}
+                              fontFamily="var(--font-mono)"
+                              fontWeight={i === 0 ? 700 : 500}
+                              fill={isBad ? "var(--danger)" : ln.accent ? circuit.color : "var(--fg-muted)"}
+                              stroke="var(--bg, white)"
+                              strokeWidth={3}
+                              paintOrder="stroke"
+                              textAnchor="middle"
+                            >
+                              {ln.text}
+                            </text>
+                          );
+                        })}
+                      </g>
+                    );
+                  })()}
                 </g>
               );
             })}
@@ -5151,30 +5205,55 @@ export function SchemeEditor({ readOnly }: Props) {
             {/* Phase 12.8 — pipe flow-direction arrows. Small chevron
                 at each pipe midpoint pointing in the flow direction
                 (geometric from→to or solver-reversed when G_kg_s < 0).
-                Skipped for pipes inside a composite channel. */}
+                Skipped for pipes inside a composite channel.
+                Phase 13.20 — apply parallel offset so multi-circuit
+                arrows fan out alongside their pipes. Phase 13.21 —
+                thicker stroke (1.5 → 2.25 px) + circuit-aware fill
+                so arrows stand out on busy map backgrounds. */}
             {settings.showFlowArrows !== false &&
-              pipeArrows.map((arrow) => (
-                <g key={`fa_${arrow.pipeId}`} pointerEvents="none">
-                  <line
-                    x1={arrow.tail1X}
-                    y1={arrow.tail1Y}
-                    x2={arrow.tipX}
-                    y2={arrow.tipY}
-                    stroke="#1F2937"
-                    strokeWidth={1.5}
-                    strokeLinecap="round"
-                  />
-                  <line
-                    x1={arrow.tail2X}
-                    y1={arrow.tail2Y}
-                    x2={arrow.tipX}
-                    y2={arrow.tipY}
-                    stroke="#1F2937"
-                    strokeWidth={1.5}
-                    strokeLinecap="round"
-                  />
-                </g>
-              ))}
+              pipeArrows.map((arrow) => {
+                const pipe = pipes.find((p) => p.id === arrow.pipeId);
+                if (!pipe) return null;
+                const parallelIndex = parallelOffsetByPipeId.get(pipe.id) ?? 0;
+                let dx = 0;
+                let dy = 0;
+                if (parallelIndex !== 0) {
+                  const fromNode = nodes.find((n) => n.id === pipe.fromNodeId);
+                  const toNode = nodes.find((n) => n.id === pipe.toNodeId);
+                  if (fromNode && toNode) {
+                    const perp = perpendicularUnit(
+                      displayPos(fromNode),
+                      displayPos(toNode),
+                    );
+                    dx = perp.x * parallelIndex * DEFAULT_PARALLEL_SPACING_PX;
+                    dy = perp.y * parallelIndex * DEFAULT_PARALLEL_SPACING_PX;
+                  }
+                }
+                const circuitDef = PIPE_CIRCUITS.find((c) => c.key === pipe.circuit);
+                const arrowColor = circuitDef?.color ?? "#1F2937";
+                return (
+                  <g key={`fa_${arrow.pipeId}`} pointerEvents="none">
+                    <line
+                      x1={arrow.tail1X + dx}
+                      y1={arrow.tail1Y + dy}
+                      x2={arrow.tipX + dx}
+                      y2={arrow.tipY + dy}
+                      stroke={arrowColor}
+                      strokeWidth={2.25}
+                      strokeLinecap="round"
+                    />
+                    <line
+                      x1={arrow.tail2X + dx}
+                      y1={arrow.tail2Y + dy}
+                      x2={arrow.tipX + dx}
+                      y2={arrow.tipY + dy}
+                      stroke={arrowColor}
+                      strokeWidth={2.25}
+                      strokeLinecap="round"
+                    />
+                  </g>
+                );
+              })}
 
             {/* Phase 6.5.1 — rubber-band selection rectangle, drawn
                 inside the zoom/pan group so it tracks the underlying
@@ -5641,6 +5720,80 @@ export function SchemeEditor({ readOnly }: Props) {
             updatePipe(target.id, { waypoints: [] });
             setContextMenu(null);
           }}
+          onPlaceChamber={(tOrDistance) => {
+            // Phase 13.21 — split the pipe at the requested position
+            // and insert a chamber / inspection-well node. Atomic-ish
+            // sequence: addNode (chamber) → addPipe × 2 → removePipe
+            // (original), all wrapped in one undo snapshot.
+            const target = contextMenu.target;
+            if (target.kind !== "pipe") return;
+            const pipe = pipes.find((p) => p.id === target.id);
+            if (!pipe) return;
+            const fromNode = nodes.find((n) => n.id === pipe.fromNodeId);
+            const toNode = nodes.find((n) => n.id === pipe.toNodeId);
+            if (!fromNode || !toNode) return;
+            // Resolve the sentinel into a fraction t ∈ [0, 1].
+            let t = tOrDistance;
+            if (tOrDistance > 1) {
+              // "Distance mode" — value is 1000 + metres.
+              const meters = tOrDistance - 1000;
+              const totalLen = pipe.length_m > 0 ? pipe.length_m : 1;
+              t = Math.max(0.01, Math.min(0.99, meters / totalLen));
+            }
+            const split = splitPipeAtFraction({
+              pipe,
+              from: { x: fromNode.x, y: fromNode.y, ...(fromNode.geo ? { lat: fromNode.geo.lat, lon: fromNode.geo.lon } : {}) },
+              to: { x: toNode.x, y: toNode.y, ...(toNode.geo ? { lat: toNode.geo.lat, lon: toNode.geo.lon } : {}) },
+              t,
+            });
+            const chamberKind = defaultChamberKindForCircuit(pipe.circuit);
+            const chamberId = uid(chamberKind === "well_supply" ? "well" : "ch");
+            const chamberLabel = chamberKind === "well_supply" ? "ХУ-ШХ" : "ШК";
+            pushUndoSnapshot("Худаг / Шалгах камер байрлуулсан", 4);
+            // Insert chamber node first.
+            addNode({
+              id: chamberId,
+              kind: chamberKind,
+              label: `${chamberLabel}-${nodes.filter((n) => n.kind === chamberKind).length + 1}`,
+              x: Math.round(split.point.x),
+              y: Math.round(split.point.y),
+              ...(typeof split.point.lat === "number" && typeof split.point.lon === "number"
+                ? { geo: { lat: split.point.lat, lon: split.point.lon } }
+                : {}),
+            });
+            // Two new pipes inheriting the original's DN / material /
+            // circuit. bendPoints split per the polyline.
+            addPipe({
+              id: uid("pipe"),
+              fromNodeId: pipe.fromNodeId,
+              toNodeId: chamberId,
+              materialKey: pipe.materialKey,
+              dn: pipe.dn,
+              length_m: split.lengthFirst_m,
+              circuit: pipe.circuit,
+              ...(split.bendsBefore.length > 0 ? { bendPoints: split.bendsBefore } : {}),
+            });
+            addPipe({
+              id: uid("pipe"),
+              fromNodeId: chamberId,
+              toNodeId: pipe.toNodeId,
+              materialKey: pipe.materialKey,
+              dn: pipe.dn,
+              length_m: split.lengthSecond_m,
+              circuit: pipe.circuit,
+              ...(split.bendsAfter.length > 0 ? { bendPoints: split.bendsAfter } : {}),
+            });
+            removePipe(pipe.id);
+            setContextMenu(null);
+            setToast({
+              text:
+                chamberKind === "well_supply"
+                  ? "💧 Шалгах худаг үүсгэв (БНбД 40-05 §7)"
+                  : "🛡 Шалгах камер үүсгэв (БНбД 41-02-13 §6.3)",
+              key: Date.now(),
+              tone: "success",
+            });
+          }}
           groupSize={multiSelection.nodeIds.length + multiSelection.pipeIds.length}
           onDeleteGroup={() => {
             const ms = useHydraulicStore.getState().multiSelection;
@@ -5835,6 +5988,8 @@ function ContextMenu({
   // Phase 12.5b — channel actions when the targeted pipe is inside a composite channel
   isChannelMember, onRemoveFromChannel, onRemoveChannel, onChangeChannelType, onAddPipeToChannel,
   channelAvailableCircuits,
+  // Phase 13.21 — chamber / inspection-well placement on a selected pipe
+  onPlaceChamber,
 }: {
   x: number; y: number;
   target: { kind: "node" | "pipe" | "building"; id: string };
@@ -5869,6 +6024,11 @@ function ContextMenu({
   /** Circuits the channel does NOT already contain — engineer can add
    *  one via the submenu. */
   channelAvailableCircuits?: PipeCircuit[];
+  /** Phase 13.21 — caller-supplied chamber-on-pipe handler. Receives
+   *  either a fraction t ∈ [0, 1] (midpoint = 0.5) or a "distance
+   *  mode" sentinel `1000 + meters` so the parent can resolve metres
+   *  against the pipe's authoritative length_m. */
+  onPlaceChamber?: (tOrDistanceSentinel: number) => void;
 }) {
   // Phase 12.4 — sub-menu state for the "Энэ юу вэ?" tag-as submenu
   const [tagSubmenuOpen, setTagSubmenuOpen] = useState(false);
@@ -5970,6 +6130,46 @@ function ContextMenu({
       )}
       {isPipe && hasWaypoints && (
         <CtxBtn icon="⏐" onClick={onClearWaypoints}>Бүх эргэлтийг арилгах</CtxBtn>
+      )}
+      {/* Phase 13.21 — chamber-on-pipe placement (engineer report:
+          "Дулааны худаг, ХХУ болон хүйтэн усны шугам дээр Худаг буюу
+          Шалгах камерийг байрлуулах төлөвлөх боломжтой байхаар").
+          Splits the pipe at midpoint by default + inserts a chamber
+          / well node (per СНиП 41-02-2003 §9.6.10 + БНбД 41-02-13
+          §6.3 — 100 m magistral / 50 m service spacing standards). */}
+      {isPipe && onPlaceChamber && (
+        <CtxBtn
+          icon="🛡"
+          onClick={() => onPlaceChamber(0.5)}
+          data-testid="ctx-place-chamber-mid"
+        >
+          Худаг / Шалгах камер байрлуулах
+        </CtxBtn>
+      )}
+      {isPipe && onPlaceChamber && (
+        <CtxBtn
+          icon="📏"
+          onClick={() => {
+            const raw = window.prompt(
+              "Эх цэгээс хэдэн метр зайд камер байрлуулах вэ?\n(0.1 - pipe.length - 0.1)",
+              "5",
+            );
+            const d_m = raw ? parseFloat(raw) : NaN;
+            if (Number.isFinite(d_m) && d_m > 0) {
+              // Caller resolves the absolute distance against the
+              // pipe's authoritative length_m (Phase 12.3 invariant)
+              // and converts to a parametric t. We pass a NEGATIVE
+              // marker so the caller knows it's a distance request,
+              // not a fraction — separated by an order of magnitude
+              // (1.0 vs |t| > 1 ≡ "metres mode"). 1000 + d_m encodes
+              // the distance non-ambiguously.
+              onPlaceChamber(1000 + d_m);
+            }
+          }}
+          data-testid="ctx-place-chamber-distance"
+        >
+          📏 ... зайд байрлуулах
+        </CtxBtn>
       )}
 
       {/* Phase 12.5b — Channel-specific menu items. Render only when
