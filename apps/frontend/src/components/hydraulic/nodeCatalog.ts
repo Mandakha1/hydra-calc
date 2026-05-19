@@ -31,13 +31,17 @@ export interface NodeKindDef {
 
 export const NODE_KINDS: NodeKindDef[] = [
   // ========== SOURCES (Дулааны эх үүсвэр) ==========
+  // Phase 13.25 — Mongolian engineer renames: "ТЭЦ" → "Эх үүсвэр"
+  // (generic source label; CHP-specific "ТЭЦ" stays in description),
+  // "ЦТП" → "УДДТ" (Үндсэн Дулааны Дэд Төв — Mongolian abbreviation
+  // for Central Heat Substation, equivalent to Russian ЦТП).
   {
     key: "source_tec",
     category: "source",
-    name: "ТЭЦ / Дулааны цахилгаан станц",
-    shortLabel: "ТЭЦ",
+    name: "Эх үүсвэр (ТЭЦ — том чадлын)",
+    shortLabel: "ЭҮ",
     icon: "🏭",
-    description: "Том чадлын дулаан-цахилгаан хослол үүсгүүр",
+    description: "Том чадлын дулаан-цахилгаан хослол үүсгүүр (CHP)",
     defaults: { width_m: 80, height_m: 50 },
     formKey: "source",
   },
@@ -54,10 +58,10 @@ export const NODE_KINDS: NodeKindDef[] = [
   {
     key: "source_substation",
     category: "source",
-    name: "ЦТП — Дулааны төв станц",
-    shortLabel: "ЦТП",
+    name: "УДДТ — Үндсэн Дулааны Дэд Төв",
+    shortLabel: "УДДТ",
     icon: "⊕",
-    description: "Хэд хэдэн барилгад зориулсан төв ИТП",
+    description: "Хэд хэдэн барилгад зориулсан төв дэд төв (Russian ЦТП-тэй адил)",
     defaults: { width_m: 12, height_m: 8 },
     formKey: "source",
   },

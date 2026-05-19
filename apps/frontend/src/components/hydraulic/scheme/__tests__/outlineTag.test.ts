@@ -116,8 +116,12 @@ describe("defaultLabelForKind — Mongolian engineering convention", () => {
     expect(defaultLabelForKind("source_boiler", 2)).toBe("Зуух-2");
   });
 
-  it("source_factory → ТЭЦ-N", () => {
-    expect(defaultLabelForKind("source_factory", 1)).toBe("ТЭЦ-1");
+  it("source_factory → ЭҮ-N (Phase 13.25 rename: ТЭЦ → Эх үүсвэр)", () => {
+    expect(defaultLabelForKind("source_factory", 1)).toBe("ЭҮ-1");
+  });
+
+  it("source_tec → ЭҮ-N (Phase 13.25 default ТЭЦ label switched)", () => {
+    expect(defaultLabelForKind("source_tec", 2)).toBe("ЭҮ-2");
   });
 
   it("consumer_apartment → АОС-N", () => {

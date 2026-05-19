@@ -189,11 +189,12 @@ describe("BUG #2 — tooltip persistence between palettes (Phase 6.8.5)", () => 
   it("clicking different categories shows different palette content (regression for `key` working)", () => {
     render(<SchemeEditor />);
     fireEvent.click(screen.getByTitle("Эх үүсвэр"));
-    // First palette has source kinds — ТЭЦ description visible.
-    expect(screen.getByTitle("Том чадлын дулаан-цахилгаан хослол үүсгүүр")).toBeInTheDocument();
+    // First palette has source kinds — Phase 13.25 description gained
+    // a " (CHP)" suffix.
+    expect(screen.getByTitle("Том чадлын дулаан-цахилгаан хослол үүсгүүр (CHP)")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Камер/Худаг"));
-    // After switching, ТЭЦ button is gone, chamber kinds shown.
-    expect(screen.queryByTitle("Том чадлын дулаан-цахилгаан хослол үүсгүүр")).toBeNull();
+    // After switching, the source button is gone, chamber kinds shown.
+    expect(screen.queryByTitle("Том чадлын дулаан-цахилгаан хослол үүсгүүр (CHP)")).toBeNull();
     expect(screen.getByTitle("Хяналт, тэмдэглэх, салаалах камер")).toBeInTheDocument();
   });
 });
@@ -210,17 +211,18 @@ describe("BUG A — Inspector kind dropdown shows fine-grained kinds (Phase 6.8.
     expect(dropdown.value).toBe("source_substation");
   });
 
-  it("dropdown contains the engineer-friendly Mongolian name for ЦТП", () => {
+  it("dropdown contains the engineer-friendly Mongolian name for УДДТ", () => {
     const s = useHydraulicStore.getState();
-    s.addNode({ id: "ctp", kind: "source_substation", label: "ЦТП-1", x: 0, y: 0 });
+    s.addNode({ id: "ctp", kind: "source_substation", label: "УДДТ-1", x: 0, y: 0 });
     s.select({ kind: "node", id: "ctp" });
     render(<InspectorPanel />);
-    // "ЦТП — Дулааны төв станц" comes from nodeCatalog NODE_KINDS.
+    // Phase 13.25 rename: source_substation kind label is now "УДДТ —
+    // Үндсэн Дулааны Дэд Төв" (was "ЦТП — Дулааны төв станц").
     const option = Array.from(document.querySelectorAll("option")).find(
       (o) => o.value === "source_substation",
     );
     expect(option).toBeDefined();
-    expect(option!.textContent).toMatch(/ЦТП/);
+    expect(option!.textContent).toMatch(/УДДТ/);
   });
 
   it("dropdown groups options by category via <optgroup>", () => {
