@@ -6258,9 +6258,9 @@ function ContextMenu({
   // Phase 12.5b — submenu states for channel-type change + add-pipe.
   const [channelTypeSubmenuOpen, setChannelTypeSubmenuOpen] = useState(false);
   const [addPipeSubmenuOpen, setAddPipeSubmenuOpen] = useState(false);
-  // Phase 13.22 — submenu states for valve-on-pipe + branch-on-pipe.
+  // Phase 13.22 — submenu state for valve-on-pipe. Phase 13.23 dropped
+  // the branch submenu in favour of two flat one-click entries.
   const [valveSubmenuOpen, setValveSubmenuOpen] = useState(false);
-  const [branchSubmenuOpen, setBranchSubmenuOpen] = useState(false);
   // Click-outside dismissal
   useEffect(() => {
     const dismiss = () => onClose();
@@ -6366,7 +6366,7 @@ function ContextMenu({
               / drain) per СНиП 41-02-2003 §9.6 + Politerm справочник
             • tee (Phase 13.22 Task 7)            — Салбар цэг үүсгээд
               addPipe горимд орж салбар шугам зурна */}
-      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="🛡"
           onClick={() => onPlaceOnPipe("__auto_chamber__", 0.5)}
@@ -6375,7 +6375,7 @@ function ContextMenu({
           Худаг / Шалгах камер байрлуулах
         </CtxBtn>
       )}
-      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="🚿"
           onClick={() => setValveSubmenuOpen(true)}
@@ -6384,16 +6384,39 @@ function ContextMenu({
           Хаалт байрлуулах ▶
         </CtxBtn>
       )}
-      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
+      {/* Phase 13.23 — flatten the branch entry. Engineer reported the
+          two-click submenu was confusing ("салбар шугам зурж болохгүй
+          хэвээр байна"). Direct one-click action: split at midpoint
+          + auto-enter addPipe + ask about chamber/valve at the end. */}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="🌿"
-          onClick={() => setBranchSubmenuOpen(true)}
+          onClick={() => onPlaceOnPipe("__branch_tee__", 0.5)}
           data-testid="ctx-place-branch"
         >
-          Салбар шугам зурах ▶
+          🌿 Голоос салбар шугам зурах
         </CtxBtn>
       )}
-      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && !branchSubmenuOpen && (
+      {/* Distance-mode option promoted from the now-removed submenu. */}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
+        <CtxBtn
+          icon="📏"
+          onClick={() => {
+            const raw = window.prompt(
+              "Эх цэгээс хэдэн метр зайд салбар үүсгэх вэ?",
+              "10",
+            );
+            const d_m = raw ? parseFloat(raw) : NaN;
+            if (Number.isFinite(d_m) && d_m > 0) {
+              onPlaceOnPipe("__branch_tee__", 1000 + d_m);
+            }
+          }}
+          data-testid="ctx-place-branch-distance"
+        >
+          📏 ... зайд салбар үүсгэх
+        </CtxBtn>
+      )}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="📏"
           onClick={() => {
@@ -6438,36 +6461,6 @@ function ContextMenu({
           </CtxBtn>
           <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
           <CtxBtn icon="◀" onClick={() => setValveSubmenuOpen(false)}>
-            ◀ Буцах
-          </CtxBtn>
-        </>
-      )}
-      {/* Branch submenu — Phase 13.22 Task 7. Splits pipe + inserts a
-          tee, then the parent handler enters addPipe mode with the
-          tee as pipeFrom + shows the chamber/valve prompt after the
-          branch is committed. */}
-      {isPipe && onPlaceOnPipe && branchSubmenuOpen && (
-        <>
-          <CtxBtn icon="🌿" onClick={() => onPlaceOnPipe("__branch_tee__", 0.5)}>
-            Голд салбар цэг үүсгээд зурах
-          </CtxBtn>
-          <CtxBtn
-            icon="📏"
-            onClick={() => {
-              const raw = window.prompt(
-                "Эх цэгээс хэдэн метр зайд салбар үүсгэх вэ?",
-                "10",
-              );
-              const d_m = raw ? parseFloat(raw) : NaN;
-              if (Number.isFinite(d_m) && d_m > 0) {
-                onPlaceOnPipe("__branch_tee__", 1000 + d_m);
-              }
-            }}
-          >
-            📏 ... зайд салбар үүсгэх
-          </CtxBtn>
-          <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
-          <CtxBtn icon="◀" onClick={() => setBranchSubmenuOpen(false)}>
             ◀ Буцах
           </CtxBtn>
         </>

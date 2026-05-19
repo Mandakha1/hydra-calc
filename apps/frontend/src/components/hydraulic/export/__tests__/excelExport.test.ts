@@ -235,29 +235,34 @@ describe("Phase 13.19 — heat-load sheet (Дулааны ачаалал)", () =
   });
 });
 
-describe("Phase 13.19 — hydraulic per-circuit sheet (Халаалт гидравлик)", () => {
-  it("emits the two-row Mongolian-template header (Row 1 group + Row 2 columns)", () => {
+describe("Phase 13.23 — hydraulic per-circuit sheet (full diploma format)", () => {
+  it("emits the 18-column diploma header matching ЗАПИСКИ Хүснэгт 3.1", () => {
     const wb = exportAndRead(makeStateWithFixture());
     const ws = wb.Sheets["Халаалт гидравлик"]!;
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
     const row1 = rows[0] as (string | null)[];
     const row2 = rows[1] as (string | null)[];
-    expect(row1[0]).toBe("Тооцооны хэсгийн №");
-    expect(row1[1]).toBe("Тооцооны хэсгийн №");
-    expect(row1[2]).toBe("Температурын зөрүү, 0С");
-    expect(row1[3]).toMatch(/халаалт.*шугамын гидравлик тооцоо/);
-    // Row 2 column headers at the template positions
-    expect(row2[3]).toBe("Q [кВт]");
+    // Row 1 — sheet title
+    expect(row1[0]).toBe("Халаалт гидравлик");
+    // Row 2 — full 18-column header per diploma "Дулааны сүлжээний
+    // гидравлик тооцооны хүснэгт" (ЗАПИСКИ Хүснэгт 3.1, диплом Хүснэгт 4.1)
+    expect(row2[0]).toBe("i");
+    expect(row2[1]).toBe("j");
+    expect(row2[2]).toBe("L [м]");
+    expect(row2[3]).toBe("G [т/ц]");
     expect(row2[4]).toBe("G [кг/с]");
-    expect(row2[5]).toBe("G [т/ц]");
-    expect(row2[6]).toBe("L [м]");
-    expect(row2[9]).toBe("d [мм]");
-    expect(row2[10]).toBe("Rш [Pa/м]");
-    expect(row2[12]).toBe("W [м/с]");
-    expect(row2[14]).toBe("Lэ [м]");
-    expect(row2[15]).toBe("∆Pi [Pa]");
-    expect(row2[16]).toBe("∆Hi [м]");
-    expect(row2[17]).toBe("Lэкв");
+    expect(row2[5]).toBe("α");
+    expect(row2[6]).toBe("Rш [Pa/м]");
+    expect(row2[7]).toBe("di [мм]");
+    expect(row2[8]).toBe("dст [мм]");
+    expect(row2[9]).toBe("w [м/с]");
+    expect(row2[10]).toBe("Rст [Pa/м]");
+    expect(row2[11]).toBe("∑ξ");
+    expect(row2[12]).toBe("lэ [м]");
+    expect(row2[13]).toBe("ΔP [Pa]");
+    expect(row2[14]).toBe("ΔH [м]");
+    expect(row2[15]).toBe("2ΔH [м]");
+    expect(row2[16]).toBe("Hk [м]");
   });
 
   it("contains only heating pipes (Т1 + Т2) — DHW + cold-water excluded", () => {
@@ -273,9 +278,8 @@ describe("Phase 13.19 — hydraulic per-circuit sheet (Халаалт гидра
     const ws = wb.Sheets["ХХУ гидравлик"]!;
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
     expect(rows.length).toBe(3); // 2 headers + 1 DHW pipe
-    // Row label confirms the circuit tagging
     const row1 = rows[0] as (string | null)[];
-    expect(row1[3]).toMatch(/Хэрэгцээний халуун ус/);
+    expect(row1[0]).toBe("ХХУ гидравлик");
   });
 
   it("Хүйтэн ус гидравлик sheet contains only cold-water (В1)", () => {
@@ -284,7 +288,27 @@ describe("Phase 13.19 — hydraulic per-circuit sheet (Халаалт гидра
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
     expect(rows.length).toBe(3); // 2 headers + 1 cold pipe
     const row1 = rows[0] as (string | null)[];
-    expect(row1[3]).toMatch(/Хүйтэн ус/);
+    expect(row1[0]).toBe("Хүйтэн ус гидравлик");
+  });
+
+  it("rows include α / di / dст / ∑ξ / 2ΔH / Hk / Hp diploma columns", () => {
+    const wb = exportAndRead(makeStateWithFixture());
+    const ws = wb.Sheets["Халаалт гидравлик"]!;
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
+    // First data row (after 2 header rows)
+    const data = rows[2] as unknown[];
+    // α = 0.3 default (Politerm spravochnik outdoor mains)
+    expect(data[5]).toBe(0.3);
+    // di [мм] >= 0 — calculated diameter from G + W_target=1.0
+    expect(typeof data[7]).toBe("number");
+    // dст [мм] — selected standard internal diameter from PIPE_DB
+    expect(typeof data[8]).toBe("number");
+    expect(data[8] as number).toBeGreaterThan(0);
+    // ∑ξ — derived from α × friction loss; finite + non-negative
+    expect(typeof data[11]).toBe("number");
+    expect(data[11] as number).toBeGreaterThanOrEqual(0);
+    // Hp [м] = 2·ΔH + 5m engineering reserve, so > 5
+    expect(data[17] as number).toBeGreaterThanOrEqual(5);
   });
 });
 
