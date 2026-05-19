@@ -181,6 +181,10 @@ import {
   splitPipeAtFraction,
   defaultChamberKindForCircuit,
 } from "../scheme/splitPipe";
+// Phase 13.24 — project right-click cursor onto pipe polyline so
+// "place at cursor" menu actions split exactly where the engineer
+// clicked rather than at the geometric midpoint.
+import { projectPointOnPolyline } from "../scheme/projectPointOnPolyline";
 import { TEMP_SCHEDULES } from "shared";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type {
@@ -446,6 +450,12 @@ export function SchemeEditor({ readOnly }: Props) {
     x: number;
     y: number;
     target: { kind: "node" | "pipe" | "building"; id: string };
+    /** Phase 13.24 — scheme-space cursor coords for pipe right-clicks.
+     *  Lets "place at cursor" actions (chamber / valve / compensator /
+     *  branch tee) split the pipe AT the click position instead of at
+     *  the geometric midpoint. Null for node / building targets where
+     *  the click position is irrelevant. */
+    svgPt?: { x: number; y: number };
   } | null>(null);
   /** Pipe waypoint drag state — index identifies which middle point is being moved. */
   const [waypointDrag, setWaypointDrag] = useState<{ pipeId: string; index: number } | null>(null);
@@ -1973,7 +1983,10 @@ export function SchemeEditor({ readOnly }: Props) {
   );
 
   /** Right-click on a node / pipe / building — open context menu.
-   *  Phase 12.4 — extended to support building target for tag-as. */
+   *  Phase 12.4 — extended to support building target for tag-as.
+   *  Phase 13.24 — for pipe targets, capture the cursor's scheme-space
+   *  coords so "place at cursor" menu actions can split the pipe AT
+   *  the click position instead of the geometric midpoint. */
   const onContextMenuTarget = useCallback(
     (e: MouseEvent, target: { kind: "node" | "pipe" | "building"; id: string }) => {
       if (readOnly) return;
@@ -1986,9 +1999,10 @@ export function SchemeEditor({ readOnly }: Props) {
       } else {
         select(target);
       }
-      setContextMenu({ x: e.clientX, y: e.clientY, target });
+      const svgPt = target.kind === "pipe" ? toSvg(e) : undefined;
+      setContextMenu({ x: e.clientX, y: e.clientY, target, ...(svgPt ? { svgPt } : {}) });
     },
-    [readOnly, select, selectBuilding],
+    [readOnly, select, selectBuilding, toSvg],
   );
 
   /** Duplicate the currently-selected node, offset by 30px. */
@@ -5901,13 +5915,21 @@ export function SchemeEditor({ readOnly }: Props) {
             setContextMenu(null);
           }}
           onPlaceOnPipe={(kindOrSentinel, tOrDistance) => {
-            // Phase 13.21 + 13.22 — generic split-and-insert on pipe.
+            // Phase 13.21-13.24 — generic split-and-insert on pipe.
             // Atomic op: addNode → addPipe × 2 → removePipe (original),
             // all wrapped in one undo snapshot. Dispatches on the
             // `kindOrSentinel` argument:
             //   "__auto_chamber__" → Phase 13.21 chamber/well (auto by circuit)
             //   "__branch_tee__"   → Phase 13.22 Task 7 tee + addPipe entry
             //   "valve_*"          → Phase 13.22 Task 5 valve subtype
+            //   "compensator_*"    → Phase 13.24 compensator placement
+            //
+            // `tOrDistance` semantics:
+            //   t ∈ [0, 1]            → use as parametric fraction
+            //   t < 0  ("__cursor__") → Phase 13.24 project right-click
+            //                           svgPt onto the displayed polyline
+            //                           and use the projected t
+            //   t > 1  ("distance")   → metres-from-start (1000 + m)
             const target = contextMenu.target;
             if (target.kind !== "pipe") return;
             const pipe = pipes.find((p) => p.id === target.id);
@@ -5916,7 +5938,35 @@ export function SchemeEditor({ readOnly }: Props) {
             const toNode = nodes.find((n) => n.id === pipe.toNodeId);
             if (!fromNode || !toNode) return;
             let t = tOrDistance;
-            if (tOrDistance > 1) {
+            if (tOrDistance < 0) {
+              // Phase 13.24 — cursor mode. Build the same displayed
+              // polyline the renderer uses (Phase 13.14 displayVertex
+              // + Phase 13.20 parallel offset NOT applied here since
+              // the click is at the SCREEN polyline already), then
+              // project the right-click svgPt onto it.
+              const svgPt = contextMenu.svgPt;
+              if (svgPt) {
+                const fromDp = displayPos(fromNode);
+                const toDp = displayPos(toNode);
+                const polylineDp: Array<{ x: number; y: number }> = [fromDp];
+                if (pipe.bendPoints?.length) {
+                  for (const bp of pipe.bendPoints) {
+                    const dp = displayVertex(bp, projectorCtx);
+                    polylineDp.push({ x: dp.x, y: dp.y });
+                  }
+                } else if (pipe.waypoints?.length) {
+                  for (const wp of pipe.waypoints) polylineDp.push({ x: wp.x, y: wp.y });
+                }
+                polylineDp.push(toDp);
+                const proj = projectPointOnPolyline(svgPt, polylineDp);
+                t = proj?.t ?? 0.5;
+                // Clamp away from endpoints — the calc engine needs a
+                // positive length on every sub-pipe.
+                t = Math.max(0.02, Math.min(0.98, t));
+              } else {
+                t = 0.5; // defensive fallback
+              }
+            } else if (tOrDistance > 1) {
               const meters = tOrDistance - 1000;
               const totalLen = pipe.length_m > 0 ? pipe.length_m : 1;
               t = Math.max(0.01, Math.min(0.99, meters / totalLen));
@@ -5951,6 +6001,13 @@ export function SchemeEditor({ readOnly }: Props) {
               labelPrefix = def?.shortLabel ?? "В";
               idPrefix = "v";
               toastText = `🚿 ${def?.name ?? "Хаалт"} байрлуулсан`;
+            } else if (kindOrSentinel.startsWith("compensator_")) {
+              // Phase 13.24 — compensator placement at the cursor.
+              // ζ ≈ 1.5 default (BNbD 41-02-13 Table 6.2 for axial).
+              const def = getNodeKind(kindOrSentinel);
+              labelPrefix = def?.shortLabel ?? "К";
+              idPrefix = "k";
+              toastText = `🔄 ${def?.name ?? "Компенсатор"} байрлуулсан (БНбД 41-02-13 §6.2)`;
             }
             const insId = uid(idPrefix);
             pushUndoSnapshot(toastText, 4);
@@ -6366,13 +6423,18 @@ function ContextMenu({
               / drain) per СНиП 41-02-2003 §9.6 + Politerm справочник
             • tee (Phase 13.22 Task 7)            — Салбар цэг үүсгээд
               addPipe горимд орж салбар шугам зурна */}
+      {/* Phase 13.24 — "place at cursor" actions. Engineer report:
+          "Курсорыг аваачсан тэр цэгт хаалт, худаг, компенсатор хийх
+          боломжтой болгоно уу." Each button passes `-1` as the
+          fraction; the parent handler resolves it by projecting the
+          right-click svgPt onto the pipe's displayed polyline. */}
       {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="🛡"
-          onClick={() => onPlaceOnPipe("__auto_chamber__", 0.5)}
-          data-testid="ctx-place-chamber-mid"
+          onClick={() => onPlaceOnPipe("__auto_chamber__", -1)}
+          data-testid="ctx-place-chamber-cursor"
         >
-          Худаг / Шалгах камер байрлуулах
+          🛡 Курсорын цэгт худаг / камер байрлуулах
         </CtxBtn>
       )}
       {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
@@ -6381,23 +6443,34 @@ function ContextMenu({
           onClick={() => setValveSubmenuOpen(true)}
           data-testid="ctx-place-valve"
         >
-          Хаалт байрлуулах ▶
+          🚿 Курсорын цэгт хаалт байрлуулах ▶
         </CtxBtn>
       )}
-      {/* Phase 13.23 — flatten the branch entry. Engineer reported the
-          two-click submenu was confusing ("салбар шугам зурж болохгүй
-          хэвээр байна"). Direct one-click action: split at midpoint
-          + auto-enter addPipe + ask about chamber/valve at the end. */}
+      {/* Phase 13.24 — compensator (Phase 13.13b П-shape) placement
+          directly at the cursor. Engineer can pick the kind via
+          Inspector after; default = compensator_u for outdoor mains. */}
+      {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
+        <CtxBtn
+          icon="🔄"
+          onClick={() => onPlaceOnPipe("compensator_u", -1)}
+          data-testid="ctx-place-compensator-cursor"
+        >
+          🔄 Курсорын цэгт компенсатор байрлуулах
+        </CtxBtn>
+      )}
+      {/* Phase 13.23 + 13.24 — branch from the cursor (not midpoint).
+          The 📏 distance-mode variant kept for engineers who want
+          precise metres-from-source placement (per СНиП 100m/50m
+          spacing rules). */}
       {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="🌿"
-          onClick={() => onPlaceOnPipe("__branch_tee__", 0.5)}
-          data-testid="ctx-place-branch"
+          onClick={() => onPlaceOnPipe("__branch_tee__", -1)}
+          data-testid="ctx-place-branch-cursor"
         >
-          🌿 Голоос салбар шугам зурах
+          🌿 Курсорын цэгээс салбар шугам зурах
         </CtxBtn>
       )}
-      {/* Distance-mode option promoted from the now-removed submenu. */}
       {isPipe && onPlaceOnPipe && !valveSubmenuOpen && (
         <CtxBtn
           icon="📏"
@@ -6435,28 +6508,30 @@ function ContextMenu({
         </CtxBtn>
       )}
       {/* Valve type submenu — Russian-source verified outdoor heat-net
-          valves per СНиП 41-02-2003 §9.6 + Politerm Spravochnik §11. */}
+          valves per СНиП 41-02-2003 §9.6 + Politerm Spravochnik §11.
+          Phase 13.24 — all entries place AT the right-click cursor
+          (passes -1 sentinel; parent projects svgPt onto polyline). */}
       {isPipe && onPlaceOnPipe && valveSubmenuOpen && (
         <>
-          <CtxBtn icon="◯" onClick={() => onPlaceOnPipe("valve_ball", 0.5)}>
+          <CtxBtn icon="◯" onClick={() => onPlaceOnPipe("valve_ball", -1)}>
             Бөмбөлөг хаалт (DN15-300)
           </CtxBtn>
-          <CtxBtn icon="▷◁" onClick={() => onPlaceOnPipe("valve_gate", 0.5)}>
+          <CtxBtn icon="▷◁" onClick={() => onPlaceOnPipe("valve_gate", -1)}>
             Гацуу хаалт (магистраль)
           </CtxBtn>
-          <CtxBtn icon="⚖" onClick={() => onPlaceOnPipe("valve_balancing", 0.5)}>
+          <CtxBtn icon="⚖" onClick={() => onPlaceOnPipe("valve_balancing", -1)}>
             Тэнцвэрлэгчийн хаалт
           </CtxBtn>
-          <CtxBtn icon="◐" onClick={() => onPlaceOnPipe("valve_butterfly", 0.5)}>
+          <CtxBtn icon="◐" onClick={() => onPlaceOnPipe("valve_butterfly", -1)}>
             Эрэг хаалт (DN100+)
           </CtxBtn>
-          <CtxBtn icon="▶|" onClick={() => onPlaceOnPipe("valve_check", 0.5)}>
+          <CtxBtn icon="▶|" onClick={() => onPlaceOnPipe("valve_check", -1)}>
             Эргэх хаалт (насосын дараа)
           </CtxBtn>
-          <CtxBtn icon="↑" onClick={() => onPlaceOnPipe("valve_air_vent", 0.5)}>
+          <CtxBtn icon="↑" onClick={() => onPlaceOnPipe("valve_air_vent", -1)}>
             Агаар гарагч (дээд цэг)
           </CtxBtn>
-          <CtxBtn icon="↓" onClick={() => onPlaceOnPipe("valve_drain", 0.5)}>
+          <CtxBtn icon="↓" onClick={() => onPlaceOnPipe("valve_drain", -1)}>
             Угаагч хаалт (доод цэг)
           </CtxBtn>
           <div style={{ height: 1, background: "var(--bp-line-2)", margin: "4px 0" }} />
