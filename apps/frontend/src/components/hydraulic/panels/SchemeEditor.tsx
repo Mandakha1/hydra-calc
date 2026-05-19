@@ -4836,8 +4836,7 @@ export function SchemeEditor({ readOnly }: Props) {
                     });
                     // Phase 13.25 — prepend a role badge ("М" magistral
                     // /"С" branch) to line 1 so the engineer sees the
-                    // pipe classification at a glance. Per БНбД 41-02-13
-                    // + СНиП 41-02-2003 §1 nomenclature.
+                    // pipe classification at a glance.
                     const role = pipeRoleByPipeId.get(p.id);
                     if (role && lines[0]) {
                       lines[0] = {
@@ -4845,25 +4844,68 @@ export function SchemeEditor({ readOnly }: Props) {
                         text: `[${pipeRoleBadge(role)}] ${lines[0].text}`,
                       };
                     }
-                    // Stack lines above the pipe midpoint. Each line is
-                    // 12 px tall; the topmost (accent / section label)
-                    // sits highest. Background-tinted "halo" via stroke
-                    // keeps the text readable on busy map backgrounds.
+                    // Phase 13.27 — engineer report: "Шугамын урт, диаметр
+                    // зэрэг үзүүлэлтийн текстүүдийг цэгцтэй болгож хэмжээг
+                    // тохируулсаны дагуу автоматаар томорч жижгэрэхгүй
+                    // болгоно уу. Газрын зургыг татах үед давхцаад хархад
+                    // хэцүү байна."
+                    //
+                    // Fix: divide fontSize + line stride + halo stroke
+                    // by the canvas `zoom` so labels keep a CONSTANT
+                    // on-screen size regardless of how zoomed in the
+                    // engineer is. Without this the outer
+                    // `transform: scale(zoom)` wrapper multiplies the
+                    // text size, so labels balloon on zoom-in and
+                    // overlap densely on zoom-out.
+                    const baseFs1 = 11;
+                    const baseFs = 10;
+                    const fs1 = baseFs1 / zoom;
+                    const fs = baseFs / zoom;
+                    const stride = 13 / zoom;
+                    const haloStroke = 3 / zoom;
+                    // Phase 13.27 — compact mode at low map zoom.
+                    // Engineer's pipes pack tight at zoom ≤ 14 (city
+                    // overview) so labels overlap. Compact = line 1 only.
+                    const compact =
+                      showMap && !!mapPxPerMeter && mapPxPerMeter < 0.4;
+                    const displayedLines = compact ? lines.slice(0, 1) : lines;
+                    // Phase 13.27 — translucent background box behind the
+                    // text block so the engineer can read labels over
+                    // busy OSM tiles + dense pipe overlays.
+                    const longestText = displayedLines.reduce(
+                      (max, ln) => (ln.text.length > max ? ln.text.length : max),
+                      0,
+                    );
+                    const boxW = (longestText * baseFs * 0.62 + 12) / zoom;
+                    const boxH = (displayedLines.length * baseFs * 1.3 + 6) / zoom;
+                    const boxY = mp.y - 4 / zoom - displayedLines.length * stride;
                     return (
                       <g pointerEvents="none">
-                        {lines.map((ln, i) => {
-                          const y = mp.y - 4 - (lines.length - 1 - i) * 13;
+                        <rect
+                          x={mp.x - boxW / 2}
+                          y={boxY}
+                          width={boxW}
+                          height={boxH}
+                          rx={4 / zoom}
+                          fill="rgba(255, 255, 255, 0.85)"
+                          stroke="rgba(0, 0, 0, 0.15)"
+                          strokeWidth={1 / zoom}
+                        />
+                        {displayedLines.map((ln, i) => {
+                          const y =
+                            mp.y - 4 / zoom -
+                            (displayedLines.length - 1 - i) * stride;
                           return (
                             <text
                               key={i}
                               x={mp.x}
                               y={y}
-                              fontSize={i === 0 ? 11 : 10}
+                              fontSize={i === 0 ? fs1 : fs}
                               fontFamily="var(--font-mono)"
                               fontWeight={i === 0 ? 700 : 500}
                               fill={isBad ? "var(--danger)" : ln.accent ? circuit.color : "var(--fg-muted)"}
                               stroke="var(--bg, white)"
-                              strokeWidth={3}
+                              strokeWidth={haloStroke}
                               paintOrder="stroke"
                               textAnchor="middle"
                             >
