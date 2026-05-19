@@ -486,6 +486,17 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             onChange={(e) => {
               const v = e.target.value === "" ? undefined : Number(e.target.value);
               updateBuilding(building.id, { heatLoad_kw: v });
+              // Phase 13.26 — sync to the tagged node's heatLoad_w (W).
+              // Engineer report: "Барилга дээр дулааны ачаалал өгсөнч
+              // тооцоон дээр гарч ирэхгүй байна." Root cause:
+              // SchemeBuilding.heatLoad_kw is stored on the polygon
+              // entity, but the calc engine + Excel export read
+              // SchemeNode.heatLoad_w on the tagged node. Bidirectional
+              // sync here keeps both fields coherent.
+              if (building.taggedAsNodeId) {
+                const w_value = v != null ? Math.round(v * 1000) : undefined;
+                updateNode(building.taggedAsNodeId, { heatLoad_w: w_value });
+              }
             }}
             style={inputStyle}
             placeholder="500"

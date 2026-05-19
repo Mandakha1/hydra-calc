@@ -247,9 +247,35 @@ export const useHydraulicStore = create<HydraulicStoreState>()(
       // (drag-start handler / Inspector / transform applier) is
       // responsible for pushing one batched snapshot before the
       // sequence of updateNode invocations.
-      set((s) => ({
-        nodes: s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
-      })),
+      // Phase 13.26 — when heatLoad_w changes on a node that's tagged
+      // to a SchemeBuilding (Phase 12.4 outline workflow), also sync
+      // the building's heatLoad_kw so Inspector + Excel + report all
+      // show coherent values. Engineer's "Барилга дээр дулааны ачаалал
+      // өгсөнч тооцоон дээр гарч ирэхгүй байна" was caused by the two
+      // fields drifting out of sync; bidirectional sync fixes it.
+      set((s) => {
+        const nodes = s.nodes.map((n) =>
+          n.id === id ? { ...n, ...patch } : n,
+        );
+        let buildings = s.buildings;
+        if (
+          Object.prototype.hasOwnProperty.call(patch, "heatLoad_w") &&
+          buildings
+        ) {
+          const heatLoad_w = (patch as { heatLoad_w?: number }).heatLoad_w;
+          const linked = buildings.find((b) => b.taggedAsNodeId === id);
+          if (linked) {
+            const heatLoad_kw =
+              typeof heatLoad_w === "number" && heatLoad_w > 0
+                ? Math.round((heatLoad_w / 1000) * 100) / 100
+                : undefined;
+            buildings = buildings.map((b) =>
+              b.id === linked.id ? { ...b, heatLoad_kw } : b,
+            );
+          }
+        }
+        return { nodes, buildings };
+      }),
 
     removeNode: (id) =>
       // Phase 6.8.1 — same rationale as updateNode: removeNode is
