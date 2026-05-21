@@ -590,6 +590,30 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             })}
           </select>
         </Field>
+
+        {/* Phase 13.43 — engineer report: "Орон сууц дээр дархаар
+            ачааллын тооцоо хийдэг хэсэг гарч ирэхгүй байна маш олон
+            удаа дархад тооцооны хэсэг халь үзэгдээд л алга
+            болчихлоо". The Phase 13.42 block was placed below
+            Label/Kind/X/Y/Lat/Lon, so the engineer had to scroll
+            past 6 fields to reach it — easy to miss on a short
+            sidebar. Hoisted to here (right after the kind dropdown)
+            so it's the FIRST thing the engineer sees after
+            confirming the node kind. Visible for any consumer-kind
+            node (Phase 13.32 picker creations don't carry width_m
+            → the legacy dimension-gated block elsewhere never
+            fires). Method picker at the top swaps between
+            Volumetric (W×L×H × q_v), Envelope (БНбД 23-02-09
+            surfaces), and Manual (just type kW). */}
+        {isConsumerKind(node.kind) && (
+          <HeatLoadCalcSection
+            node={node}
+            updateNode={updateNode}
+            defaultCity={settings.city}
+            readOnly={readOnly}
+          />
+        )}
+
         <div style={{ display: "flex", gap: 8 }}>
           <Field label="X">
             <input
@@ -803,25 +827,6 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
               />
             </Field>
           </>
-        )}
-
-        {/* Phase 13.42 — heat-load calc section. Engineer report:
-            "Jisheelber OS 04 deer darah ued dulaani ahaallin tootsoo
-            hiih heseg garah yostoi Ezelhuuneer tootsoh eswel hashih
-            hiitsiin tootsoo hiih songolttoi baih yostoi". Always
-            visible for any consumer-kind node (Phase 13.32 picker
-            creations no longer have width_m → the legacy dimension-
-            gated block above would never show this for the modern
-            flow). Method picker at the top swaps between Volumetric
-            (W×L×H × q_v), Envelope (БНбД 23-02-09 surfaces), and
-            Manual (just type kW). */}
-        {isConsumerKind(node.kind) && (
-          <HeatLoadCalcSection
-            node={node}
-            updateNode={updateNode}
-            defaultCity={settings.city}
-            readOnly={readOnly}
-          />
         )}
 
         {/* Phase 6.8.3 — per-entity size override. Multiplies the
@@ -1328,22 +1333,21 @@ function HeatLoadCalcSection({
     <div
       style={{
         marginTop: 10,
-        marginBottom: 10,
-        padding: "10px",
-        background: "var(--bg-soft, rgba(0,0,0,0.04))",
-        borderRadius: 6,
-        border: "1px solid var(--border-soft)",
+        marginBottom: 12,
+        padding: "12px",
+        background: "var(--accent-bg, rgba(31,95,170,0.06))",
+        borderRadius: 8,
+        border: "2px solid var(--accent, #1f5faa)",
       }}
       data-testid="heat-load-calc-section"
     >
       <div
         style={{
-          fontSize: 11,
-          color: "var(--fg-muted)",
-          marginBottom: 8,
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
-          fontWeight: 600,
+          fontSize: 13,
+          color: "var(--accent, #1f5faa)",
+          marginBottom: 10,
+          fontWeight: 700,
+          letterSpacing: "0.02em",
         }}
       >
         🧮 Дулааны ачааллын тооцоо
