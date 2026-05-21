@@ -3838,98 +3838,24 @@ export function SchemeEditor({ readOnly }: Props) {
                     key={b.id}
                     data-testid={`building-${b.id}`}
                     onMouseDown={(e) => {
-                      // Phase 13.33 — engineer report: "Барилга
-                      // зураад дээр нь шугам зурах боломжтой болгох."
+                      // Phase 13.35 — engineer report (Mongolian,
+                      // with frustration): "Шугам автоматаар барилгатай
+                      // холбогдоод байна, холбогдох ёсгүй. Шугамын
+                      // салбар дахь эцсийн цэгүүд нь өөрөө барилга
+                      // байгууламж хэрэглэгч болно шүү дээ."
                       //
-                      // Re-enables the polygon-click path for addPipe
-                      // mode, but with the CORRECTED behavior: instead
-                      // of auto-anchoring at the building's centroid
-                      // tagged node (Phase 13.8 / 13.31 problem), the
-                      // click point itself defines the connection node
-                      // position INSIDE the polygon. The new node
-                      // inherits the building's KIND (consumer_*) +
-                      // heatLoad so the calc engine sees the building
-                      // as a consumer/source from the engineer's
-                      // chosen connection point.
+                      // Phase 13.33 polygon→node auto-anchor REMOVED.
+                      // Pipe endpoints are STANDALONE consumer/source
+                      // nodes — the engineer's click point IS the
+                      // hydraulic entity, no inheritance from polygon.
+                      // Polygon is purely decorative.
+                      //
+                      // We don't stopPropagation here in addPipe mode,
+                      // so the click bubbles to the canvas onClick →
+                      // empty-canvas branch creates a junction stub +
+                      // raises the Phase 13.32 kind picker for the
+                      // engineer to assign Орон сууц / Эмнэлэг / ...
                       if (mode === "addPipe") {
-                        e.stopPropagation();
-                        const clickPt = snap(toSvg(e));
-                        // Use existing tagged node if present (one
-                        // connection per building default), else
-                        // create a fresh node AT the click point.
-                        let connId = b.taggedAsNodeId;
-                        if (!connId) {
-                          connId = uid("c");
-                          const buildingKind = b.taggedAsKind ?? "consumer_apartment";
-                          const def = getNodeKind(buildingKind);
-                          const llConn = showMap ? svgToLatLon(clickPt) : null;
-                          addNode({
-                            id: connId,
-                            kind: buildingKind,
-                            label: b.label || `${def?.shortLabel ?? "Барилга"}-1`,
-                            x: Math.round(clickPt.x),
-                            y: Math.round(clickPt.y),
-                            ...(typeof b.heatLoad_kw === "number" && b.heatLoad_kw > 0
-                              ? { heatLoad_w: Math.round(b.heatLoad_kw * 1000) }
-                              : def?.defaults?.heatLoad_w
-                                ? { heatLoad_w: def.defaults.heatLoad_w }
-                                : {}),
-                            ...(def?.defaults?.requiredPressure_mpa
-                              ? { requiredPressure_mpa: def.defaults.requiredPressure_mpa }
-                              : {}),
-                            ...(llConn ? { geo: { lat: llConn.lat, lon: llConn.lon } } : {}),
-                          });
-                          // Tag the polygon → node link so subsequent
-                          // pipe clicks on the same polygon reuse this
-                          // connection point.
-                          useHydraulicStore.setState((s) => ({
-                            buildings: (s.buildings ?? []).map((bb) =>
-                              bb.id === b.id ? { ...bb, taggedAsNodeId: connId } : bb,
-                            ),
-                          }));
-                        }
-                        // Pipe start / commit using the (existing or
-                        // freshly-created) connection node.
-                        if (!pipeFrom) {
-                          setPipeFrom(connId);
-                          setPipeBendPts([]);
-                          setToast({
-                            text: `${b.label} — эх цэг тогтоосон`,
-                            key: Date.now(),
-                            tone: "neutral",
-                          });
-                        } else if (pipeFrom !== connId) {
-                          const fromNode = nodes.find((n) => n.id === pipeFrom);
-                          const toNode = nodes.find((n) => n.id === connId);
-                          if (!fromNode || !toNode) return;
-                          const polyline = displayPipePolyline(
-                            fromNode,
-                            pipeBendPts,
-                            toNode,
-                            projectorCtx,
-                          );
-                          const measuredLen = pxToM(polylineLengthPx(polyline));
-                          const manualLen = parseFloat(pipeLengthInput);
-                          const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
-                          const nPipes = commitPipeWithCircuits({
-                            fromNodeId: pipeFrom,
-                            toNodeId: connId,
-                            length_m,
-                            bendPoints: pipeBendPts,
-                          });
-                          setPipeFrom(null);
-                          setPipeBendPts([]);
-                          setPipeLengthInput("");
-                          setMode("select");
-                          setToast({
-                            text:
-                              nPipes > 1
-                                ? `${nPipes} шугам үүсгэв (${b.label})`
-                                : `Шугам үүсгэв (${b.label})`,
-                            key: Date.now(),
-                            tone: "success",
-                          });
-                        }
                         return;
                       }
                       if (mode === "select" || mode === "drawBuilding") {
@@ -5239,12 +5165,27 @@ export function SchemeEditor({ readOnly }: Props) {
                 isTaggedToBuilding && wm > 0 && hm > 0
                   ? Math.min(wm, hm) * 0.4
                   : undefined;
-              const computedR = computeSymbolRadiusPx(
+              const rawR = computeSymbolRadiusPx(
                 entityKind,
                 pxPerM_for_symbol,
                 sizeScaleFactor,
                 buildingMinDim_m ? { maxDiameter_m: buildingMinDim_m } : undefined,
               );
+              // Phase 13.35 — engineer report (with screenshot): "Tag
+              // нь жижиг болоогүй, газрын зураг дээрх барилгыг бүтэн
+              // хааж байна. Маш жижиг байх хэрэгтэй."
+              //
+              // At high map zoom (16-22) the kind-default reference
+              // size (35 m consumer / 18 m source) produces 60+ px
+              // radius — bigger than the building it sits on. Tagged
+              // nodes are SUPPOSED to be tiny markers identifying
+              // "this is the consumer for this polygon". Cap them at
+              // an absolute 8 px radius (16 px diameter) regardless
+              // of zoom so they read like a Google-Maps-style pin.
+              const TAG_MAX_R = 8;
+              const computedR = isTaggedToBuilding
+                ? Math.min(TAG_MAX_R, rawR)
+                : rawR;
               const r = isSelected ? computedR + 4 : computedR;
               void MIN_SYMBOL_PX; // imported for downstream test-friendly access
               const isPump = def.category === "pump";
