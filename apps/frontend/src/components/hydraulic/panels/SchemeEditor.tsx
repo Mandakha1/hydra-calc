@@ -471,8 +471,12 @@ export function SchemeEditor({ readOnly }: Props) {
   const [colorOverlay, setColorOverlay] = useState<"off" | "speed" | "pressure">("off");
   /** Шугам хоолойн урсгалын анимаци — Zulu-стилийн. Тооцоо хийгдсэний дараа автомат идэвхждэг. */
   const [animateFlow, setAnimateFlow] = useState(true);
-  /** Алдааны pulsation — violations байх үед автомат идэвхждэг. */
-  const [animateErrors, setAnimateErrors] = useState(true);
+  /** Алдааны pulsation — Phase 13.37 inженерийн санал: "Тооцоо
+   * хийсний дараа шугам томорч жижгэрдэг новшийн effect ээ
+   * болиул". Default false — violated шугам/node-ууд улаан
+   * өнгөөрөө л харагдана, анимац байхгүй. Хэрэв инженер pulsation
+   * хүсвэл дээд талын ⚠ товч дарж асаана. */
+  const [animateErrors, setAnimateErrors] = useState(false);
   /** Leaflet map ref — used to convert lat/lon ↔ container px. */
   const leafletMapRef = useRef<L.Map | null>(null);
   /** Bumped on map move/zoom to force a render so geo-anchored nodes reposition. */
