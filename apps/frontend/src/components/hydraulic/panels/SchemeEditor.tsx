@@ -3744,69 +3744,35 @@ export function SchemeEditor({ readOnly }: Props) {
                     key={b.id}
                     data-testid={`building-${b.id}`}
                     onMouseDown={(e) => {
-                      // Phase 13.8 — addPipe mode: clicking on a
-                      // building polygon uses its tagged-as node as
-                      // the pipe endpoint. Engineer doesn't need to
-                      // aim at the tiny centroid symbol — the entire
-                      // polygon footprint is now the click target
-                      // (Zulu Thermo convention). The Phase 13.1
-                      // pipe-polygon-clip helper draws the visible
-                      // line up to the polygon perimeter automatically.
-                      if (mode === "addPipe" && b.taggedAsNodeId) {
-                        e.stopPropagation();
-                        const targetNodeId = b.taggedAsNodeId;
-                        if (!pipeFrom) {
-                          setPipeFrom(targetNodeId);
-                          setPipeBendPts([]);
+                      // Phase 13.8 → DISABLED in Phase 13.31 per engineer:
+                      // "Эх үүсвэр болон бусад барилга газрын зураг
+                      // дээрээс давхарлаж зурдаг хэвээрээ байх ёстой,
+                      // зөвхөн шугамтай автоматаар холбогдхыг болиулна."
+                      //
+                      // Polygons remain as decorative visual outlines on
+                      // top of the map (Phase 13.1 drawBuilding + auto-
+                      // tag still alive — engineer expects to see the
+                      // building shape with its label). What we DROP is
+                      // the convenience that any click on the polygon
+                      // area in addPipe mode auto-anchored at the tagged
+                      // centroid node. Engineer now MUST click the
+                      // explicit small NODE icon inside the polygon to
+                      // start / end a pipe — the connection point is
+                      // always an explicit engineer choice.
+                      //
+                      // Fall through to the select / drawBuilding
+                      // handlers below so polygon click still selects
+                      // the building (Inspector inspect + Phase 13.2
+                      // drag) when NOT in addPipe mode.
+                      if (mode === "addPipe") {
+                        // Hint the engineer where to actually click —
+                        // polygon click is ignored in this mode now.
+                        if (b.taggedAsNodeId) {
                           setToast({
-                            text: `${b.label} — эх цэг тогтоосон`,
+                            text: `${b.label} — шугамыг холбохын тулд дотор байх жижиг зангилаа дээр дарна уу`,
                             key: Date.now(),
                             tone: "neutral",
                           });
-                        } else if (pipeFrom !== targetNodeId) {
-                          // Commit pipe with bend points + sum length.
-                          // Phase 13.14 — building polygon commit path now
-                          // measures the polyline through displayVertex so
-                          // on-map workflows record correct length even
-                          // after the engineer pans/zooms between clicks.
-                          // Previously: from.x/.y + node.x/.y were stale
-                          // (Phase 6.8.2 geo-anchored nodes don't update
-                          // their stored XY on map move) → length math
-                          // produced wrong metres + the live polyline
-                          // appeared to "vanish".
-                          const fromNode = nodes.find((n) => n.id === pipeFrom);
-                          const toNode = nodes.find((n) => n.id === targetNodeId);
-                          if (!fromNode || !toNode) return;
-                          const polyline = displayPipePolyline(
-                            fromNode,
-                            pipeBendPts,
-                            toNode,
-                            projectorCtx,
-                          );
-                          const measuredLen = pxToM(polylineLengthPx(polyline));
-                          const manualLen = parseFloat(pipeLengthInput);
-                          const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
-                          // Phase 13.18 — Building-polygon commit also
-                          // honours multi-circuit. Single click drops
-                          // Т1/Т2/Т3/Т4/В1 simultaneously when the
-                          // engineer toggled extras via right-click.
-                          const nPipes = commitPipeWithCircuits({
-                            fromNodeId: pipeFrom,
-                            toNodeId: targetNodeId,
-                            length_m,
-                            bendPoints: pipeBendPts,
-                          });
-                          setPipeFrom(null);
-                          setPipeBendPts([]);
-                          setPipeLengthInput("");
-                          setMode("select");
-                          if (nPipes > 1) {
-                            setToast({
-                              text: `${nPipes} шугам үүсгэв (${b.label} → ${toNode.label})`,
-                              key: Date.now(),
-                              tone: "success",
-                            });
-                          }
                         }
                         return;
                       }
