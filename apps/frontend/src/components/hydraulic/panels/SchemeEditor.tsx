@@ -930,51 +930,98 @@ export function SchemeEditor({ readOnly }: Props) {
       ...(typeof v.lon === "number" ? { lon: v.lon } : {}),
     }));
 
-    // Phase 13.30 — polygon is now PURELY DECORATIVE per engineer:
-    // "Барилга гараар зурах нь зүгээр л хархад ойлгомжтой болгох
-    // үүднээс дүрс зурж нэр өгч байгаа гэсэн үг шүү."
-    //
-    // The Phase 13.1 auto-tag flow (where drawing a polygon also
-    // created a linked SchemeNode at the centroid + auto-anchored
-    // pipes to it) is DISABLED. The polygon now lives independently;
-    // engineer separately places consumer / source nodes at their
-    // chosen connection points via the standard addNode single-click
-    // placement (palette pick → click on canvas). Pipes connect to
-    // those explicit nodes, NOT to polygons.
-    //
-    // For label, we still pick a sensible default per the kind so
-    // engineer can see "АОС-1" / "Эмнэлэг-1" / "УДДТ-1" on the
-    // polygon at a glance — it's just a name on a decorative shape.
+    // Phase 13.1 — when the engineer entered drawBuilding from a
+    // source/consumer palette pick (isBuildingLikeKind(pendingKind)),
+    // auto-tag the building with that kind and create the linked
+    // SchemeNode at the polygon centroid. This mirrors the Phase 12.4
+    // right-click "Энэ юу вэ?" workflow but happens immediately at
+    // commit time, giving the engineer an AutoCAD-style "select kind →
+    // draw outline → done" placement gesture for buildings.
     const buildingLikeKind = isBuildingLikeKind(pendingKind) ? pendingKind : null;
-    const sameKindCount = (cur.buildings ?? []).filter(
-      (b) => b.taggedAsKind === buildingLikeKind,
-    ).length;
-    const label = buildingLikeKind
-      ? `${getNodeKind(buildingLikeKind)?.shortLabel ?? "Барилга"}-${sameKindCount + 1}`
-      : `Барилга-${buildingsCount + 1}`;
+    if (buildingLikeKind) {
+      const draft = {
+        id,
+        polygon: cleanedPolygon,
+        label: `Барилга-${buildingsCount + 1}`,
+        layerKey: "D" as const,
+      };
+      const { node, buildingPatch } = buildTagAsParams(
+        draft,
+        buildingLikeKind,
+        cur.nodes,
+      );
+      // Also dimension-tag the new node so InspectorPanel's Phase 13.0b
+      // width_m / height_m fields show realistic defaults (polygon
+      // bounding-box converted to metres via PX_PER_METER).
+      const bx = bbox(cleanedPolygon.map((p) => ({ x: p.x, y: p.y })));
+      const width_m = (bx.maxX - bx.minX) / PX_PER_METER;
+      const height_m = (bx.maxY - bx.minY) / PX_PER_METER;
+      // Phase 13.10 — stamp the tagged node with `geo` derived from
+      // the polygon's centroid in lat/lon space. Engineer report:
+      // "Барилгын зураг газрын зургыг дагаж хөдөлж байгаа ч үүсгэсэн
+      // автомат tag нь тусдаа салж хөдөлж байна." Root cause:
+      // buildTagAsParams returns a node with x/y only; without `geo`
+      // the node renderer doesn't project via leaflet on map moves,
+      // so polygon (per-vertex geo) and node centroid drift apart.
+      // We derive lat/lon by averaging the polygon vertices' lat/lon
+      // (already stamped at click time per Phase 13.5c) — that
+      // matches the polygon centroid exactly on each map redraw.
+      let nodeGeo: { lat: number; lon: number } | undefined;
+      if (showMap) {
+        const vertsWithGeo = cleanedPolygon.filter(
+          (v): v is typeof v & { lat: number; lon: number } =>
+            typeof v.lat === "number" && typeof v.lon === "number",
+        );
+        if (vertsWithGeo.length > 0) {
+          const lat = vertsWithGeo.reduce((s, v) => s + v.lat, 0) / vertsWithGeo.length;
+          const lon = vertsWithGeo.reduce((s, v) => s + v.lon, 0) / vertsWithGeo.length;
+          nodeGeo = { lat, lon };
+        } else {
+          // Fallback — project the node's x/y back via the current
+          // leaflet view. Less precise (depends on current map zoom)
+          // but works when polygon vertices weren't geo-stamped.
+          const ll = svgToLatLon({ x: node.x, y: node.y });
+          if (ll) nodeGeo = ll;
+        }
+      }
+      pushUndoSnapshot("Барилга + tag-as", 2);
+      addBuilding({ ...draft, ...buildingPatch });
+      addNode({
+        ...node,
+        ...(width_m > 0 ? { width_m } : {}),
+        ...(height_m > 0 ? { height_m } : {}),
+        ...(nodeGeo ? { geo: nodeGeo } : {}),
+      });
+      select({ kind: "node", id: node.id });
+      setPolygon([]);
+      setMode("select");
+      // Phase 13.1 — clear pendingKind back to a neutral default so
+      // the engineer's next "single-click placement" gesture (junction,
+      // valve, etc.) doesn't accidentally trigger another polygon draw.
+      setPendingKind("consumer_apartment");
+      setToast({
+        text: `${node.label} — барилга + tag үүсгэв`,
+        key: Date.now(),
+        tone: "success",
+      });
+      return;
+    }
 
-    pushUndoSnapshot("Барилгын хүрээ зурсан", 1);
     addBuilding({
       id,
       polygon: cleanedPolygon,
-      label,
+      label: `Барилга-${buildingsCount + 1}`,
       layerKey: "D",
-      // Phase 13.30 — keep taggedAsKind for visual labelling (engineer
-      // sees the kind at a glance) but DO NOT create a tagged node.
-      // taggedAsNodeId stays undefined so pipe-end clicks no longer
-      // auto-anchor at the polygon centroid.
-      ...(buildingLikeKind ? { taggedAsKind: buildingLikeKind } : {}),
     });
     selectBuilding(id);
     setPolygon([]);
     setMode("select");
-    setPendingKind("consumer_apartment");
     setToast({
-      text: `${label} — хүрээ зурлаа. Холбогдох цэгээ нэмэхийн тулд палеттаас хэрэглэгч/эх үүсвэр сонгож барилга дотор дарна уу.`,
+      text: "Барилгын зураг үүсгэв",
       key: Date.now(),
-      tone: "neutral",
+      tone: "success",
     });
-  }, [readOnly, pendingKind, addBuilding, select]);
+  }, [readOnly, pendingKind, addBuilding, addNode, select]);
 
   /**
    * Phase 6.8.7 — Quick-fill "standard apartment" building template.
@@ -3095,24 +3142,30 @@ export function SchemeEditor({ readOnly }: Props) {
               onClick={() => {
                 setPendingKind(k.key);
                 setShowPalette(null);
-                // Phase 13.30 — engineer report: "Эх үүсвэр УДДТ гэх мэт
-                // болон хэрэглэгчийн барилгад шугам автомат холбогддогыг
-                // болиулна уу. Шугам хаана холбогдоно тэр цэг нь Эх
-                // үүсвэр болон барилга гэсэн үг. Барилга зурах нь
-                // зөвхөн харагдах байдлаар нэр өгсөн дүрс юм."
-                //
-                // Decoupled flow: palette pick now ALWAYS defaults to
-                // addNode (single-click placement) — engineer chooses
-                // the connection point explicitly. Polygon drawing is
-                // a SEPARATE, optional gesture via the "▱ Барилга"
-                // side button. Polygons are purely visual decoration;
-                // they do NOT auto-tag a node any more.
-                setMode("addNode");
-                setToast({
-                  text: `${k.shortLabel} — холбогдох цэг дээр дарна. Барилгын хүрээ зурах бол зүүн талын ▱ Барилга товч.`,
-                  key: Date.now(),
-                  tone: "neutral",
-                });
+                // Phase 13.1 — source/consumer kinds enter polygon-
+                // draw mode so the engineer outlines the real building
+                // footprint AutoCAD-style instead of dropping a single
+                // centered point. Wells / valves / sensors keep the
+                // legacy click-to-place behaviour. The polygon's
+                // commit handler auto-creates the tagged node + sets
+                // width_m / height_m from the bbox so InspectorPanel's
+                // dimension inputs show realistic defaults.
+                if (isBuildingLikeKind(k.key)) {
+                  setMode("drawBuilding");
+                  setPolygon([]);
+                  // Phase 13.3 — real buildings are rarely axis-aligned
+                  // (residential plots, ТЭЦ campus layouts, etc.). Default
+                  // to free-angle so engineer can outline the actual
+                  // footprint shape without fighting the 90° constraint.
+                  // Engineer can toggle back to ortho90 / ortho45 via the
+                  // top toolbar if they want crisp axes for a schematic.
+                  setAngleMode("free");
+                  setToast({
+                    text: `${k.shortLabel} — газрын зураг дээр контур зурна (дурын өнцөг · Enter → дуусгах)`,
+                    key: Date.now(),
+                    tone: "neutral",
+                  });
+                }
               }}
               title={k.description}
               style={{
