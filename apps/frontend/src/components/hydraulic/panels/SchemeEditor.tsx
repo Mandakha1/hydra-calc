@@ -3332,36 +3332,48 @@ export function SchemeEditor({ readOnly }: Props) {
         <div style={hintStyle}>
           Polygon-ы өнцгүүдийг дараалан дарна. {polygon.length >= 3 ? "Эхний цэг рүү буцаж эсвэл Enter — хаах" : "≥3 цэг хэрэгтэй"}.
           {polygon.length > 0 && ` (${polygon.length} өнцөг)`}
-          {/* Phase 13.11 — when the engineer is drawing a building-like
-              kind AND the map is visible, offer a one-click switch to
-              OSM-trace mode so they don't have to manually snap to the
-              real building footprint. */}
-          {showMap && isBuildingLikeKind(pendingKind) && polygon.length === 0 && (
+          {/* Phase 13.11 + 13.29 — engineer report: "Эх үүсвэр болон
+              хэрэглэгч зурах үед барилга дээр давхарлаж зурахад яг
+              хүрээг нь дагуулж цэвэр зурж болохгүй байна."
+              The "🏘 OSM-аас татах" button used to disappear after
+              the first vertex. Now ALWAYS visible during drawBuilding
+              (when map + building-like kind). If the engineer has
+              vertices placed, clicking the button asks to REPLACE
+              the manual polygon with the OSM outline. */}
+          {showMap && isBuildingLikeKind(pendingKind) && (
             <button
               onClick={() => {
-                setMode("pickBuilding");
+                if (polygon.length > 0) {
+                  const ok = window.confirm(
+                    `Зурсан ${polygon.length} өнцгийг устгаад OSM-ийн яг хэлбэрийг татах уу?`,
+                  );
+                  if (!ok) return;
+                }
                 setPolygon([]);
+                setMode("pickBuilding");
                 setToast({
-                  text: "OSM-аас татах — газрын зураг дээрх барилгын дотор дарна",
+                  text: "🏘 OSM-аас татах — газрын зураг дээрх барилгын дотор дарна",
                   key: Date.now(),
                   tone: "neutral",
                 });
               }}
               style={{
                 marginLeft: 10,
-                padding: "2px 10px",
+                padding: "3px 12px",
                 background: "var(--bp-blue, #1f5faa)",
                 color: "white",
                 border: "none",
                 borderRadius: 4,
                 cursor: "pointer",
-                fontSize: 11,
-                fontWeight: 600,
+                fontSize: 12,
+                fontWeight: 700,
               }}
               data-testid="hint-osm-trace"
-              title="OSM газрын зургаас барилгын яг хэлбэрийг татаж тэмдэглэх"
+              title="OSM газрын зургаас барилгын яг хүрээг татаж тэмдэглэх"
             >
-              🏘 OSM-аас татах
+              {polygon.length === 0
+                ? "🏘 OSM-аас татах"
+                : `🏘 OSM-аас солих (${polygon.length} цэг устгана)`}
             </button>
           )}
         </div>
