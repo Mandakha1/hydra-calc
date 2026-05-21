@@ -5353,6 +5353,22 @@ export function SchemeEditor({ readOnly }: Props) {
                   aria-label={`${n.label} (${def.name})`}
                   className={isBad && animateErrors ? "hydra-violation" : ""}
                 >
+                  {/* Phase 13.44 — engineer report: "Mouse 1 deer udaan
+                      darah ued garaad mouse 1 darhaa bolih ued arilj
+                      bn". After Phase 13.36 capped consumer/source
+                      symbols at 8 px radius, the actual click target
+                      shrank to a 16-px-diameter disc. Engineers
+                      missing it by a few pixels hit the canvas
+                      background, triggering the rubber-band false-
+                      positive in onMouseUp (diag < 4 →
+                      clearSelection). An invisible 22-px hit-pad
+                      around the symbol catches near-misses without
+                      changing the visual size. Only emitted for
+                      non-BuildingPlanShape rendering — buildings
+                      already have a large rect hit area. */}
+                  {!isBuilding && (
+                    <circle r={22} fill="transparent" pointerEvents="all" />
+                  )}
                   {/* Алдааны expanding ring — only when violating */}
                   {showErrorRings && (
                     <>
@@ -5475,7 +5491,25 @@ export function SchemeEditor({ readOnly }: Props) {
                   const bx = dp.x + offX;
                   const by = dp.y - offY;
                   return (
-                    <g key={`nn_${n.id}`} pointerEvents="none">
+                    // Phase 13.44 — the badge USED to have
+                    // pointerEvents="none" so it didn't block clicks.
+                    // The unintended consequence: clicking the
+                    // visible "05" black tag passed through to the
+                    // SVG canvas, which started a tiny rubber-band
+                    // (diag < 4 px) → onMouseUp clearSelection() ran
+                    // → the Inspector "halь үзэгдээд алга болчихлоо".
+                    // Make the badge clickable + delegate to
+                    // onNodeMouseDown so the badge is part of the
+                    // node's hit area. The aria-label also ensures
+                    // the canvas onMouseDown's `isEmpty` heuristic
+                    // (`target.closest("g[aria-label]")`) recognises
+                    // the badge as a node element.
+                    <g
+                      key={`nn_${n.id}`}
+                      aria-label={`node-${n.id}-badge`}
+                      onMouseDown={(e) => onNodeMouseDown(e, n)}
+                      style={{ cursor: readOnly ? "pointer" : "move" }}
+                    >
                       <rect
                         x={bx - halfW}
                         y={by - halfH}
@@ -5492,6 +5526,7 @@ export function SchemeEditor({ readOnly }: Props) {
                         fontSize={fontPx}
                         fill="white"
                         fontWeight={700}
+                        pointerEvents="none"
                       >
                         {badge}
                       </text>
