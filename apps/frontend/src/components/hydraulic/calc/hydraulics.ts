@@ -110,7 +110,11 @@ function resolvePipeLength(
 ): { length_m: number; source: "geometry" | "manual" } {
   const from = nodeById.get(pipe.fromNodeId);
   const to = nodeById.get(pipe.toNodeId);
-  const geoLength = pipeLengthFromGeometry(from, to);
+  // Phase 13.39 — follow the bendpoints polyline, not just endpoint
+  // straight-line. The engineer's corner detour around УДДТ /
+  // building / chamber now adds to the hydraulic length the
+  // pressure-drop solver consumes.
+  const geoLength = pipeLengthFromGeometry(from, to, pipe.bendPoints);
   if (geoLength !== null && geoLength > 0) {
     return { length_m: geoLength, source: "geometry" };
   }

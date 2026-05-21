@@ -222,3 +222,96 @@ export function moveBendPoint(
   next[bendIndex] = newPos;
   return next;
 }
+
+/**
+ * Deflection angle at a polyline vertex, in DEGREES.
+ *
+ * Phase 13.39 — engineer report: "Шугам хэдэн Градус эргэж байгааг
+ * үураг дээр яг тухайн буланд нь тоогоор харуулмаар байна". We
+ * label every intermediate vertex on the canvas with this value
+ * so the engineer can verify their routing matches the real-world
+ * elbow (45° / 90° standard fittings, or arbitrary degrees for
+ * free-snap layouts).
+ *
+ * Definition: deflection = how much the pipe direction CHANGES at
+ * the vertex.
+ *   - 0°   → straight (the three points are collinear; no real bend)
+ *   - 45°  → standard 45° elbow
+ *   - 90°  → standard 90° elbow
+ *   - 180° → U-turn (pipe folds back on itself)
+ *
+ * Computation: angle between the incoming direction (prev→bend)
+ * and the outgoing direction (bend→next), via acos of the dot
+ * product of the unit vectors. Always returns a value in [0, 180].
+ *
+ * Returns 0 for degenerate input (zero-length incoming or outgoing
+ * segment) so the renderer can safely skip labels < 5°.
+ */
+export function bendDeflectionDeg(
+  prev: { x: number; y: number },
+  bend: { x: number; y: number },
+  next: { x: number; y: number },
+): number {
+  const inX = bend.x - prev.x;
+  const inY = bend.y - prev.y;
+  const outX = next.x - bend.x;
+  const outY = next.y - bend.y;
+  const inLen = Math.hypot(inX, inY);
+  const outLen = Math.hypot(outX, outY);
+  if (inLen < 0.001 || outLen < 0.001) return 0;
+  const dot = (inX * outX + inY * outY) / (inLen * outLen);
+  const clamped = Math.max(-1, Math.min(1, dot));
+  return (Math.acos(clamped) * 180) / Math.PI;
+}
+
+/**
+ * Outward bisector unit vector at a polyline vertex.
+ *
+ * Used to position the deflection-angle label so it sits on the
+ * OUTSIDE of the bend (the convex side), where it doesn't overlap
+ * the pipe stroke or the small bend-point drag handle.
+ *
+ * Geometric definition: the bisector of the EXTERIOR angle. Given
+ * unit vectors u (prev→bend, INTO the bend) and v (bend→next, OUT
+ * of the bend), the outward bisector is normalize(−u − v). For a
+ * right-angle turn (u=(1,0), v=(0,1)), this returns (−1,−1)/√2 —
+ * pointing into the convex corner.
+ *
+ * Returns (0, 0) for degenerate / straight-line input. The caller
+ * is expected to fall back to a sensible default position.
+ */
+export function bendOutwardBisector(
+  prev: { x: number; y: number },
+  bend: { x: number; y: number },
+  next: { x: number; y: number },
+): { x: number; y: number } {
+  const inX = bend.x - prev.x;
+  const inY = bend.y - prev.y;
+  const outX = next.x - bend.x;
+  const outY = next.y - bend.y;
+  const inLen = Math.hypot(inX, inY);
+  const outLen = Math.hypot(outX, outY);
+  if (inLen < 0.001 || outLen < 0.001) return { x: 0, y: 0 };
+  const uX = inX / inLen;
+  const uY = inY / inLen;
+  const vX = outX / outLen;
+  const vY = outY / outLen;
+  // Straight-line check: u · v ≈ 1 means the two segments share a
+  // direction — there's no real bend, so the bisector is undefined.
+  // Return (0, 0) so the caller can fall back to the bend position
+  // itself (label suppressed when paired with the deflection < 5°
+  // guard in the renderer).
+  const dot = uX * vX + uY * vY;
+  if (dot > 0.9999) return { x: 0, y: 0 };
+  // U-turn check: u · v ≈ -1 means the pipe folds back on itself.
+  // -(u + v) is then (0, 0) — degenerate. Pick the unit perpendicular
+  // to u (rotated 90° CCW) as a reasonable label side. Engineers
+  // rarely route a true U-turn but this avoids a NaN on degenerate
+  // imports.
+  if (dot < -0.9999) return { x: -uY, y: uX };
+  const bX = -(uX + vX);
+  const bY = -(uY + vY);
+  const bLen = Math.hypot(bX, bY);
+  if (bLen < 0.001) return { x: 0, y: 0 };
+  return { x: bX / bLen, y: bY / bLen };
+}
