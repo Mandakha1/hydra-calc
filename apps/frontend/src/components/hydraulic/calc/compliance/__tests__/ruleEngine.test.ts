@@ -65,7 +65,10 @@ function basicProject(): HydraulicState {
   const s = makeState();
   s.nodes = [
     makeNode({ id: "src", kind: "source_substation", label: "ЦТП" }),
-    makeNode({ id: "aos1", kind: "consumer_apartment", label: "АОС-1" }),
+    // Phase 13.40 — consumerHeatLoadRequired rule expects every
+    // consumer node to declare heatLoad_w. The "clean project"
+    // fixture seeds it so the rule doesn't fire on the baseline.
+    makeNode({ id: "aos1", kind: "consumer_apartment", label: "АОС-1", heatLoad_w: 50_000 }),
   ];
   s.pipes = [
     makePipe({ id: "p1", fromNodeId: "src", toNodeId: "aos1", dn: 100, length_m: 50 }),

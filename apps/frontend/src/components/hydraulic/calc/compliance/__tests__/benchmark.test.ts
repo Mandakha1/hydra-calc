@@ -42,6 +42,11 @@ function synthetic1000NodeProject(): HydraulicState {
       label: `АОС-${i}`,
       x: Math.cos(angle) * 1000,
       y: Math.sin(angle) * 1000,
+      // Phase 13.40 — consumerHeatLoadRequired demands a non-zero
+      // load on every consumer; seed it on the synthetic fixture
+      // so the benchmark counts the rule as "passed" instead of
+      // emitting 999 INFO violations.
+      heatLoad_w: 50_000,
     });
     pipes.push({
       id: `p${i}`,

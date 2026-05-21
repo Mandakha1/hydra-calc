@@ -28,7 +28,10 @@ function makeState(): HydraulicState {
   const s = emptyState();
   s.nodes = [
     makeNode({ id: "src", kind: "source_substation", label: "ЦТП" }),
-    makeNode({ id: "aos1", kind: "consumer_apartment", label: "АОС-1" }),
+    // Phase 13.40 — consumerHeatLoadRequired expects load on
+    // consumer nodes; seed it on the baseline so unrelated rules'
+    // tests don't pick up extra violations from this new rule.
+    makeNode({ id: "aos1", kind: "consumer_apartment", label: "АОС-1", heatLoad_w: 50_000 }),
   ];
   s.pipes = [makePipe({ id: "p1", fromNodeId: "src", toNodeId: "aos1" })];
   return s;
@@ -126,19 +129,70 @@ describe("Rule 23 — well_at_branches", () => {
 
 /* ─── Rule 24 — building_footprint_metadata ──────────────────── */
 
-describe("Rule 24 — building_footprint_metadata", () => {
-  it("PASS: building with floors + heatLoad_kw → no violation", () => {
+describe("Rule 24 — building_footprint_metadata (Phase 13.40 update)", () => {
+  it("PASS: building with floors → no violation", () => {
     const s = makeState();
-    s.buildings = [makeBuilding({ id: "b1", label: "Б-1", floors: 5, heatLoad_kw: 200 })];
+    s.buildings = [makeBuilding({ id: "b1", label: "Б-1", floors: 5 })];
     const r = runComplianceCheck(s, undefined, ALL_RULES);
     expect(violationsForRule(r, "building_footprint_metadata")).toHaveLength(0);
   });
 
-  it("FAIL: building missing both → INFO", () => {
+  it("PASS: building with floors but no heatLoad_kw → still no violation (Phase 13.40)", () => {
+    // Phase 13.40 — heat load is now a NODE property, not a polygon
+    // property. The rule no longer demands heatLoad_kw on buildings.
+    const s = makeState();
+    s.buildings = [makeBuilding({ id: "b1", label: "Б-1", floors: 5 })];
+    const r = runComplianceCheck(s, undefined, ALL_RULES);
+    expect(violationsForRule(r, "building_footprint_metadata")).toHaveLength(0);
+  });
+
+  it("FAIL: building missing floors → INFO", () => {
     const s = makeState();
     s.buildings = [makeBuilding({ id: "b1", label: "Б-1" })];
     const r = runComplianceCheck(s, undefined, ALL_RULES);
     expect(violationsForRule(r, "building_footprint_metadata")).toHaveLength(1);
+  });
+});
+
+/* ─── Phase 13.40 — consumer_heat_load_required ──────────────── */
+
+describe("Phase 13.40 — consumer_heat_load_required", () => {
+  it("PASS: consumer with heatLoad_w > 0 → no violation", () => {
+    const s = makeState();
+    // makeState() already seeds aos1.heatLoad_w = 50_000 (Phase 13.40)
+    const r = runComplianceCheck(s, undefined, ALL_RULES);
+    expect(violationsForRule(r, "consumer_heat_load_required")).toHaveLength(0);
+  });
+
+  it("FAIL: consumer with no heatLoad_w → WARN", () => {
+    const s = makeState();
+    // Strip the load from the consumer
+    s.nodes = s.nodes.map((n) =>
+      n.id === "aos1" ? { ...n, heatLoad_w: undefined } : n,
+    );
+    const r = runComplianceCheck(s, undefined, ALL_RULES);
+    const violations = violationsForRule(r, "consumer_heat_load_required");
+    expect(violations).toHaveLength(1);
+    expect(violations[0]!.severity).toBe("warn");
+    expect(violations[0]!.entityType).toBe("node");
+    expect(violations[0]!.entityId).toBe("aos1");
+  });
+
+  it("FAIL: consumer with heatLoad_w = 0 → WARN", () => {
+    const s = makeState();
+    s.nodes = s.nodes.map((n) =>
+      n.id === "aos1" ? { ...n, heatLoad_w: 0 } : n,
+    );
+    const r = runComplianceCheck(s, undefined, ALL_RULES);
+    expect(violationsForRule(r, "consumer_heat_load_required")).toHaveLength(1);
+  });
+
+  it("source node without heatLoad_w is NOT flagged (sources don't need it)", () => {
+    const s = makeState();
+    // src has no heatLoad_w — should be silent (rule only iterates consumers)
+    const r = runComplianceCheck(s, undefined, ALL_RULES);
+    const violations = violationsForRule(r, "consumer_heat_load_required");
+    expect(violations.find((v) => v.entityId === "src")).toBeUndefined();
   });
 });
 
