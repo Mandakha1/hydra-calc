@@ -28,6 +28,13 @@ export interface SchemeNode {
    *  БНбД 23-02-09, or plain manual kW). Defaults to "volumetric"
    *  when undefined for backward compat with pre-13.42 projects. */
   heatLoadMethod?: "volumetric" | "envelope" | "manual";
+  /** Phase 13.45 — engineer-typed manual override of `heatLoad_w`.
+   *  When true, dimension changes (width_m / height_m / floors /
+   *  specificLoad_w_per_m3) DO NOT auto-update heatLoad_w; the
+   *  typed value sticks. Engineer flips back to auto via the
+   *  "⟲ Авто" button in VolumetricHeatLoadBlock. Default
+   *  undefined → auto-mode (dimension changes propagate). */
+  heatLoadManual?: boolean;
   /** Required pressure at this consumer, MPa. */
   requiredPressure_mpa?: number;
   /** For buildings: envelope inputs that drive heat-load computation. */

@@ -3,6 +3,8 @@
  * Flags pipes/nodes that violate velocity, pressure, or material limits.
  */
 import { NORM_THRESHOLDS, PIPE_MATERIALS, TEMP_SCHEDULES } from "shared";
+// Phase 13.46 — prefix-aware kind check for modern picker creations.
+import { isConsumerKind } from "./compliance/ruleEngine";
 import type {
   CalculationResults,
   NormViolation,
@@ -85,7 +87,7 @@ export function checkNorms(
   // is populated). Legacy projects without heat-loss data skip the
   // check entirely.
   const minSupplyT = settings.minSupplyTemp_c ?? 80;
-  for (const node of nodes.filter((n) => n.kind === "consumer")) {
+  for (const node of nodes.filter((n) => isConsumerKind(n.kind))) {
     const nr = results.nodes.find((x) => x.nodeId === node.id);
     if (!nr) continue;
     const minRequired = node.requiredPressure_mpa ?? NORM_THRESHOLDS.dp_consumer_min_mpa;

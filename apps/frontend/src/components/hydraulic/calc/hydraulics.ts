@@ -20,6 +20,14 @@ import {
   TEMP_SCHEDULES,
   NORM_THRESHOLDS,
 } from "shared";
+// Phase 13.46 — engineer report: "tootsoo zuwhn shuluun chigleld
+// 1 shugam deer l hiigdej bn" — calc only ran properly on a single
+// pipe because every literal `kind === "source"` / `"consumer"`
+// check in this file mis-classifies modern Phase 13.32 picker
+// creations (`source_substation` / `consumer_apartment` / etc.).
+// The helpers below accept both legacy `"source"` and the modern
+// `source_*` prefix; same for consumers.
+import { isSourceKind, isConsumerKind } from "./compliance/ruleEngine";
 import type {
   SchemeNode,
   SchemePipe,
@@ -225,7 +233,9 @@ export function computeNodePressures(
   sourcePressure_mpa: number,
 ): NodeResult[] {
   const pressure = new Map<string, number>();
-  const sources = nodes.filter((n) => n.kind === "source");
+  // Phase 13.46 — `isSourceKind` accepts source_substation / source_tec /
+  // source_boiler / source_geothermal in addition to the legacy literal.
+  const sources = nodes.filter((n) => isSourceKind(n.kind));
   const source = sources[0];
   if (source) pressure.set(source.id, sourcePressure_mpa);
   else if (nodes[0]) pressure.set(nodes[0].id, sourcePressure_mpa);
@@ -383,8 +393,9 @@ function computeNodeSupplyTemps(
   nodeById: Map<string, SchemeNode>,
 ): Map<string, number> {
   const nodeT = new Map<string, number>();
+  // Phase 13.46 — accept source_*, not just literal "source".
   const sourceId =
-    nodes.find((n) => n.kind === "source")?.id ?? nodes[0]?.id;
+    nodes.find((n) => isSourceKind(n.kind))?.id ?? nodes[0]?.id;
   if (!sourceId) return nodeT;
 
   const supplyPipes = pipes.filter(
@@ -464,7 +475,8 @@ export function runFullCalc(
     // factor so the downstream-load aggregator produces the right ṁ
     // automatically.
     const adjustedNodes = nodes.map((n) => {
-      if (n.kind !== "consumer" || !n.heatLoad_w) return n;
+      // Phase 13.46 — accept consumer_*, not just literal "consumer".
+      if (!isConsumerKind(n.kind) || !n.heatLoad_w) return n;
       const T_inlet = nodeSupplyT.get(n.id);
       if (T_inlet === undefined) return n;
       const effectiveDeltaT = T_inlet - returnT;
@@ -527,7 +539,11 @@ export function runFullCalc(
   const maxV = annotatedPipes.reduce((m, p) => Math.max(m, p.v_m_s), 0);
 
   const consumerPressures = nodeResults
-    .filter((n) => nodes.find((x) => x.id === n.nodeId)?.kind === "consumer")
+    // Phase 13.46 — accept consumer_*, not just literal "consumer".
+    .filter((n) => {
+      const kind = nodes.find((x) => x.id === n.nodeId)?.kind;
+      return kind ? isConsumerKind(kind) : false;
+    })
     .map((n) => n.pressureAtNode_mpa);
   const minConsumerP = consumerPressures.length
     ? Math.min(...consumerPressures)
@@ -542,7 +558,8 @@ export function runFullCalc(
     // doesn't undercut the metric for the actual end users.
     const consumerOnlyTemps: number[] = [];
     for (const n of nodes) {
-      if (n.kind === "consumer") {
+      // Phase 13.46 — accept consumer_*, not just literal "consumer".
+      if (isConsumerKind(n.kind)) {
         const t = nodeSupplyT.get(n.id);
         if (typeof t === "number") consumerOnlyTemps.push(t);
       }
@@ -603,7 +620,8 @@ function sizePump(
   pipeResults: PipeResult[],
   settings: ProjectSettings,
 ) {
-  const sourceId = nodes.find((n) => n.kind === "source")?.id ?? nodes[0]?.id;
+  // Phase 13.46 — accept source_*, not just literal "source".
+  const sourceId = nodes.find((n) => isSourceKind(n.kind))?.id ?? nodes[0]?.id;
   if (!sourceId) return undefined;
 
   // Partition pipes by circuit so supply-tree and return-tree are walked
@@ -630,7 +648,8 @@ function sizePump(
     if (visited.has(id)) return;
     visited.add(id);
     const node = nodes.find((n) => n.id === id);
-    if (node?.kind === "consumer") supplyDpByConsumer.set(id, accum);
+    // Phase 13.46 — accept consumer_*, not just literal "consumer".
+    if (node && isConsumerKind(node.kind)) supplyDpByConsumer.set(id, accum);
     for (const p of supplyAdj.get(id) ?? []) {
       const r = resultByPipe.get(p.id);
       if (!r) continue;
