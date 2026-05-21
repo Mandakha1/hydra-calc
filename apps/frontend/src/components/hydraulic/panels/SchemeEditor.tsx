@@ -312,7 +312,14 @@ export function SchemeEditor({ readOnly }: Props) {
    *
    * Activated via right-click in addPipe mode → floating picker panel.
    */
-  const [extraCircuits, setExtraCircuits] = useState<Set<PipeCircuit>>(new Set());
+  // Phase 13.47 — engineer report: "Халаалтын систем эь Өгөх болон
+  // Буцах гэсэн 2 Шугамтай байдаг". Default `extraCircuits` to
+  // include `heating_return` so every drawn heating pipe becomes a
+  // supply+return pair (Т1 + Т2). The engineer can still uncheck
+  // the return via the circuit picker if they want a single line.
+  const [extraCircuits, setExtraCircuits] = useState<Set<PipeCircuit>>(
+    () => new Set(["heating_return"]),
+  );
   /** Phase 13.18 — circuit-picker popup position (cursor location). */
   const [circuitPickerAt, setCircuitPickerAt] = useState<{ x: number; y: number } | null>(null);
 

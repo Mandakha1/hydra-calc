@@ -180,3 +180,118 @@ describe("Phase 13.46 — modern picker kinds in the calc pipeline", () => {
     }
   });
 });
+
+/* ─── Phase 13.47 — supply + return pipe pair ─────────────────── */
+
+describe("Phase 13.47 — supply + return pipe pair", () => {
+  function buildSupplyReturnPair(): {
+    nodes: SchemeNode[];
+    pipes: SchemePipe[];
+  } {
+    // УДДТ → Орон сууц with both supply and return pipes drawn
+    // in the SAME direction (Phase 13.18 "Халаалт ×2" convention).
+    const nodes: SchemeNode[] = [
+      { id: "src", kind: "source_substation", label: "УДДТ-1", x: 0, y: 0 },
+      {
+        id: "c1",
+        kind: "consumer_apartment",
+        label: "ОС-1",
+        x: 100,
+        y: 0,
+        heatLoad_w: 80_000,
+      },
+    ];
+    const pipes: SchemePipe[] = [
+      {
+        id: "p_supply",
+        fromNodeId: "src",
+        toNodeId: "c1",
+        materialKey: "steel_aged",
+        dn: 65,
+        length_m: 100,
+        circuit: "heating_supply",
+      },
+      {
+        id: "p_return",
+        fromNodeId: "src",
+        toNodeId: "c1",
+        materialKey: "steel_aged",
+        dn: 65,
+        length_m: 100,
+        circuit: "heating_return",
+      },
+    ];
+    return { nodes, pipes };
+  }
+
+  it("return pipe inherits G from matching supply pipe (same direction)", () => {
+    const { nodes, pipes } = buildSupplyReturnPair();
+    const results = computePipeFlows(nodes, pipes, BASE_SETTINGS);
+    const supply = results.find((r) => r.pipeId === "p_supply")!;
+    const ret = results.find((r) => r.pipeId === "p_return")!;
+    // Mass conservation: G_return ≡ G_supply.
+    expect(ret.G_kg_s).toBeCloseTo(supply.G_kg_s, 6);
+    // Both have real, non-sentinel flow.
+    expect(ret.G_kg_s).toBeGreaterThan(0.1);
+    expect(supply.G_kg_s).toBeGreaterThan(0.1);
+    // Same DN + same G → same velocity.
+    expect(ret.v_m_s).toBeCloseTo(supply.v_m_s, 4);
+  });
+
+  it("return pipe drawn ANTI-parallel (consumer → source) also inherits G", () => {
+    const { nodes, pipes } = buildSupplyReturnPair();
+    // Flip the return pipe's endpoints so it goes consumer → source.
+    pipes[1]!.fromNodeId = "c1";
+    pipes[1]!.toNodeId = "src";
+    const results = computePipeFlows(nodes, pipes, BASE_SETTINGS);
+    const supply = results.find((r) => r.pipeId === "p_supply")!;
+    const ret = results.find((r) => r.pipeId === "p_return")!;
+    expect(ret.G_kg_s).toBeCloseTo(supply.G_kg_s, 6);
+    expect(ret.v_m_s).toBeCloseTo(supply.v_m_s, 4);
+  });
+
+  it("supply-only adjacency means duplicate return pipe doesn't double-count load", () => {
+    const { nodes, pipes } = buildSupplyReturnPair();
+    const results = computePipeFlows(nodes, pipes, BASE_SETTINGS);
+    const supply = results.find((r) => r.pipeId === "p_supply")!;
+    // 80 kW at 25 °C ΔT → ~0.76 kg/s. A pre-13.47 bug would have
+    // walked through BOTH pipes from УДДТ in `adj[src]`, double-
+    // counting the consumer load → ~1.52 kg/s. Assert the result
+    // lands in the correct single-count band.
+    expect(supply.G_kg_s).toBeGreaterThan(0.6);
+    expect(supply.G_kg_s).toBeLessThan(1.0);
+  });
+
+  it("return pipe falls back to legacy walk when no matching supply exists", () => {
+    // Pathological project: engineer drew ONLY a return pipe by
+    // mistake. The solver should still produce a non-zero flow
+    // for it (legacy downstream-walk fallback).
+    const nodes: SchemeNode[] = [
+      { id: "src", kind: "source_substation", label: "УДДТ-1", x: 0, y: 0 },
+      {
+        id: "c1",
+        kind: "consumer_apartment",
+        label: "ОС-1",
+        x: 100,
+        y: 0,
+        heatLoad_w: 40_000,
+      },
+    ];
+    const pipes: SchemePipe[] = [
+      {
+        id: "p_return_only",
+        fromNodeId: "src",
+        toNodeId: "c1",
+        materialKey: "steel_aged",
+        dn: 65,
+        length_m: 100,
+        circuit: "heating_return",
+      },
+    ];
+    const results = computePipeFlows(nodes, pipes, BASE_SETTINGS);
+    const ret = results.find((r) => r.pipeId === "p_return_only")!;
+    // Fallback walks downstream of toNodeId (c1) → picks up the
+    // consumer's 40 kW load → produces real G.
+    expect(ret.G_kg_s).toBeGreaterThan(0.1);
+  });
+});
