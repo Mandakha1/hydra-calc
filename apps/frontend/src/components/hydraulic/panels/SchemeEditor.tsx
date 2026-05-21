@@ -3932,36 +3932,79 @@ export function SchemeEditor({ readOnly }: Props) {
                       strokeDasharray={isSelected ? undefined : "5 3"}
                       pointerEvents="all"
                     />
-                    {b.label && (
-                      <text
-                        x={centroid.x}
-                        y={centroid.y - 4}
-                        fontSize={13}
-                        fontWeight={600}
-                        textAnchor="middle"
-                        fill="var(--fg)"
-                        stroke="white"
-                        strokeWidth={3}
-                        paintOrder="stroke"
-                        pointerEvents="none"
-                      >
-                        {b.label}
-                      </text>
-                    )}
-                    <text
-                      x={centroid.x}
-                      y={centroid.y + 12}
-                      fontSize={10}
-                      textAnchor="middle"
-                      fill="var(--fg-muted)"
-                      fontFamily="var(--font-mono)"
-                      stroke="white"
-                      strokeWidth={2.5}
-                      paintOrder="stroke"
-                      pointerEvents="none"
-                    >
-                      {area_m2.toFixed(0)}м²{floorsStr}
-                    </text>
+                    {/* Phase 13.41 — engineer screenshot: text dwarfed
+                        OSM buildings on the map. Three fixes:
+                        (a) divide font size + offsets by canvas zoom so
+                            labels stay at constant SCREEN size regardless
+                            of how far the engineer zoomed in;
+                        (b) hide the label/area pair entirely when the
+                            polygon's smaller bbox dimension is too small
+                            to fit text without overlapping;
+                        (c) strip auto-generated "OSM-NNNNN" prefixes —
+                            those were Overpass-import fallbacks for
+                            unnamed buildings and have no engineering
+                            meaning. */}
+                    {(() => {
+                      const bboxMinPx = Math.min(xMax - xMin, yMax - yMin);
+                      // SVG outer group is scale(zoom) — divide by zoom
+                      // so 11 px renders as 11 SCREEN px (not 11×zoom).
+                      const labelFontPx = 11 / Math.max(zoom, 0.1);
+                      const areaFontPx = 9 / Math.max(zoom, 0.1);
+                      const labelOffsetY = 3 / Math.max(zoom, 0.1);
+                      const areaOffsetY = 11 / Math.max(zoom, 0.1);
+                      const strokeWidthLabel = 3 / Math.max(zoom, 0.1);
+                      const strokeWidthArea = 2.5 / Math.max(zoom, 0.1);
+                      // Suppress entirely when polygon is < 24 SCREEN px
+                      // (the labels would otherwise spill outside).
+                      const minBboxScreen = 24;
+                      const visible = bboxMinPx * zoom >= minBboxScreen;
+                      if (!visible) return null;
+                      const rawLabel = b.label ?? "";
+                      // Strip the Overpass fallback "OSM-12345..." prefix
+                      // — display nothing when only the OSM id is set
+                      // (engineer can type a real label in Inspector).
+                      const displayLabel = /^OSM-\d+$/.test(rawLabel) ? "" : rawLabel;
+                      // Hide "0м²" — area math returned ~0 because the
+                      // polygon is tiny in metres; the readout is noise.
+                      const showArea = area_m2 >= 1;
+                      return (
+                        <>
+                          {displayLabel && (
+                            <text
+                              x={centroid.x}
+                              y={centroid.y - labelOffsetY}
+                              fontSize={labelFontPx}
+                              fontWeight={600}
+                              textAnchor="middle"
+                              fill="var(--fg)"
+                              stroke="white"
+                              strokeWidth={strokeWidthLabel}
+                              paintOrder="stroke"
+                              pointerEvents="none"
+                            >
+                              {displayLabel}
+                            </text>
+                          )}
+                          {(showArea || floorsStr) && (
+                            <text
+                              x={centroid.x}
+                              y={centroid.y + areaOffsetY}
+                              fontSize={areaFontPx}
+                              textAnchor="middle"
+                              fill="var(--fg-muted)"
+                              fontFamily="var(--font-mono)"
+                              stroke="white"
+                              strokeWidth={strokeWidthArea}
+                              paintOrder="stroke"
+                              pointerEvents="none"
+                            >
+                              {showArea ? `${area_m2.toFixed(0)}м²` : ""}
+                              {floorsStr}
+                            </text>
+                          )}
+                        </>
+                      );
+                    })()}
                     {/* Phase 13.3 — per-vertex drag handles. Only rendered
                         when the building is the active single selection
                         (avoids clutter when many buildings + multi-select).
@@ -5415,26 +5458,38 @@ export function SchemeEditor({ readOnly }: Props) {
                   if (num == null) return null;
                   const dp = displayPos(n);
                   const badge = nodeNumberBadge(num);
-                  // Small offset up-right of the symbol so it doesn't
-                  // overlap the engineer-set label below.
-                  const bx = dp.x + 14;
-                  const by = dp.y - 14;
+                  // Phase 13.41 — engineer screenshot showed black "02"
+                  // / "08" badges dominating small OSM buildings on the
+                  // map. The SVG outer group has scale(zoom), so every
+                  // pixel value below is divided by zoom to keep the
+                  // badge at constant SCREEN size regardless of how far
+                  // the engineer zoomed in.
+                  const z = Math.max(zoom, 0.1);
+                  const offX = 12 / z;
+                  const offY = 12 / z;
+                  const halfW = 8 / z;
+                  const halfH = 6.5 / z;
+                  const rx = 2.5 / z;
+                  const fontPx = 8.5 / z;
+                  const baselineDy = 2.5 / z;
+                  const bx = dp.x + offX;
+                  const by = dp.y - offY;
                   return (
                     <g key={`nn_${n.id}`} pointerEvents="none">
                       <rect
-                        x={bx - 9}
-                        y={by - 8}
-                        width={18}
-                        height={14}
-                        rx={3}
+                        x={bx - halfW}
+                        y={by - halfH}
+                        width={halfW * 2}
+                        height={halfH * 2}
+                        rx={rx}
                         fill="#222"
                         opacity={0.85}
                       />
                       <text
                         x={bx}
-                        y={by + 3}
+                        y={by + baselineDy}
                         textAnchor="middle"
-                        fontSize={9.5}
+                        fontSize={fontPx}
                         fill="white"
                         fontWeight={700}
                       >
