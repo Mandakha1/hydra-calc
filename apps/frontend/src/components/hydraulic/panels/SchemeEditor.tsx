@@ -187,6 +187,8 @@ import {
 import { projectPointOnPolyline } from "../scheme/projectPointOnPolyline";
 // Phase 13.25 — magistral / branch classification.
 import { classifyPipeRoles, pipeRoleBadge } from "../scheme/classifyPipeRoles";
+// Phase 13.39 — bend deflection-angle labels on canvas.
+import { bendDeflectionDeg, bendOutwardBisector } from "../scheme/bendPoints";
 import { TEMP_SCHEDULES } from "shared";
 import { SPEED_BANDS, PRESSURE_BANDS, colorForValue } from "../colorBands";
 import type {
@@ -4886,6 +4888,44 @@ export function SchemeEditor({ readOnly }: Props) {
                           setBendPointDrag({ pipeId: p.id, index: i });
                         }}
                       />
+                    );
+                  })}
+                  {/* Phase 13.39 — deflection-angle label at each
+                      intermediate vertex of the rendered polyline.
+                      Engineer report: "Шугам хэдэн Градус эргэж
+                      байгааг үураг дээр яг тухайн буланд нь тоогоор
+                      харуулмаар байна". The label sits on the OUTSIDE
+                      of the bend (outward bisector offset) so it
+                      doesn't overlap the pipe stroke or the small
+                      drag handle. Skip near-straight vertices (< 5°)
+                      so ortho90 auto-corners that happen to be tiny
+                      step-throughs don't clutter the canvas. */}
+                  {points.length > 2 && points.slice(1, -1).map((bend, i) => {
+                    const prev = points[i]!;
+                    const next = points[i + 2]!;
+                    const deg = bendDeflectionDeg(prev, bend, next);
+                    if (deg < 5) return null;
+                    const bis = bendOutwardBisector(prev, bend, next);
+                    const offsetPx = 16;
+                    const lx = bend.x + bis.x * offsetPx;
+                    const ly = bend.y + bis.y * offsetPx;
+                    return (
+                      <text
+                        key={`bend-deg-${p.id}-${i}`}
+                        x={lx}
+                        y={ly}
+                        fontSize={10}
+                        textAnchor="middle"
+                        fontFamily="var(--font-mono)"
+                        fill="var(--fg-dim, #555)"
+                        stroke="white"
+                        strokeWidth={2.5}
+                        paintOrder="stroke"
+                        style={{ pointerEvents: "none", userSelect: "none" }}
+                        data-testid={`bend-deg-${p.id}-${i}`}
+                      >
+                        {Math.round(deg)}°
+                      </text>
                     );
                   })}
                   {/* Phase 13.21 — engineer-facing multi-line label

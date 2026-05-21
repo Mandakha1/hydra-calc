@@ -86,14 +86,49 @@ export function haversineMeters(a: LatLon, b: LatLon): number {
 /**
  * Convenience for the SchemePipe → length_m wiring (Phase 5D).
  *
- * @returns The Haversine length in metres when BOTH endpoints have geo
- *   coords set, OR null if at least one endpoint lacks a position (in
- *   which case the manual length_m field is the source of truth).
+ * Phase 13.39 — engineer report: "Хоолой зураад эхлэх цэг нь
+ * жишээлбэл УДДТ дараа нь шугам УДДТ ээс чигээрээ явж байгаад
+ * Юм уу зүүн тийм булан эргэлээ үүнийг манай систем 90 градус 45
+ * гэх мэтээр булан эргэсэн гэж ойлгоод гидравлик тооцоонд оруулж
+ * байгаа юу". The legacy implementation was straight node-to-node
+ * Haversine, ignoring intermediate bend points — so when an
+ * engineer routed a pipe around a building (УДДТ → bend → bend →
+ * УДДТ), the hydraulic length was UNDER-counted by the corner
+ * detour. Phase 13.39 walks the full polyline: from → bend₁ → … →
+ * bendₙ → to, summing Haversine on each segment.
+ *
+ * @param bendPoints Optional intermediate vertices (Phase 12.3
+ *   SchemePipe.bendPoints). When provided, EACH bend must have
+ *   `lat` AND `lon` for the polyline length to be computed.
+ *   Missing geo on any bend → returns null (caller falls back to
+ *   manual length_m). When omitted or empty, behaves like the
+ *   legacy node-to-node Haversine.
+ *
+ * @returns The polyline Haversine length in metres when geo data
+ *   is complete, OR null otherwise.
  */
 export function pipeLengthFromGeometry(
   from: { geo?: { lat: number; lon: number } } | null | undefined,
   to: { geo?: { lat: number; lon: number } } | null | undefined,
+  bendPoints?: ReadonlyArray<{ lat?: number; lon?: number }>,
 ): number | null {
   if (!from?.geo || !to?.geo) return null;
-  return haversineMeters(from.geo, to.geo);
+  if (!bendPoints || bendPoints.length === 0) {
+    return haversineMeters(from.geo, to.geo);
+  }
+  // All bend points must carry geo for the polyline length to make
+  // sense; otherwise we'd silently mix geo-anchored segments with
+  // scheme-pixel ones and produce nonsense metres. Engineer falls
+  // back to manual length_m via the null return.
+  let prev: { lat: number; lon: number } = from.geo;
+  let total = 0;
+  for (const bp of bendPoints) {
+    if (typeof bp.lat !== "number" || typeof bp.lon !== "number") {
+      return null;
+    }
+    total += haversineMeters(prev, { lat: bp.lat, lon: bp.lon });
+    prev = { lat: bp.lat, lon: bp.lon };
+  }
+  total += haversineMeters(prev, to.geo);
+  return total;
 }

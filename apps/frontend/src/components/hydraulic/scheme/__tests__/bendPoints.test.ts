@@ -11,6 +11,8 @@ import {
   addBendPoint,
   removeBendPoint,
   moveBendPoint,
+  bendDeflectionDeg,
+  bendOutwardBisector,
 } from "../bendPoints";
 import type { SchemePipe, SchemeNode } from "../../hydraulicTypes";
 
@@ -287,6 +289,87 @@ describe("moveBendPoint", () => {
   it("returns same array if index out of range", () => {
     const pipe = makePipe({ bendPoints: [{ x: 100, y: 0 }] });
     expect(moveBendPoint(pipe, 99, { x: 0, y: 0 })).toEqual(pipe.bendPoints);
+  });
+});
+
+/* ─── bendDeflectionDeg (Phase 13.39) ──────────────────────────── */
+
+describe("bendDeflectionDeg — Phase 13.39", () => {
+  it("returns 0 for a straight line (collinear points)", () => {
+    const d = bendDeflectionDeg({ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 200, y: 0 });
+    expect(d).toBeCloseTo(0, 5);
+  });
+
+  it("returns 90 for a right-angle turn", () => {
+    // East 100 → then turn → North 100
+    const d = bendDeflectionDeg({ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 });
+    expect(d).toBeCloseTo(90, 4);
+  });
+
+  it("returns 45 for a 45° bend", () => {
+    // East 100 → then turn → NE 100 (deflection 45°)
+    const d = bendDeflectionDeg({ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 200, y: 100 });
+    expect(d).toBeCloseTo(45, 4);
+  });
+
+  it("returns 180 for a U-turn (folds back)", () => {
+    // East 100 → then turn → West 100
+    const d = bendDeflectionDeg({ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 0 });
+    expect(d).toBeCloseTo(180, 4);
+  });
+
+  it("returns 0 for degenerate input (zero-length segment)", () => {
+    // Three coincident points
+    const d = bendDeflectionDeg({ x: 50, y: 50 }, { x: 50, y: 50 }, { x: 50, y: 50 });
+    expect(d).toBe(0);
+  });
+
+  it("is direction-invariant — reversing the polyline gives the same angle", () => {
+    const forward = bendDeflectionDeg(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    );
+    const reverse = bendDeflectionDeg(
+      { x: 100, y: 100 },
+      { x: 100, y: 0 },
+      { x: 0, y: 0 },
+    );
+    expect(reverse).toBeCloseTo(forward, 5);
+  });
+});
+
+/* ─── bendOutwardBisector (Phase 13.39) ────────────────────────── */
+
+describe("bendOutwardBisector — Phase 13.39", () => {
+  it("points into the convex corner for a right-angle turn east→north", () => {
+    // Pipe enters going east, leaves going north. Convex side is SOUTH-EAST.
+    const b = bendOutwardBisector(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    );
+    expect(b.x).toBeCloseTo(-Math.SQRT1_2, 4);
+    expect(b.y).toBeCloseTo(-Math.SQRT1_2, 4);
+  });
+
+  it("returns (0, 0) for a straight pipe (no real bend)", () => {
+    const b = bendOutwardBisector({ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 });
+    expect(b).toEqual({ x: 0, y: 0 });
+  });
+
+  it("returns (0, 0) for degenerate / zero-length input", () => {
+    const b = bendOutwardBisector({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 100, y: 0 });
+    expect(b).toEqual({ x: 0, y: 0 });
+  });
+
+  it("returns a unit-length vector for any real bend", () => {
+    const b = bendOutwardBisector(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 200, y: 100 },
+    );
+    expect(Math.hypot(b.x, b.y)).toBeCloseTo(1, 4);
   });
 });
 

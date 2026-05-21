@@ -887,7 +887,10 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
   // a click-to-apply shortcut.
   const fromNode = pipe ? nodes.find((n) => n.id === pipe.fromNodeId) : null;
   const toNode = pipe ? nodes.find((n) => n.id === pipe.toNodeId) : null;
-  const geoLength = pipeLengthFromGeometry(fromNode, toNode);
+  // Phase 13.39 — include bend-points polyline so the Inspector's
+  // "🔒 авто" length matches what the solver actually uses (was
+  // straight node-to-node, missing every corner detour).
+  const geoLength = pipeLengthFromGeometry(fromNode, toNode, pipe?.bendPoints);
   const lengthMatches =
     geoLength !== null && Math.abs(geoLength - pipe.length_m) < 0.5;
   return (

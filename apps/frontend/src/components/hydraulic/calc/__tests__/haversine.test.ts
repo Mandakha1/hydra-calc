@@ -110,4 +110,45 @@ describe("pipeLengthFromGeometry — Phase 5B.1c", () => {
     expect(d!).toBeGreaterThan(108);
     expect(d!).toBeLessThan(115);
   });
+
+  /* ── Phase 13.39 — bendpoints polyline ───────────────────────── */
+
+  it("Phase 13.39 — sums Haversine through bend points when supplied", () => {
+    // Square detour: A → bend1 (north) → bend2 (north-east) → B (east).
+    // Straight A→B would be the diagonal (~157 m); the L-detour is ~222 m.
+    const a = { geo: { lat: 47.9184, lon: 106.9176 } };
+    const b = { geo: { lat: 47.9194, lon: 106.9189 } };
+    const straight = pipeLengthFromGeometry(a, b);
+    const bends = [
+      { lat: 47.9194, lon: 106.9176 }, // straight north of A
+    ];
+    const polyline = pipeLengthFromGeometry(a, b, bends);
+    expect(straight).not.toBeNull();
+    expect(polyline).not.toBeNull();
+    expect(polyline!).toBeGreaterThan(straight!);
+    // Sanity range: each leg is ~111 m, total ~211 m (give or take
+    // 5 % for cos(lat) skew on the east leg).
+    expect(polyline!).toBeGreaterThan(180);
+    expect(polyline!).toBeLessThan(260);
+  });
+
+  it("Phase 13.39 — returns null when any bend point lacks geo coords", () => {
+    // Mixed geo + scheme-pixel bend points → cannot produce metres.
+    // Engineer falls back to manual length_m.
+    const a = { geo: { lat: 47.9184, lon: 106.9176 } };
+    const b = { geo: { lat: 47.9194, lon: 106.9189 } };
+    const bends = [
+      { lat: 47.9189, lon: 106.9180 }, // geo present
+      { /* x/y only */ } as { lat?: number; lon?: number },
+    ];
+    expect(pipeLengthFromGeometry(a, b, bends)).toBeNull();
+  });
+
+  it("Phase 13.39 — empty bend array is identical to legacy node-to-node", () => {
+    const a = { geo: { lat: 47.9184, lon: 106.9176 } };
+    const b = { geo: { lat: 47.9194, lon: 106.9176 } };
+    const legacy = pipeLengthFromGeometry(a, b);
+    const empty = pipeLengthFromGeometry(a, b, []);
+    expect(empty).toBe(legacy);
+  });
 });
