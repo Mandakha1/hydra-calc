@@ -864,6 +864,18 @@ export function SchemeEditor({ readOnly }: Props) {
     const kindDef = getNodeKind(pendingKind);
     const id = uid(pendingKind.split("_")[0] ?? "n");
     const geo = opts?.geo ?? (showMap ? svgToLatLon(pt) : null);
+    // Phase 13.34 — strip width_m / height_m / floors from the
+    // kind defaults so the node renders as a small symbol, NOT a
+    // huge BuildingPlanShape rectangle. Engineer report: tag шинж
+    // дүрс барилгаасаа том. The building polygon (when drawn) is
+    // the engineer's intended visual outline; a duplicate rectangle
+    // from the node clutters the canvas. Heat load + pressure
+    // defaults are preserved.
+    const { width_m: _wm, height_m: _hm, floors: _fl, ...defaultsNoDims } =
+      kindDef?.defaults ?? {};
+    void _wm;
+    void _hm;
+    void _fl;
     addNode({
       id,
       kind: pendingKind,
@@ -871,7 +883,7 @@ export function SchemeEditor({ readOnly }: Props) {
       x: Math.round(pt.x),
       y: Math.round(pt.y),
       ...(geo ? { geo: { lat: geo.lat, lon: geo.lon } } : {}),
-      ...(kindDef?.defaults ?? {}),
+      ...defaultsNoDims,
     });
     select({ kind: "node", id });
     setShowPalette(null);
@@ -5960,8 +5972,19 @@ export function SchemeEditor({ readOnly }: Props) {
         const applyKind = (kind: string) => {
           const def = getNodeKind(kind);
           if (!def) return;
-          // Pull label + defaults from nodeCatalog so Inspector
-          // immediately shows realistic heat-load / dimensions.
+          // Pull label + load + pressure defaults from nodeCatalog so
+          // Inspector immediately shows realistic heat load.
+          // Phase 13.34 — engineer report: "Энэ юу вэ цэснээс УДДТ /
+          // Орон сууц гэж сонгоход тэг ний дүрс хэт том буюу
+          // барилгаасаа том байна." Root cause: this picker used to
+          // also seed `width_m / height_m / floors` from kind defaults
+          // (e.g. consumer_apartment → 30×12m, 9 floors). With those
+          // set, the renderer's `isBuilding` check at line 5247 fires
+          // → BuildingPlanShape renders a 30×12m rectangle bigger
+          // than the engineer's drawn polygon. Fix: drop the
+          // dimension defaults so the node renders as a small symbol
+          // (Phase 13.15 capped at the polygon's min dim if tagged).
+          // Engineer sets real dims via Inspector → manually meaningful.
           const sameKindCount = nodes.filter((n) => n.kind === kind).length;
           const label = `${def.shortLabel}-${sameKindCount + 1}`;
           updateNode(node.id, {
@@ -5969,9 +5992,10 @@ export function SchemeEditor({ readOnly }: Props) {
             label,
             ...(def.defaults?.heatLoad_w ? { heatLoad_w: def.defaults.heatLoad_w } : {}),
             ...(def.defaults?.requiredPressure_mpa ? { requiredPressure_mpa: def.defaults.requiredPressure_mpa } : {}),
-            ...(def.defaults?.width_m ? { width_m: def.defaults.width_m } : {}),
-            ...(def.defaults?.height_m ? { height_m: def.defaults.height_m } : {}),
-            ...(def.defaults?.floors ? { floors: def.defaults.floors } : {}),
+            // Phase 13.34 — DELIBERATELY no width_m / height_m / floors
+            // here. Building polygon (when drawn) already gives the
+            // engineer the visual outline; a duplicate large rectangle
+            // from BuildingPlanShape just clutters the canvas.
           });
           setPendingEndpointPicker(null);
           setToast({
