@@ -330,6 +330,17 @@ export function SchemeEditor({ readOnly }: Props) {
     length_m: number;
   } | null>(null);
   /**
+   * Phase 13.33 — engineer report: simplify the side palette to just
+   * "Барилга зурах". The full 6-category palette (Эх үүсвэр /
+   * Хэрэглэгч / etc.) collapses behind a "▾ Дэлгэрэнгүй" toggle so
+   * power users + legacy tests still have access. Default = hidden
+   * to match the engineer's mental model: building is the primary
+   * entity; pipes attach to buildings; node kinds inferred from
+   * the polygon the pipe endpoint lands inside.
+   */
+  const [showAdvancedPalette, setShowAdvancedPalette] = useState(false);
+
+  /**
    * Phase 13.32 — engineer report: "J-10, J-4 гэх мэт энэ захын
    * цэгүүд чинь өөрөө хэрэглэгч шүү дээ. Шугамын эцсийн цэгүүд нь
    * Станц / УДДТ / Зуух / Орон сууц / Эмнэлэг / Сургууль / Цэцэрлэг
@@ -3029,7 +3040,19 @@ export function SchemeEditor({ readOnly }: Props) {
             icon="↖"
             label="Сонгох"
           />
-          {CATEGORIES.map((cat) => (
+          {/* Phase 13.33 — engineer report: "Эхлээд зүүн талд байгаа
+              Хэрэглэгч болон Үүсвэрийн Цэсийг устгаж зүгээр л Барилга
+              зурах гэсэн нэршилтэй болгоно."
+              The 6-category palette (Эх үүсвэр / Хэрэглэгч / Худаг /
+              Хаалт / Холбоос / Мэдрэгч) is collapsed behind a
+              "Дэлгэрэнгүй" toggle. The default engineer flow is:
+              draw a building (one prominent button below) + draw
+              pipes that land INSIDE the building. Node kinds get
+              inferred from the building polygon the pipe endpoint
+              click lands in. The category palette stays accessible
+              for engineers who want to drop standalone nodes
+              (junctions / valves / sensors) without a building. */}
+          {showAdvancedPalette && CATEGORIES.map((cat) => (
             <SideBtn
               key={cat.key}
               active={mode === "addNode" && showPalette === cat.key}
@@ -3042,17 +3065,30 @@ export function SchemeEditor({ readOnly }: Props) {
               color={cat.color}
             />
           ))}
-          <div style={{ borderTop: "1px solid var(--border-soft)", margin: "4px 0" }} />
           <SideBtn
             active={mode === "drawBuilding"}
             onClick={() => {
               setMode("drawBuilding");
               setPolygon([]);
               setShowPalette(null);
+              // Phase 13.33 — default pendingKind so the polygon's
+              // taggedAsKind label says "Орон сууц"; engineer changes
+              // via Inspector after the polygon is drawn.
+              setPendingKind("consumer_apartment");
             }}
             icon="▱"
-            label="Барилга"
+            label="Барилга зурах"
             color="var(--success)"
+          />
+          {/* Phase 13.33 — advanced palette toggle. Default hidden;
+              power users + Inspector kind dropdown still have access
+              to all NODE_KINDS via this expansion. */}
+          <SideBtn
+            active={showAdvancedPalette}
+            onClick={() => setShowAdvancedPalette((v) => !v)}
+            icon={showAdvancedPalette ? "▾" : "▸"}
+            label={showAdvancedPalette ? "Цэс хаах" : "Бүх багаж"}
+            title="Хэрэглэгч / Эх үүсвэр / Хаалт / ... — бусад зангилаа байрлуулагч цэс"
           />
           {/* Phase 6.8.7 — quick-fill "standard apartment" template.
               One click places a 5-storey 20×30 m polygon at the
@@ -3790,34 +3826,96 @@ export function SchemeEditor({ readOnly }: Props) {
                     key={b.id}
                     data-testid={`building-${b.id}`}
                     onMouseDown={(e) => {
-                      // Phase 13.8 → DISABLED in Phase 13.31 per engineer:
-                      // "Эх үүсвэр болон бусад барилга газрын зураг
-                      // дээрээс давхарлаж зурдаг хэвээрээ байх ёстой,
-                      // зөвхөн шугамтай автоматаар холбогдхыг болиулна."
+                      // Phase 13.33 — engineer report: "Барилга
+                      // зураад дээр нь шугам зурах боломжтой болгох."
                       //
-                      // Polygons remain as decorative visual outlines on
-                      // top of the map (Phase 13.1 drawBuilding + auto-
-                      // tag still alive — engineer expects to see the
-                      // building shape with its label). What we DROP is
-                      // the convenience that any click on the polygon
-                      // area in addPipe mode auto-anchored at the tagged
-                      // centroid node. Engineer now MUST click the
-                      // explicit small NODE icon inside the polygon to
-                      // start / end a pipe — the connection point is
-                      // always an explicit engineer choice.
-                      //
-                      // Fall through to the select / drawBuilding
-                      // handlers below so polygon click still selects
-                      // the building (Inspector inspect + Phase 13.2
-                      // drag) when NOT in addPipe mode.
+                      // Re-enables the polygon-click path for addPipe
+                      // mode, but with the CORRECTED behavior: instead
+                      // of auto-anchoring at the building's centroid
+                      // tagged node (Phase 13.8 / 13.31 problem), the
+                      // click point itself defines the connection node
+                      // position INSIDE the polygon. The new node
+                      // inherits the building's KIND (consumer_*) +
+                      // heatLoad so the calc engine sees the building
+                      // as a consumer/source from the engineer's
+                      // chosen connection point.
                       if (mode === "addPipe") {
-                        // Hint the engineer where to actually click —
-                        // polygon click is ignored in this mode now.
-                        if (b.taggedAsNodeId) {
+                        e.stopPropagation();
+                        const clickPt = snap(toSvg(e));
+                        // Use existing tagged node if present (one
+                        // connection per building default), else
+                        // create a fresh node AT the click point.
+                        let connId = b.taggedAsNodeId;
+                        if (!connId) {
+                          connId = uid("c");
+                          const buildingKind = b.taggedAsKind ?? "consumer_apartment";
+                          const def = getNodeKind(buildingKind);
+                          const llConn = showMap ? svgToLatLon(clickPt) : null;
+                          addNode({
+                            id: connId,
+                            kind: buildingKind,
+                            label: b.label || `${def?.shortLabel ?? "Барилга"}-1`,
+                            x: Math.round(clickPt.x),
+                            y: Math.round(clickPt.y),
+                            ...(typeof b.heatLoad_kw === "number" && b.heatLoad_kw > 0
+                              ? { heatLoad_w: Math.round(b.heatLoad_kw * 1000) }
+                              : def?.defaults?.heatLoad_w
+                                ? { heatLoad_w: def.defaults.heatLoad_w }
+                                : {}),
+                            ...(def?.defaults?.requiredPressure_mpa
+                              ? { requiredPressure_mpa: def.defaults.requiredPressure_mpa }
+                              : {}),
+                            ...(llConn ? { geo: { lat: llConn.lat, lon: llConn.lon } } : {}),
+                          });
+                          // Tag the polygon → node link so subsequent
+                          // pipe clicks on the same polygon reuse this
+                          // connection point.
+                          useHydraulicStore.setState((s) => ({
+                            buildings: (s.buildings ?? []).map((bb) =>
+                              bb.id === b.id ? { ...bb, taggedAsNodeId: connId } : bb,
+                            ),
+                          }));
+                        }
+                        // Pipe start / commit using the (existing or
+                        // freshly-created) connection node.
+                        if (!pipeFrom) {
+                          setPipeFrom(connId);
+                          setPipeBendPts([]);
                           setToast({
-                            text: `${b.label} — шугамыг холбохын тулд дотор байх жижиг зангилаа дээр дарна уу`,
+                            text: `${b.label} — эх цэг тогтоосон`,
                             key: Date.now(),
                             tone: "neutral",
+                          });
+                        } else if (pipeFrom !== connId) {
+                          const fromNode = nodes.find((n) => n.id === pipeFrom);
+                          const toNode = nodes.find((n) => n.id === connId);
+                          if (!fromNode || !toNode) return;
+                          const polyline = displayPipePolyline(
+                            fromNode,
+                            pipeBendPts,
+                            toNode,
+                            projectorCtx,
+                          );
+                          const measuredLen = pxToM(polylineLengthPx(polyline));
+                          const manualLen = parseFloat(pipeLengthInput);
+                          const length_m = Number.isFinite(manualLen) && manualLen > 0 ? manualLen : measuredLen;
+                          const nPipes = commitPipeWithCircuits({
+                            fromNodeId: pipeFrom,
+                            toNodeId: connId,
+                            length_m,
+                            bendPoints: pipeBendPts,
+                          });
+                          setPipeFrom(null);
+                          setPipeBendPts([]);
+                          setPipeLengthInput("");
+                          setMode("select");
+                          setToast({
+                            text:
+                              nPipes > 1
+                                ? `${nPipes} шугам үүсгэв (${b.label})`
+                                : `Шугам үүсгэв (${b.label})`,
+                            key: Date.now(),
+                            tone: "success",
                           });
                         }
                         return;

@@ -168,6 +168,8 @@ describe("BUG #9 — NorthArrow render position (Phase 6.8.5)", () => {
 describe("BUG #2 — tooltip persistence between palettes (Phase 6.8.5)", () => {
   it("palette div carries the active showPalette as its React key", () => {
     render(<SchemeEditor />);
+    // Phase 13.33 — expand collapsed legacy palette to expose categories.
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     fireEvent.click(screen.getByTitle("Эх үүсвэр"));
     const palette = document.querySelector('[data-testid="scheme-palette"]');
     expect(palette).not.toBeNull();
@@ -188,6 +190,7 @@ describe("BUG #2 — tooltip persistence between palettes (Phase 6.8.5)", () => 
 
   it("clicking different categories shows different palette content (regression for `key` working)", () => {
     render(<SchemeEditor />);
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     fireEvent.click(screen.getByTitle("Эх үүсвэр"));
     // First palette has source kinds — Phase 13.25 description gained
     // a " (CHP)" suffix.
