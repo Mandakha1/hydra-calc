@@ -189,16 +189,42 @@ export function computePipeFlows(
 /**
  * Walk the network outward from source(s), accumulating downstream heat loads
  * at each edge (pipe) for flow estimation. Works on tree topologies.
+ *
+ * Phase 13.47 — engineer report: "Одоо нэг л шугамын үзүүлэлтээр
+ * тооцоо хийж байна. Халаалтын систем эь Өгөх болон Буцах гэсэн 2
+ * Шугамтай байдаг." Pre-13.47 the adjacency aggregator walked ALL
+ * pipes (including return), so a УДДТ → consumer trench with both
+ * heating_supply + heating_return pipes drawn in the same direction
+ * DOUBLE-counted the consumer's load on the source-side aggregation,
+ * AND the return pipe itself ended up with downstream load = 0 → G ≈
+ * 0.001 kg/s sentinel → no real velocity / lambda / ΔP result.
+ *
+ * The fix has two pieces:
+ *   1. Walk the downstream tree using ONLY `heating_supply` pipes.
+ *      Return pipes are an engineering visualization, not a separate
+ *      physical loop — they don't add to the load aggregator.
+ *   2. For each `heating_return` pipe, inherit G from the matching
+ *      supply pipe (same endpoint pair, either direction — engineers
+ *      draw return parallel to OR anti-parallel to supply depending
+ *      on convention). Mass conservation: G_return ≡ G_supply.
+ *
+ * Other circuits (DHW supply/recirc, cold water) keep their legacy
+ * walking — they're physically independent loops with their own
+ * heat sources.
  */
 function computeDownstreamLoads(
   nodes: SchemeNode[],
   pipes: SchemePipe[],
 ): Map<string, number> {
   const loads = new Map<string, number>();
-  const adj = new Map<string, SchemePipe[]>();
+
+  // Supply-only adjacency for the load-aggregation walk.
+  const supplyAdj = new Map<string, SchemePipe[]>();
   for (const p of pipes) {
-    if (!adj.has(p.fromNodeId)) adj.set(p.fromNodeId, []);
-    adj.get(p.fromNodeId)!.push(p);
+    const circuit = p.circuit ?? "heating_supply";
+    if (circuit !== "heating_supply") continue;
+    if (!supplyAdj.has(p.fromNodeId)) supplyAdj.set(p.fromNodeId, []);
+    supplyAdj.get(p.fromNodeId)!.push(p);
   }
 
   const nodeLoad = (n: SchemeNode) => n.heatLoad_w ?? 0;
@@ -211,17 +237,52 @@ function computeDownstreamLoads(
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return 0;
     let sum = nodeLoad(node);
-    for (const p of adj.get(nodeId) ?? []) {
+    for (const p of supplyAdj.get(nodeId) ?? []) {
       sum += loadBelow(p.toNodeId, visiting);
     }
     memo.set(nodeId, sum);
     return sum;
   }
 
+  // Pass 1 — supply pipes get the full tree walk.
   for (const pipe of pipes) {
-    const load = loadBelow(pipe.toNodeId, new Set());
-    loads.set(pipe.id, load);
+    const circuit = pipe.circuit ?? "heating_supply";
+    if (circuit === "heating_supply") {
+      loads.set(pipe.id, loadBelow(pipe.toNodeId, new Set()));
+    }
   }
+
+  // Pass 2 — return pipes inherit G from their matching supply pipe.
+  // Other circuits (DHW, cold water) fall through to the legacy walk.
+  for (const pipe of pipes) {
+    const circuit = pipe.circuit ?? "heating_supply";
+    if (circuit === "heating_supply") continue;
+    if (circuit === "heating_return") {
+      const supplyMatch = pipes.find((p) => {
+        const sc = p.circuit ?? "heating_supply";
+        if (sc !== "heating_supply") return false;
+        return (
+          (p.fromNodeId === pipe.fromNodeId && p.toNodeId === pipe.toNodeId) ||
+          (p.fromNodeId === pipe.toNodeId && p.toNodeId === pipe.fromNodeId)
+        );
+      });
+      const inherited = supplyMatch ? loads.get(supplyMatch.id) : undefined;
+      loads.set(
+        pipe.id,
+        inherited != null ? inherited : loadBelow(pipe.toNodeId, new Set()),
+      );
+    } else {
+      // DHW supply / recirc / cold water — physically independent
+      // loops. Keep the legacy downstream walk on this pipe's own
+      // toNodeId. NOTE: this still uses the supply-only adjacency
+      // map, which means independent-loop DHW networks won't
+      // aggregate correctly. A future phase should build a separate
+      // adjacency per circuit family; deferred — these circuits
+      // produce few real engineering inputs today.
+      loads.set(pipe.id, loadBelow(pipe.toNodeId, new Set()));
+    }
+  }
+
   return loads;
 }
 
