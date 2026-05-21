@@ -5171,19 +5171,35 @@ export function SchemeEditor({ readOnly }: Props) {
                 sizeScaleFactor,
                 buildingMinDim_m ? { maxDiameter_m: buildingMinDim_m } : undefined,
               );
-              // Phase 13.35 — engineer report (with screenshot): "Tag
-              // нь жижиг болоогүй, газрын зураг дээрх барилгыг бүтэн
-              // хааж байна. Маш жижиг байх хэрэгтэй."
+              // Phase 13.36 — engineer report (after Phase 13.35 still
+              // showed huge tags): "ene haraal idsen tag heterhii tom
+              // bn jijigruul gej helsen bizte ugluunuus hoish 4 5 tsag
+              // nrg yum zasaj chadahgui".
               //
-              // At high map zoom (16-22) the kind-default reference
-              // size (35 m consumer / 18 m source) produces 60+ px
-              // radius — bigger than the building it sits on. Tagged
-              // nodes are SUPPOSED to be tiny markers identifying
-              // "this is the consumer for this polygon". Cap them at
-              // an absolute 8 px radius (16 px diameter) regardless
-              // of zoom so they read like a Google-Maps-style pin.
+              // Phase 13.35 capped ONLY nodes with a legacy
+              // building.taggedAsNodeId link (isTaggedToBuilding).
+              // The Phase 13.32 endpoint-kind-picker flow creates
+              // consumer/source nodes WITHOUT that link — the
+              // engineer's click point IS the consumer. Result: the
+              // cap never fired for the normal flow, symbol rendered
+              // at 50+ px diameter at street zoom.
+              //
+              // Fix: cap every consumer/source/junction-style symbol
+              // node — i.e. anything that does NOT render as a
+              // BuildingPlanShape (Phase 13.4 opt-in rectangle that
+              // requires explicit width_m AND height_m ≥ 6 m). The
+              // BuildingPlanShape branch keeps its real-scale render.
+              //
+              // 8 px radius → 16 px diameter on screen, Google-Maps-
+              // pin sized. Selected nodes get the usual +4 px halo
+              // so the engineer can spot the active pick.
+              const isBuilding =
+                !isTaggedToBuilding &&
+                (def.category === "consumer" || def.category === "source") &&
+                wm >= 6 &&
+                hm >= 6;
               const TAG_MAX_R = 8;
-              const computedR = isTaggedToBuilding
+              const computedR = !isBuilding
                 ? Math.min(TAG_MAX_R, rawR)
                 : rawR;
               const r = isSelected ? computedR + 4 : computedR;
@@ -5193,15 +5209,14 @@ export function SchemeEditor({ readOnly }: Props) {
               const showErrorRings = isBad && animateErrors;
               const dp = displayPos(n);
               const hasGeo = !!n.geo;
-              // Real plan view: ONLY when the user explicitly set width_m & height_m
-              // (e.g. drew a building polygon, or typed dimensions in inspector).
-              // Defaults from nodeCatalog are NOT used here — that would expand
-              // every imported DXF consumer to 30×12m, hiding the network.
-              const isBuilding =
-                !isTaggedToBuilding &&
-                (def.category === "consumer" || def.category === "source") &&
-                wm >= 6 &&
-                hm >= 6;
+              // `isBuilding` is computed above the cap block so the
+              // cap can branch on it. Real plan view: ONLY when the
+              // user explicitly set width_m & height_m (e.g. drew a
+              // building polygon, or typed dimensions in inspector).
+              // Defaults from nodeCatalog are NOT used here — that
+              // would expand every imported DXF consumer to 30×12 m,
+              // hiding the network.
+              //
               // When the leaflet map is showing AND this node is geo-anchored,
               // size the building rect to the MAP's meters-per-pixel (so it
               // matches the satellite/OSM zoom level). Otherwise fall back to
