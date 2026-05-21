@@ -407,9 +407,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @keyframes hydra-flow-fast {
   to { stroke-dashoffset: -40; }
 }
+/* Phase 13.37 — engineer report: "Тооцоо хийсний дараа шугам
+   томорч жижгэрдэг новшийн effect ээ болиул". Previous keyframe
+   applied transform: scale(1) → 1.18 → 1, so violated pipes
+   throbbed visibly (the entire pipe stroke appeared to thicken
+   and thin) after each calc. Drop the scale transform —
+   violation feedback stays as a gentle opacity dip (red colour
+   already differentiates the pipe). */
 @keyframes hydra-pulse-error {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(1.18); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 @keyframes hydra-ring-expand {
   0% { r: 12; opacity: 0.85; }
@@ -449,11 +456,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .hydra-pipe-flow.reverse { animation-direction: reverse; }
 .hydra-pipe-flow.paused  { animation-play-state: paused; }
 
-/* Violation pulse — apply to nodes/pipes flagged by validator */
+/* Violation pulse — apply to nodes/pipes flagged by validator.
+   Phase 13.37 — transform-box / transform-origin retained
+   because the surrounding `.hydra-pump-active` rule still relies
+   on them; the violation animation itself no longer applies any
+   transform (opacity-only). */
 .hydra-violation {
   animation: hydra-pulse-error 1.4s ease-in-out infinite;
-  transform-box: fill-box;
-  transform-origin: center;
 }
 .hydra-violation-ring {
   fill: none;
