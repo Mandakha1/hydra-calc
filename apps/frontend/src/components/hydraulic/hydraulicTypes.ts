@@ -22,6 +22,12 @@ export interface SchemeNode {
   geo?: { lat: number; lon: number };
   /** Heat load in watts (for consumers). */
   heatLoad_w?: number;
+  /** Phase 13.42 — which method the engineer chose to compute
+   *  `heatLoad_w` for this consumer. Inspector renders the
+   *  matching block (Volumetric W×L×H×q_v, full Envelope per
+   *  БНбД 23-02-09, or plain manual kW). Defaults to "volumetric"
+   *  when undefined for backward compat with pre-13.42 projects. */
+  heatLoadMethod?: "volumetric" | "envelope" | "manual";
   /** Required pressure at this consumer, MPa. */
   requiredPressure_mpa?: number;
   /** For buildings: envelope inputs that drive heat-load computation. */
