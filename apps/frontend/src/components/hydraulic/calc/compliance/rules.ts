@@ -891,23 +891,72 @@ const buildingFootprintMetadata: Rule = {
   id: "building_footprint_metadata",
   category: "project",
   severity: "info",
-  name: "Барилгын мэдээлэл",
-  description: "Барилга тус бүр давхрын тоо + дулааны ачаалал бүртгэсэн байх ёстой.",
+  // Phase 13.40 — engineer report: "одоо бол зөвхөн Барилга дээр
+  // холбосон шугамын цэгүүд л тооцоонд орно ... Бид тэр цэгт
+  // Дэлгүүр гэж нэр өгөөд Дулааны ачааллыг өгч байгаа шүү дээ."
+  // Heat load is a property of the pipe-endpoint NODE (Phase
+  // 13.30+ model); the building polygon is purely a visual
+  // outline. This rule no longer demands `heatLoad_kw` on the
+  // polygon — only the floors count (used as a БНбД 41-01 ref +
+  // for the architect's information). Per-consumer heat-load
+  // validation belongs on a different rule that iterates NODES,
+  // not buildings.
+  name: "Барилгын давхар",
+  description: "Барилга тус бүр давхрын тоо бүртгэсэн байх ёстой.",
   standardRef: "ГОСТ 21.501 + Mongolian convention",
   check(project) {
     const out: RuleResult[] = [];
     for (const b of project.buildings ?? []) {
-      const missing: string[] = [];
-      if (typeof b.floors !== "number" || b.floors <= 0) missing.push("давхар");
-      if (typeof b.heatLoad_kw !== "number" || b.heatLoad_kw <= 0) missing.push("ачаалал");
-      if (missing.length > 0) {
+      if (typeof b.floors !== "number" || b.floors <= 0) {
         out.push({
           ruleId: "building_footprint_metadata",
           severity: "info",
-          message: `"${b.label ?? b.id}" дутуу: ${missing.join(", ")}`,
+          message: `"${b.label ?? b.id}" дутуу: давхар`,
           entityType: "building",
           entityId: b.id,
-          fixHint: "Inspector панелаас давхар + heatLoad_kw оруулах",
+          fixHint: "Inspector панелаас давхар оруулах",
+        });
+      }
+    }
+    return out;
+  },
+};
+
+/* ─── Phase 13.40 — consumer_heat_load_required ──────────────── */
+
+/**
+ * Every consumer node (АОС / Орон сууц / Эмнэлэг / Дэлгүүр / ...)
+ * must carry `heatLoad_w` so the solver has a basis for ṁ via
+ * G = Q / (c_p · ΔT). Per the Phase 13.30+ data model the polygon
+ * outline is purely visual — heat load lives on the pipe-endpoint
+ * NODE. Engineer report: "Бид тэр цэгт Дэлгүүр гэж нэр өгөөд
+ * Дулааны ачааллыг өгч байгаа шүү дээ." This rule flags any
+ * consumer node where load is missing or zero so the engineer
+ * sees the gap in the Compliance tab before they hit Run.
+ *
+ * Severity: warning (the calc will still run, but produces v ≈ 0
+ * which the velocity-min rule will then flag — a warning here
+ * gives the engineer a more direct fix hint).
+ */
+const consumerHeatLoadRequired: Rule = {
+  id: "consumer_heat_load_required",
+  category: "project",
+  severity: "warn",
+  name: "Хэрэглэгчийн ачаалал",
+  description: "Хэрэглэгч цэг бүр heatLoad_w > 0 байх ёстой.",
+  standardRef: "БНбД 41-02-13 §4.1 + Phase 13.30 data model",
+  check(project) {
+    const out: RuleResult[] = [];
+    for (const n of project.nodes) {
+      if (!isConsumerKind(n.kind)) continue;
+      if (typeof n.heatLoad_w !== "number" || n.heatLoad_w <= 0) {
+        out.push({
+          ruleId: "consumer_heat_load_required",
+          severity: "warn",
+          message: `"${n.label ?? n.id}" хэрэглэгчийн дулааны ачаалал өгөгдөөгүй`,
+          entityType: "node",
+          entityId: n.id,
+          fixHint: "Inspector панелаас 'Дулааны ачаалал (кВт)' оруулах",
         });
       }
     }
@@ -1139,6 +1188,7 @@ export const ALL_RULES: ReadonlyArray<Rule> = [
   // Project
   sourceNodeExists,
   consumerNodeExists,
+  consumerHeatLoadRequired, // Phase 13.40
   buildingFootprintMetadata, // Phase 9.3
   projectMetadataComplete,  // Phase 9.3
   projectScaleSet,          // Phase 9.3

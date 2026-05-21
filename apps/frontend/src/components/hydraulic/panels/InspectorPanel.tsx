@@ -476,32 +476,17 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
             placeholder="5"
           />
         </Field>
-        <Field label="Дулааны ачаалал (кВт)">
-          <input
-            type="number"
-            min={0}
-            step={0.1}
-            value={building.heatLoad_kw ?? ""}
-            disabled={readOnly}
-            onChange={(e) => {
-              const v = e.target.value === "" ? undefined : Number(e.target.value);
-              updateBuilding(building.id, { heatLoad_kw: v });
-              // Phase 13.26 — sync to the tagged node's heatLoad_w (W).
-              // Engineer report: "Барилга дээр дулааны ачаалал өгсөнч
-              // тооцоон дээр гарч ирэхгүй байна." Root cause:
-              // SchemeBuilding.heatLoad_kw is stored on the polygon
-              // entity, but the calc engine + Excel export read
-              // SchemeNode.heatLoad_w on the tagged node. Bidirectional
-              // sync here keeps both fields coherent.
-              if (building.taggedAsNodeId) {
-                const w_value = v != null ? Math.round(v * 1000) : undefined;
-                updateNode(building.taggedAsNodeId, { heatLoad_w: w_value });
-              }
-            }}
-            style={inputStyle}
-            placeholder="500"
-          />
-        </Field>
+        {/* Phase 13.40 — engineer report: "Дулааны ачааллын тооцоон
+            дээр Барилгууд ороод байна одоо бол зөвхөн Барилга дээр
+            холбосон шугамын цэгүүд л тооцоонд орно шүү дээ Бид тэр
+            цэгт Дэлгүүр гэж нэр өгөөд Дулааны ачааллыг өгч байгаа
+            шүү дээ". Per the Phase 13.30+ data model, heat load is
+            a property of the pipe-endpoint NODE (Орон сууц /
+            Дэлгүүр / Эмнэлэг / УДДТ) — the polygon is purely a
+            visual outline. The "Дулааны ачаалал" Field was removed
+            from the Building Inspector here so engineers stop
+            entering load on the polygon (it never reached the
+            solver unless a legacy taggedAsNodeId link existed). */}
         <Field label="Давхрага">
           <select
             value={building.layerKey ?? "D"}
@@ -518,9 +503,10 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
           </select>
         </Field>
         <p style={{ fontSize: 12, color: "var(--fg-muted)", margin: "0.4rem 0 0" }}>
-          Энэ нь барилгын <b>зураг</b> л юм — гидравлик ачаалалд автоматаар
-          оролцоогүй. Хэрэглэгчтэй холбохын тулд тус хэрэглэгчийн зангилаа
-          (АОС / УДДТ) барилга дотор тавьж, хоолой татна уу.
+          Энэ нь барилгын <b>зураг</b> л юм — гидравлик тооцоонд
+          оролцоохгүй. Шугам зурахдаа эцсийн цэг дээрээ нэр (Орон
+          сууц / Дэлгүүр / Эмнэлэг / УДДТ ...) болон{" "}
+          <b>дулааны ачаалал</b> өгнө. Тэр цэг л тооцоонд орно.
         </p>
         {!readOnly && (
           <button

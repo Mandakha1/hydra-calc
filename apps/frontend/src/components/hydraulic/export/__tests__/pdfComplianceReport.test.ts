@@ -30,7 +30,10 @@ function fullProject(): HydraulicState {
   const s = emptyState();
   s.nodes = [
     { id: "src", kind: "source_substation", label: "ЦТП", x: 0, y: 0 } as SchemeNode,
-    { id: "aos1", kind: "consumer_apartment", label: "АОС-1", x: 100, y: 0 } as SchemeNode,
+    // Phase 13.40 — consumer must carry heatLoad_w now (the new
+    // consumerHeatLoadRequired rule). Seed it so the "clean" PDF
+    // fixture remains ≤ 5 violations.
+    { id: "aos1", kind: "consumer_apartment", label: "АОС-1", x: 100, y: 0, heatLoad_w: 50_000 } as SchemeNode,
   ];
   s.pipes = [{
     id: "p1", fromNodeId: "src", toNodeId: "aos1",
