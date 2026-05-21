@@ -12,6 +12,9 @@
  *   - Verification: just runs as-is and reports
  */
 import { NORM_THRESHOLDS, PIPE_DB } from "shared";
+// Phase 13.46 — modern Phase 13.32 picker creates consumer_apartment
+// etc., not legacy literal "consumer". Use the prefix-aware helper.
+import { isConsumerKind } from "./compliance/ruleEngine";
 import type {
   CalculationResults,
   ProjectSettings,
@@ -97,7 +100,7 @@ export function balanceConsumers(
   target_dp_mpa: number,
 ): ConsumerBalancing[] {
   const out: ConsumerBalancing[] = [];
-  for (const node of nodes.filter((n) => n.kind === "consumer")) {
+  for (const node of nodes.filter((n) => isConsumerKind(n.kind))) {
     const nr = results.nodes.find((x) => x.nodeId === node.id);
     if (!nr) continue;
     const required = node.requiredPressure_mpa ?? target_dp_mpa;

@@ -1173,28 +1173,62 @@ function VolumetricHeatLoadBlock({
   updateNode,
   readOnly,
 }: {
-  node: { id: string; kind: string; width_m?: number; height_m?: number; buildingHeight_m?: number; floors?: number; floorHeight_m?: number; specificLoad_w_per_m3?: number; heatLoad_w?: number; volume_m3?: number };
+  node: {
+    id: string;
+    kind: string;
+    width_m?: number;
+    height_m?: number;
+    buildingHeight_m?: number;
+    floors?: number;
+    floorHeight_m?: number;
+    specificLoad_w_per_m3?: number;
+    heatLoad_w?: number;
+    volume_m3?: number;
+    heatLoadManual?: boolean;
+  };
   updateNode: (id: string, patch: Record<string, unknown>) => void;
   readOnly?: boolean;
 }) {
+  // Phase 13.45 — engineer report: "bi ezlehuunig uurchilsonch
+  // achaalal uurchlugduhgui 40kwt heweeree bn". The block used to
+  // display `node.heatLoad_w ?? auto.heatLoad_w` in the kW field —
+  // so if a heatLoad_w value was already set (e.g. kind default
+  // 50 kW from nodeCatalog) it stuck there forever, even as the
+  // engineer changed W/L/Floors.
+  //
+  // Fix: any dimension or specific-load change now ALSO writes the
+  // fresh `auto.heatLoad_w` (and `volume_m3`) back to the store —
+  // UNLESS the engineer has explicitly opted into manual mode via
+  // the kW input (which sets `heatLoadManual: true`).
   const auto = autoVolumetricHeatLoad(node);
-  if (!auto) {
-    return (
-      <div style={{ fontSize: 11, color: "var(--fg-muted)", padding: "6px 8px", background: "var(--bg-soft, rgba(0,0,0,0.04))", borderRadius: 6, marginBottom: 8 }}>
-        💡 Өргөн / Урт / Өндөр оруулаад дулааны ачааллын тооцоо автоматжина (БНбД 23-02-09 §7).
-      </div>
-    );
-  }
+  const isManual = node.heatLoadManual === true;
+  const specEffective = resolveSpecificLoad({
+    kind: node.kind,
+    override: node.specificLoad_w_per_m3,
+  });
+  /** Apply a dimension/specific patch and, when auto-mode is on,
+   *  also push the recomputed heatLoad_w + volume_m3 in the same
+   *  store update so the engineer sees the kW field update live. */
+  const patchDimension = (patch: Record<string, unknown>) => {
+    if (readOnly) return;
+    const merged = { ...node, ...patch };
+    const newAuto = autoVolumetricHeatLoad(merged);
+    if (newAuto && !isManual) {
+      updateNode(node.id, {
+        ...patch,
+        heatLoad_w: newAuto.heatLoad_w,
+        volume_m3: newAuto.volume_m3,
+      });
+    } else {
+      updateNode(node.id, patch);
+    }
+  };
   const buildingHeightUsed =
     typeof node.buildingHeight_m === "number" && node.buildingHeight_m > 0
       ? `${node.buildingHeight_m} м (тогтсон)`
       : typeof node.floors === "number" && node.floors > 0
         ? `${node.floors} × ${node.floorHeight_m ?? 3} м = ${(node.floors * (node.floorHeight_m ?? 3)).toFixed(1)} м`
-        : "9 м (анхдагч)";
-  const specEffective = resolveSpecificLoad({
-    kind: node.kind,
-    override: node.specificLoad_w_per_m3,
-  });
+        : "9 м (анхдагч — дотор давхар оруулна уу)";
   return (
     <div
       style={{
@@ -1207,12 +1241,102 @@ function VolumetricHeatLoadBlock({
       data-testid="volumetric-heat-block"
     >
       <div style={{ fontSize: 11, color: "var(--fg-muted)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-        🧮 Дулааны ачаалал — авто (БНбД 23-02-09 §7)
+        🧮 Эзэлхүүнээр (БНбД 23-02-09 §7)
       </div>
-      <div style={{ fontSize: 12, lineHeight: 1.6, color: "var(--fg)" }}>
-        <div>📏 Өндөр: <strong>{buildingHeightUsed}</strong></div>
-        <div>📦 Эзэлхүүн: <strong>{auto.volume_m3.toFixed(1)} м³</strong> = {node.width_m} × {node.height_m} × H</div>
+      {/* Phase 13.45 — Always-visible W / L / Floors / FloorHeight
+          inputs. Used to be in a separate dimension block (Phase
+          13.0b) gated by `width_m != null && height_m != null` — so
+          Phase 13.32 picker creations had nowhere to enter
+          dimensions and the engineer was stuck. Now this block
+          shows them inline; every onChange uses `patchDimension`
+          which auto-syncs `heatLoad_w` unless the engineer flagged
+          manual mode. */}
+      <div style={{ display: "flex", gap: 6 }}>
+        <Field label="Өргөн (м)">
+          <input
+            type="number"
+            min={0.1}
+            max={500}
+            step={0.1}
+            value={node.width_m ?? ""}
+            disabled={readOnly}
+            placeholder="30"
+            onChange={(e) => {
+              const v = e.target.value === "" ? undefined : Number(e.target.value);
+              if (v !== undefined && (!Number.isFinite(v) || v <= 0)) return;
+              patchDimension({ width_m: v });
+            }}
+            style={inputStyle}
+            data-testid="volumetric-width-m"
+          />
+        </Field>
+        <Field label="Урт (м)">
+          <input
+            type="number"
+            min={0.1}
+            max={500}
+            step={0.1}
+            value={node.height_m ?? ""}
+            disabled={readOnly}
+            placeholder="12"
+            onChange={(e) => {
+              const v = e.target.value === "" ? undefined : Number(e.target.value);
+              if (v !== undefined && (!Number.isFinite(v) || v <= 0)) return;
+              patchDimension({ height_m: v });
+            }}
+            style={inputStyle}
+            data-testid="volumetric-length-m"
+          />
+        </Field>
       </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <Field label="Давхар">
+          <input
+            type="number"
+            min={1}
+            max={50}
+            step={1}
+            value={node.floors ?? ""}
+            disabled={readOnly}
+            placeholder="9"
+            onChange={(e) => {
+              const v = e.target.value === "" ? undefined : Number(e.target.value);
+              if (v !== undefined && (!Number.isFinite(v) || v <= 0)) return;
+              patchDimension({ floors: v });
+            }}
+            style={inputStyle}
+            data-testid="volumetric-floors"
+          />
+        </Field>
+        <Field label="Давхрын өндөр (м)">
+          <input
+            type="number"
+            min={2}
+            max={10}
+            step={0.1}
+            value={node.floorHeight_m ?? ""}
+            disabled={readOnly}
+            placeholder="3"
+            onChange={(e) => {
+              const v = e.target.value === "" ? undefined : Number(e.target.value);
+              if (v !== undefined && (!Number.isFinite(v) || v <= 0)) return;
+              patchDimension({ floorHeight_m: v });
+            }}
+            style={inputStyle}
+            data-testid="volumetric-floor-height-m"
+          />
+        </Field>
+      </div>
+      {auto ? (
+        <div style={{ fontSize: 12, lineHeight: 1.6, color: "var(--fg)" }}>
+          <div>📏 Барилгын өндөр: <strong>{buildingHeightUsed}</strong></div>
+          <div>📦 Эзэлхүүн: <strong>{auto.volume_m3.toFixed(1)} м³</strong></div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "var(--fg-muted)", padding: "4px 0" }}>
+          💡 Өргөн / Урт / Давхар оруулсны дараа эзэлхүүн + ачаалал автоматаар тооцоологдоно.
+        </div>
+      )}
       <Field label={`Хувийн ачаалал (Вт/м³) · ${node.specificLoad_w_per_m3 ? "тогтсон" : "автомат — " + node.kind}`}>
         <input
           type="number"
@@ -1224,59 +1348,78 @@ function VolumetricHeatLoadBlock({
           onChange={(e) => {
             const v = Number(e.target.value);
             if (!Number.isFinite(v) || v <= 0) return;
-            updateNode(node.id, { specificLoad_w_per_m3: v });
+            // Phase 13.45 — Phase 13.13 only wrote specificLoad_w_per_m3.
+            // The auto-recompute path now flows through patchDimension
+            // so the kW figure updates simultaneously.
+            patchDimension({ specificLoad_w_per_m3: v });
           }}
           style={inputStyle}
           data-testid="inspector-specific-load"
           title="БНбД 23-02-09 §7 q_v — барилгын төрлөөс хамаарсан хувийн дулааны ачаалал"
         />
       </Field>
-      <Field label="Дулааны ачаалал (кВт) — авто">
+      <Field
+        label={`Дулааны ачаалал (кВт)${isManual ? " · 🔒 гар оруулга" : auto ? " · авто" : ""}`}
+      >
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input
             type="number"
             min={0}
             step={0.1}
-            value={node.heatLoad_w != null ? (node.heatLoad_w / 1000).toFixed(2) : (auto.heatLoad_w / 1000).toFixed(2)}
+            value={node.heatLoad_w != null ? (node.heatLoad_w / 1000).toFixed(2) : (auto?.heatLoad_w ? (auto.heatLoad_w / 1000).toFixed(2) : "")}
             disabled={readOnly}
+            placeholder="50"
             onChange={(e) => {
               const kw = Number(e.target.value);
               if (!Number.isFinite(kw)) return;
-              updateNode(node.id, { heatLoad_w: Math.round(kw * 1000) });
+              // Phase 13.45 — direct kW edit = manual override.
+              // Set heatLoadManual=true so dimension changes stop
+              // overwriting the engineer's number.
+              updateNode(node.id, {
+                heatLoad_w: Math.round(kw * 1000),
+                heatLoadManual: true,
+              });
             }}
             style={inputStyle}
             data-testid="inspector-heat-load-kw"
             title="W = volume_m³ × specificLoad_w_per_m³ — engineer-override-боломжтой"
           />
-          <button
-            type="button"
-            onClick={() => {
-              updateNode(node.id, {
-                heatLoad_w: auto.heatLoad_w,
-                volume_m3: auto.volume_m3,
-              });
-            }}
-            disabled={readOnly}
-            style={{
-              padding: "4px 8px",
-              fontSize: 11,
-              background: "var(--accent, #1f5faa)",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              cursor: readOnly ? "not-allowed" : "pointer",
-              whiteSpace: "nowrap",
-            }}
-            data-testid="inspector-heat-load-reset"
-            title="Auto-utga-aar дахин тооцоолох"
-          >
-            ⟲ Авто
-          </button>
+          {auto && (
+            <button
+              type="button"
+              onClick={() => {
+                // Phase 13.45 — "⟲ Авто" releases the manual flag so
+                // subsequent dimension changes flow through to kW.
+                updateNode(node.id, {
+                  heatLoad_w: auto.heatLoad_w,
+                  volume_m3: auto.volume_m3,
+                  heatLoadManual: false,
+                });
+              }}
+              disabled={readOnly}
+              style={{
+                padding: "4px 8px",
+                fontSize: 11,
+                background: "var(--accent, #1f5faa)",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                cursor: readOnly ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap",
+              }}
+              data-testid="inspector-heat-load-reset"
+              title="Эзэлхүүн × q_v -ээр автоматаар сэргээх"
+            >
+              ⟲ Авто
+            </button>
+          )}
         </div>
       </Field>
-      <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 4 }}>
-        💡 Авто утга: <strong>{(auto.heatLoad_w / 1000).toFixed(2)} кВт</strong> ({auto.volume_m3.toFixed(1)} м³ × {specEffective} Вт/м³)
-      </div>
+      {auto && (
+        <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 4 }}>
+          💡 Авто утга: <strong>{(auto.heatLoad_w / 1000).toFixed(2)} кВт</strong> ({auto.volume_m3.toFixed(1)} м³ × {specEffective} Вт/м³)
+        </div>
+      )}
     </div>
   );
 }
