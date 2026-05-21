@@ -3831,10 +3831,18 @@ export function SchemeEditor({ readOnly }: Props) {
                 // so the m² readout matches the on-screen scale at the
                 // current map zoom.
                 const area_m2 = polygonAreaM2(movedPts);
-                const heatStr =
-                  typeof b.heatLoad_kw === "number"
-                    ? ` · ${b.heatLoad_kw.toFixed(1)}кВт`
-                    : "";
+                // Phase 13.38 — engineer report: "барилга зурчаад тэрэн
+                // дээр Дулааны ачаалал бичих шаардлагагүй шүү дээ зүгээр
+                // л үзүүлэн гээд байхад". The polygon is purely a
+                // visual outline (per Phase 13.30+ mental model). The
+                // hydraulic entity is the pipe-endpoint NODE — heat
+                // load belongs on the node label, NOT on the polygon
+                // overlay. `b.heatLoad_kw` stays on the model (it's
+                // still synced from the linked node for legacy data +
+                // BНбД compliance rules), but the rendered readout no
+                // longer shows it. Floors stays — engineer can still
+                // type it via Inspector and it's referenced by the
+                // compliance check.
                 const floorsStr =
                   typeof b.floors === "number" ? ` · ${b.floors}д` : "";
                 return (
@@ -3950,7 +3958,7 @@ export function SchemeEditor({ readOnly }: Props) {
                       paintOrder="stroke"
                       pointerEvents="none"
                     >
-                      {area_m2.toFixed(0)}м²{floorsStr}{heatStr}
+                      {area_m2.toFixed(0)}м²{floorsStr}
                     </text>
                     {/* Phase 13.3 — per-vertex drag handles. Only rendered
                         when the building is the active single selection
