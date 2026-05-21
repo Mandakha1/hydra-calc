@@ -329,6 +329,27 @@ export function SchemeEditor({ readOnly }: Props) {
     toNodeId: string;
     length_m: number;
   } | null>(null);
+  /**
+   * Phase 13.32 — engineer report: "J-10, J-4 гэх мэт энэ захын
+   * цэгүүд чинь өөрөө хэрэглэгч шүү дээ. Шугамын эцсийн цэгүүд нь
+   * Станц / УДДТ / Зуух / Орон сууц / Эмнэлэг / Сургууль / Цэцэрлэг
+   * / Оффис гэх мэт ээр сонгож ачааллаа тооцдог байвал зөв."
+   *
+   * When an addPipe gesture auto-creates a fresh node at empty
+   * canvas (Phase 13.12 first click / Phase 13.16 double-click
+   * terminate / Phase 13.12 Enter terminate), we keep the node as
+   * a "junction" stub then immediately surface a small floating
+   * picker so the engineer assigns the real kind right there. They
+   * can dismiss (leave as junction) or pick a source/consumer kind
+   * — the picker patches the node with kind + label + heat-load
+   * defaults from `nodeCatalog`.
+   */
+  const [pendingEndpointPicker, setPendingEndpointPicker] = useState<{
+    nodeId: string;
+    /** Where to anchor the popover (current scheme XY of the node). */
+    x: number;
+    y: number;
+  } | null>(null);
   // Phase 13.22 Task 7 — branch-from-pipe prompt.
   // When the engineer clicks "🌿 Салбар шугам зурах" on a pipe, the
   // handler splits the pipe + inserts a tee + auto-enters addPipe mode.
@@ -1431,10 +1452,11 @@ export function SchemeEditor({ readOnly }: Props) {
         // engineer report "Шугам хоолойг барилгагүй хоосон хэсэгт
         // ч зурж болно." Empty-canvas FIRST click in addPipe mode
         // now drops a junction node at the click point AND sets it
-        // as the pipe's `from` endpoint, so the engineer can start
-        // a pipe from any free position (no need to pre-place a
-        // node). Building-polygon clicks continue to anchor at the
-        // tagged-as node (Phase 13.8).
+        // as the pipe's `from` endpoint.
+        // Phase 13.32 — also raise a kind-picker so the engineer
+        // immediately assigns the real endpoint kind (Станц / УДДТ
+        // / Зуух / Орон сууц / Эмнэлэг / Сургууль / Цэцэрлэг /
+        // Оффис) instead of leaving J-N stubs as "junction".
         const id = uid("j");
         const llStart = showMap ? svgToLatLon(pt) : null;
         addNode({
@@ -1447,6 +1469,11 @@ export function SchemeEditor({ readOnly }: Props) {
         });
         setPipeFrom(id);
         setPipeBendPts([]);
+        setPendingEndpointPicker({
+          nodeId: id,
+          x: Math.round(pt.x),
+          y: Math.round(pt.y),
+        });
       } else if (mode === "addPipe" && pipeFrom) {
         // Phase 13.8 — Zulu-style mid-pipe bend points. Empty-canvas
         // clicks between the from-node and the to-node accumulate
@@ -1706,10 +1733,18 @@ export function SchemeEditor({ readOnly }: Props) {
         setPipeBendPts([]);
         setPipeLengthInput("");
         setMode("select");
+        // Phase 13.32 — also prompt for the terminal endpoint kind
+        // so the engineer assigns Орон сууц / Эмнэлэг / Оффис / etc.
+        // rather than leaving the auto-created J-N as plain junction.
+        setPendingEndpointPicker({
+          nodeId: toId,
+          x: Math.round(termPt.x),
+          y: Math.round(termPt.y),
+        });
         setToast({
           text: nPipes > 1
-            ? `${nPipes} шугам үүсгэв (хоосон газарт дуусгав)`
-            : "Шугам үүсгэв (хоосон газарт дуусгав)",
+            ? `${nPipes} шугам үүсгэв — эцсийн цэгийн төрлөө сонгоно уу`
+            : "Шугам үүсгэв — эцсийн цэгийн төрлөө сонгоно уу",
           key: Date.now(),
           tone: "success",
         });
@@ -2635,6 +2670,9 @@ export function SchemeEditor({ readOnly }: Props) {
         // so the engineer who cancelled the branch doesn't see the
         // chamber/valve dialog afterwards.
         setPendingBranchPrompt(null);
+        // Phase 13.32 — Esc dismisses the endpoint kind picker too;
+        // the auto-created node stays as a junction.
+        setPendingEndpointPicker(null);
         setPolygon([]);
         setPendingFootprint(null);
         setMeasurePoints([]);
@@ -2710,13 +2748,21 @@ export function SchemeEditor({ readOnly }: Props) {
             setPipeBendPts([]);
             setPipeLengthInput("");
             setMode("select");
-            if (nPipes > 1) {
-              setToast({
-                text: `${nPipes} шугам үүсгэв (Enter)`,
-                key: Date.now(),
-                tone: "success",
-              });
-            }
+            // Phase 13.32 — Enter-terminate also prompts for the
+            // endpoint kind so the engineer assigns the real
+            // consumer/source type rather than leaving J-N stubs.
+            setPendingEndpointPicker({
+              nodeId: toId,
+              x: Math.round(termPt.x),
+              y: Math.round(termPt.y),
+            });
+            setToast({
+              text: nPipes > 1
+                ? `${nPipes} шугам үүсгэв — эцсийн цэгийн төрлөө сонгоно уу`
+                : "Шугам үүсгэв — эцсийн цэгийн төрлөө сонгоно уу",
+              key: Date.now(),
+              tone: "success",
+            });
           }
         }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) {
@@ -5769,6 +5815,144 @@ export function SchemeEditor({ readOnly }: Props) {
           right-click "🌿 Салбар шугам зурах", we ask whether to ALSO
           add a chamber or valve at the branch junction (engineer's
           explicit ask). The prompt is dismissable. */}
+      {/* Phase 13.32 — pipe-endpoint kind picker. Floats next to the
+          newly-auto-created J-N node so the engineer assigns its real
+          type (Станц / УДДТ / Зуух / Орон сууц / Эмнэлэг / Сургууль
+          / Цэцэрлэг / Оффис) immediately. Esc dismisses → node stays
+          a plain junction. */}
+      {pendingEndpointPicker && (() => {
+        const node = nodes.find((n) => n.id === pendingEndpointPicker.nodeId);
+        if (!node) {
+          setPendingEndpointPicker(null);
+          return null;
+        }
+        // Resolve screen-space position from current pan/zoom so the
+        // popover sticks to the node even if the engineer pans first.
+        const svgEl = svgRef.current;
+        const rect = svgEl?.getBoundingClientRect();
+        if (!rect) return null;
+        const dp = displayPos(node);
+        const screenX = rect.left + RULER_PX + (dp.x + pan.x) * zoom;
+        const screenY = rect.top + RULER_PX + (dp.y + pan.y) * zoom;
+        const KIND_GROUPS: Array<{
+          title: string;
+          items: Array<{ kind: string; icon: string; label: string }>;
+        }> = [
+          {
+            title: "Эх үүсвэр",
+            items: [
+              { kind: "source_tec", icon: "🏭", label: "Эх үүсвэр (Станц)" },
+              { kind: "source_substation", icon: "⊕", label: "УДДТ" },
+              { kind: "source_boiler", icon: "🔥", label: "Зуух" },
+            ],
+          },
+          {
+            title: "Хэрэглэгч",
+            items: [
+              { kind: "consumer_apartment", icon: "🏢", label: "Орон сууц" },
+              { kind: "consumer_hospital", icon: "🏥", label: "Эмнэлэг" },
+              { kind: "consumer_school", icon: "🏫", label: "Сургууль" },
+              { kind: "consumer_kindergarten", icon: "🧒", label: "Цэцэрлэг" },
+              { kind: "consumer_office", icon: "🏛", label: "Оффис" },
+              { kind: "consumer_retail", icon: "🏪", label: "Дэлгүүр" },
+              { kind: "consumer_industrial", icon: "🏗", label: "Үйлдвэр" },
+            ],
+          },
+        ];
+        const applyKind = (kind: string) => {
+          const def = getNodeKind(kind);
+          if (!def) return;
+          // Pull label + defaults from nodeCatalog so Inspector
+          // immediately shows realistic heat-load / dimensions.
+          const sameKindCount = nodes.filter((n) => n.kind === kind).length;
+          const label = `${def.shortLabel}-${sameKindCount + 1}`;
+          updateNode(node.id, {
+            kind,
+            label,
+            ...(def.defaults?.heatLoad_w ? { heatLoad_w: def.defaults.heatLoad_w } : {}),
+            ...(def.defaults?.requiredPressure_mpa ? { requiredPressure_mpa: def.defaults.requiredPressure_mpa } : {}),
+            ...(def.defaults?.width_m ? { width_m: def.defaults.width_m } : {}),
+            ...(def.defaults?.height_m ? { height_m: def.defaults.height_m } : {}),
+            ...(def.defaults?.floors ? { floors: def.defaults.floors } : {}),
+          });
+          setPendingEndpointPicker(null);
+          setToast({
+            text: `${label} болгож сонголоо`,
+            key: Date.now(),
+            tone: "success",
+          });
+        };
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed",
+              top: Math.max(8, screenY + 16),
+              left: Math.min(window.innerWidth - 280, screenX + 16),
+              zIndex: 200,
+              background: "var(--bp-bg-2, #fff)",
+              border: "2px solid var(--accent, #1f5faa)",
+              borderRadius: 8,
+              padding: 10,
+              minWidth: 240,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+              fontFamily: "var(--font-sans)",
+            }}
+            data-testid="endpoint-kind-picker"
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--accent)" }}>
+              Энэ цэг юу вэ? ({node.label})
+            </div>
+            {KIND_GROUPS.map((group) => (
+              <div key={group.title} style={{ marginBottom: 6 }}>
+                <div style={{ fontSize: 10, color: "var(--bp-text-3, #888)", marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  {group.title}
+                </div>
+                {group.items.map((it) => (
+                  <button
+                    key={it.kind}
+                    type="button"
+                    onClick={() => applyKind(it.kind)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "5px 8px",
+                      fontSize: 12,
+                      border: 0,
+                      background: "transparent",
+                      cursor: "pointer",
+                      borderRadius: 4,
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bp-bg-hover, #eef)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    {it.icon} {it.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+            <div style={{ height: 1, background: "var(--bp-line-2, #ddd)", margin: "4px 0" }} />
+            <button
+              type="button"
+              onClick={() => setPendingEndpointPicker(null)}
+              style={{
+                width: "100%",
+                padding: "5px 8px",
+                fontSize: 11,
+                border: 0,
+                background: "transparent",
+                color: "var(--bp-text-3, #888)",
+                cursor: "pointer",
+                borderRadius: 4,
+              }}
+            >
+              ✕ Зөвхөн зангилаа байг (J-N)
+            </button>
+          </div>
+        );
+      })()}
+
       {pendingBranchPrompt && mode === "select" && (
         <div
           style={{
