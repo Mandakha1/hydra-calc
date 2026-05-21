@@ -8,6 +8,13 @@ import {
   autoVolumetricHeatLoad,
   resolveSpecificLoad,
 } from "../calc/volumetricHeatLoad";
+// Phase 13.42 — building-type presets for the envelope path
+// (Олон давхар / Шилэн / 1 давхар).
+import {
+  ENVELOPE_PRESETS,
+  type HeatLoadMethod,
+} from "../calc/envelopePresets";
+import { isConsumerKind } from "../calc/compliance/ruleEngine";
 import { pipeLengthFromGeometry } from "../calc/haversine";
 import { updateDimension, removeDimension } from "../scheme/dimensionApplier";
 import {
@@ -795,14 +802,26 @@ export function InspectorPanel({ readOnly }: { readOnly?: boolean }) {
                 title="Физик хэмжээ метрээр — preset / size_scale-аас тусдаа"
               />
             </Field>
-            {/* Phase 13.13 — volumetric heat-load quick estimate.
-                Engineer typed W × L → auto-compute volume × specific
-                load (kind-default). Shown alongside the dimension
-                inputs so the engineer sees the kW figure update live.
-                Specific load is engineer-overridable; heat load can
-                also be edited manually (override wins). */}
-            <VolumetricHeatLoadBlock node={node} updateNode={updateNode} readOnly={readOnly} />
           </>
+        )}
+
+        {/* Phase 13.42 — heat-load calc section. Engineer report:
+            "Jisheelber OS 04 deer darah ued dulaani ahaallin tootsoo
+            hiih heseg garah yostoi Ezelhuuneer tootsoh eswel hashih
+            hiitsiin tootsoo hiih songolttoi baih yostoi". Always
+            visible for any consumer-kind node (Phase 13.32 picker
+            creations no longer have width_m → the legacy dimension-
+            gated block above would never show this for the modern
+            flow). Method picker at the top swaps between Volumetric
+            (W×L×H × q_v), Envelope (БНбД 23-02-09 surfaces), and
+            Manual (just type kW). */}
+        {isConsumerKind(node.kind) && (
+          <HeatLoadCalcSection
+            node={node}
+            updateNode={updateNode}
+            defaultCity={settings.city}
+            readOnly={readOnly}
+          />
         )}
 
         {/* Phase 6.8.3 — per-entity size override. Multiplies the
@@ -1253,6 +1272,282 @@ function VolumetricHeatLoadBlock({
       <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 4 }}>
         💡 Авто утга: <strong>{(auto.heatLoad_w / 1000).toFixed(2)} кВт</strong> ({auto.volume_m3.toFixed(1)} м³ × {specEffective} Вт/м³)
       </div>
+    </div>
+  );
+}
+
+/**
+ * Phase 13.42 — top-level heat-load calc section for consumer nodes.
+ *
+ * The engineer wanted a CHOICE between methods, and the section
+ * needs to be visible regardless of whether the node has width_m /
+ * height_m (the Phase 13.32 picker creates consumers without those).
+ *
+ * Three method tabs:
+ *   📦 Эзэлхүүнээр  — volumetric (W × L × H × q_v per БНбД 23-02-09 §7)
+ *   🏠 Хашлагаар    — envelope (multi-surface walls + windows + ACH)
+ *   ✏️ Гар оруулга  — manual (just type kW)
+ *
+ * Engineer's choice persists on `node.heatLoadMethod` so the section
+ * remembers between sessions.
+ */
+function HeatLoadCalcSection({
+  node,
+  updateNode,
+  defaultCity,
+  readOnly,
+}: {
+  node: {
+    id: string;
+    kind: string;
+    width_m?: number;
+    height_m?: number;
+    buildingHeight_m?: number;
+    floors?: number;
+    floorHeight_m?: number;
+    specificLoad_w_per_m3?: number;
+    heatLoad_w?: number;
+    volume_m3?: number;
+    envelope?: BuildingEnvelope;
+    heatLoadMethod?: HeatLoadMethod;
+  };
+  updateNode: (id: string, patch: Record<string, unknown>) => void;
+  defaultCity: string;
+  readOnly?: boolean;
+}) {
+  // Default method: envelope if engineer already filled an envelope
+  // (legacy projects), otherwise volumetric (the quick path).
+  const method: HeatLoadMethod =
+    node.heatLoadMethod ?? (node.envelope ? "envelope" : "volumetric");
+  const setMethod = (m: HeatLoadMethod) => {
+    if (readOnly) return;
+    updateNode(node.id, { heatLoadMethod: m });
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        marginBottom: 10,
+        padding: "10px",
+        background: "var(--bg-soft, rgba(0,0,0,0.04))",
+        borderRadius: 6,
+        border: "1px solid var(--border-soft)",
+      }}
+      data-testid="heat-load-calc-section"
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--fg-muted)",
+          marginBottom: 8,
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          fontWeight: 600,
+        }}
+      >
+        🧮 Дулааны ачааллын тооцоо
+      </div>
+      {/* Method-picker tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          marginBottom: 10,
+          background: "var(--bg, white)",
+          padding: 3,
+          borderRadius: 6,
+          border: "1px solid var(--border-soft)",
+        }}
+      >
+        <MethodTab
+          active={method === "volumetric"}
+          onClick={() => setMethod("volumetric")}
+          icon="📦"
+          label="Эзэлхүүнээр"
+          title="Эзэлхүүн × хувийн ачаалал (БНбД 23-02-09 §7) — хурдан тооцоо"
+        />
+        <MethodTab
+          active={method === "envelope"}
+          onClick={() => setMethod("envelope")}
+          icon="🏠"
+          label="Хашлагаар"
+          title="Хана / цонх / дээвэр гадаргуугаар (БНбД 23-02-09) — нарийвчилсан"
+        />
+        <MethodTab
+          active={method === "manual"}
+          onClick={() => setMethod("manual")}
+          icon="✏️"
+          label="Гар"
+          title="Шууд кВт-аар оруулах"
+        />
+      </div>
+      {method === "volumetric" && (
+        <VolumetricHeatLoadBlock node={node} updateNode={updateNode} readOnly={readOnly} />
+      )}
+      {method === "envelope" && (
+        <EnvelopeHeatLoadBlock
+          node={node}
+          updateNode={updateNode}
+          defaultCity={defaultCity}
+          readOnly={readOnly}
+        />
+      )}
+      {method === "manual" && (
+        <Field label="Дулааны ачаалал (кВт) — гар оруулга">
+          <input
+            type="number"
+            min={0}
+            step={0.1}
+            value={node.heatLoad_w != null ? (node.heatLoad_w / 1000).toFixed(2) : ""}
+            disabled={readOnly}
+            onChange={(e) => {
+              const kw = Number(e.target.value);
+              if (!Number.isFinite(kw)) return;
+              updateNode(node.id, { heatLoad_w: Math.round(kw * 1000) });
+            }}
+            style={inputStyle}
+            placeholder="50"
+            data-testid="inspector-heat-load-manual-kw"
+          />
+        </Field>
+      )}
+    </div>
+  );
+}
+
+function MethodTab({
+  active,
+  onClick,
+  icon,
+  label,
+  title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: string;
+  label: string;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      style={{
+        flex: 1,
+        padding: "6px 8px",
+        fontSize: 12,
+        background: active ? "var(--accent, #1f5faa)" : "transparent",
+        color: active ? "white" : "var(--fg, #222)",
+        border: "none",
+        borderRadius: 4,
+        cursor: "pointer",
+        fontWeight: active ? 600 : 400,
+        whiteSpace: "nowrap",
+      }}
+      data-testid={`heat-load-tab-${label}`}
+    >
+      <span style={{ marginRight: 4 }}>{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+/**
+ * Phase 13.42 — Envelope-based heat-load block.
+ *
+ * Engineer picks one of three building-type presets first
+ * (Олон давхар / Шилэн / 1 давхар) — that seeds the envelope with
+ * standard Mongolian construction defaults. Then the existing
+ * EnvelopeEditor handles per-surface edits. The auto-computed Q
+ * writes back to `node.heatLoad_w` so the solver picks it up.
+ */
+function EnvelopeHeatLoadBlock({
+  node,
+  updateNode,
+  defaultCity,
+  readOnly,
+}: {
+  node: {
+    id: string;
+    kind: string;
+    envelope?: BuildingEnvelope;
+    heatLoad_w?: number;
+  };
+  updateNode: (id: string, patch: Record<string, unknown>) => void;
+  defaultCity: string;
+  readOnly?: boolean;
+}) {
+  const applyPreset = (presetKey: string) => {
+    if (readOnly) return;
+    const preset = ENVELOPE_PRESETS.find((p) => p.key === presetKey);
+    if (!preset) return;
+    const env = preset.build({ city: defaultCity });
+    const load = calcHeatLoad(env);
+    updateNode(node.id, {
+      envelope: env,
+      heatLoad_w: Math.round(load.total_w),
+    });
+  };
+
+  return (
+    <div data-testid="envelope-heat-block">
+      <div style={{ fontSize: 11, color: "var(--fg-muted)", marginBottom: 6 }}>
+        Барилгын төрөл — preset сонгож эхэл:
+      </div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+        {ENVELOPE_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => applyPreset(p.key)}
+            disabled={readOnly}
+            title={p.description}
+            style={{
+              flex: 1,
+              padding: "8px 6px",
+              fontSize: 11,
+              background: "var(--bg, white)",
+              color: "var(--fg, #222)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 4,
+              cursor: readOnly ? "not-allowed" : "pointer",
+              lineHeight: 1.2,
+            }}
+            data-testid={`envelope-preset-${p.key}`}
+          >
+            <div style={{ fontSize: 18 }}>{p.icon}</div>
+            <div>{p.label}</div>
+          </button>
+        ))}
+      </div>
+      {node.envelope ? (
+        <EnvelopeEditor
+          nodeId={node.id}
+          envelope={node.envelope}
+          defaultCity={defaultCity}
+          readOnly={readOnly}
+          onChange={(env, autoLoad) => {
+            updateNode(node.id, { envelope: env, heatLoad_w: autoLoad });
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--fg-muted)",
+            padding: "6px 8px",
+            background: "var(--bg, white)",
+            borderRadius: 4,
+            border: "1px dashed var(--border-soft)",
+          }}
+        >
+          💡 Дээрх preset-ийг сонгоход хана / цонх / дээвэр / шалны
+          гадаргуу автоматаар бөглөгдөж, дулааны ачаалал тооцоологдоно.
+          Дараа нь хана тус бүрийг өөрчилж болно.
+        </div>
+      )}
     </div>
   );
 }
