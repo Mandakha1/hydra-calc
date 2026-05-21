@@ -27,14 +27,19 @@ beforeEach(() => {
 
 describe("SchemeEditor — Phase 0 baseline", () => {
   it("renders without crashing on an empty network", () => {
-    // Should mount the side toolbar and a canvas SVG element, exposing the
-    // base "Сонгох" tool and at least one category palette button.
+    // Should mount the side toolbar and a canvas SVG element, exposing
+    // the base "Сонгох" + "Хоолой" + "Барилга зурах" tools. Phase 13.33
+    // collapsed the legacy category palette behind a "▸ Бүх багаж"
+    // toggle, so we expand it first before asserting on category
+    // buttons (Эх үүсвэр / Хэрэглэгч / etc.).
     render(<SchemeEditor />);
 
     expect(screen.getByTitle("Сонгох")).toBeInTheDocument();
+    expect(screen.getByTitle("Хоолой")).toBeInTheDocument();
+    // Expand legacy palette so category buttons appear.
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     expect(screen.getByTitle("Эх үүсвэр")).toBeInTheDocument();
     expect(screen.getByTitle("Хэрэглэгч")).toBeInTheDocument();
-    expect(screen.getByTitle("Хоолой")).toBeInTheDocument();
 
     // SVG canvas mounted (the empty hydraulic editor surface).
     const svgs = document.querySelectorAll("svg");

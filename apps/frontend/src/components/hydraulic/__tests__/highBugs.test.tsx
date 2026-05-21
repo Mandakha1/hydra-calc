@@ -79,6 +79,8 @@ describe("BUG #7 — toolbar overflow (Phase 6.8.4)", () => {
 describe("BUG B — Камер/Худаг palette selects the right kind (Phase 6.8.4)", () => {
   it("clicking 'Камер/Худаг' on the sidebar opens the chamber palette (NOT source)", () => {
     render(<SchemeEditor />);
+    // Phase 13.33 — expand the collapsed legacy category palette.
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     fireEvent.click(screen.getByTitle("Камер/Худаг"));
     // After click, the palette popup should be open with chamber
     // entries. Each chamber kind is rendered as a button whose
@@ -93,6 +95,8 @@ describe("BUG B — Камер/Худаг palette selects the right kind (Phase 
 
   it("picking 'Дулааны худаг' from the palette sets the mode hint to 'Дулааны худаг — canvas дээр дарна'", () => {
     render(<SchemeEditor />);
+    // Phase 13.33 — expand the collapsed legacy category palette.
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     fireEvent.click(screen.getByTitle("Камер/Худаг"));
     fireEvent.click(screen.getByTitle("Газар дор нийтийн худаг")); // well_supply
     // The hint banner reflects the active pendingKind name. If the
@@ -103,6 +107,8 @@ describe("BUG B — Камер/Худаг palette selects the right kind (Phase 
 
   it("picking 'Дулааны камер' sets the mode hint to 'Дулааны камер — canvas дээр дарна'", () => {
     render(<SchemeEditor />);
+    // Phase 13.33 — expand the collapsed legacy category palette.
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     fireEvent.click(screen.getByTitle("Камер/Худаг"));
     fireEvent.click(screen.getByTitle("Хяналт, тэмдэглэх, салаалах камер")); // chamber
     expect(screen.getByText(/Дулааны камер — canvas дээр дарна/)).toBeInTheDocument();
@@ -110,6 +116,8 @@ describe("BUG B — Камер/Худаг palette selects the right kind (Phase 
 
   it("picking 'Ус татах худаг' sets the mode hint to that kind's name", () => {
     render(<SchemeEditor />);
+    // Phase 13.33 — expand the collapsed legacy category palette.
+    fireEvent.click(screen.getByTitle(/Хэрэглэгч.*Эх үүсвэр.*Хаалт/));
     fireEvent.click(screen.getByTitle("Камер/Худаг"));
     fireEvent.click(screen.getByTitle("Хооронд накопится ус татах")); // well_drain
     expect(screen.getByText(/Ус татах худаг.*canvas дээр дарна/)).toBeInTheDocument();
